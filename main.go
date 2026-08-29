@@ -236,12 +236,10 @@ func findRepoRoot() (string, error) {
 func printUsage() {
 	fmt.Println("Usage: argus [options] [directories...]")
 	fmt.Println("       argus update")
-	fmt.Println("       argus mcp")
 	fmt.Println("       argus uninstall")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  update                  Check and update Argus to the latest release")
-	fmt.Println("  mcp                     Start MCP (Model Context Protocol) server for AI agents")
 	fmt.Println("  uninstall               Remove the Argus binary from your system")
 	fmt.Println()
 	fmt.Println("Options:")
