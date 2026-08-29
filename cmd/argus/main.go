@@ -45,10 +45,11 @@ func isStandaloneRun(args []string) bool {
 			arg == "-u" || arg == "--update" || arg == "update" || arg == "upgrade" ||
 			arg == "mcp" || arg == "serve-mcp" ||
 			arg == "uninstall" || arg == "--uninstall" ||
-			arg == "audit" || arg == "report" {
+			arg == "audit" || arg == "report" || arg == "check" || arg == "scan" {
 			return true
 		}
-		if strings.HasPrefix(arg, "-flags") || strings.HasPrefix(arg, "-V") || strings.HasPrefix(arg, "-test=") {
+		if strings.HasPrefix(arg, "-flags") || strings.HasPrefix(arg, "-V") || strings.HasPrefix(arg, "-test=") ||
+			strings.HasPrefix(arg, "-json") || strings.HasPrefix(arg, "-c") {
 			return false
 		}
 	}
@@ -132,7 +133,28 @@ func runStandalone() {
 				}
 			}
 		case !strings.HasPrefix(arg, "-"):
+			if arg == "audit" || arg == "report" || arg == "check" || arg == "scan" {
+				continue
+			}
+			if arg == "install" {
+				fmt.Fprintln(os.Stderr, "argus: 'install' is not a command.")
+				fmt.Fprintln(os.Stderr, "To install or reinstall Argus, run:")
+				fmt.Fprintln(os.Stderr, "  curl -fsSL https://raw.githubusercontent.com/will2469/argus/main/install.sh | bash")
+				fmt.Fprintln(os.Stderr, "\nRun 'argus --help' for usage.")
+				os.Exit(1)
+			}
+			targetPath := arg
+			if !filepath.IsAbs(targetPath) {
+				targetPath = filepath.Join(rootDir, arg)
+			}
+			if _, err := os.Stat(targetPath); err != nil {
+				fmt.Fprintf(os.Stderr, "argus: unknown command or path \"%s\"\n\nRun 'argus --help' for usage.\n", arg)
+				os.Exit(1)
+			}
 			scanDirs = append(scanDirs, arg)
+		default:
+			fmt.Fprintf(os.Stderr, "argus: unknown flag \"%s\"\n\nRun 'argus --help' for usage.\n", arg)
+			os.Exit(1)
 		}
 	}
 
