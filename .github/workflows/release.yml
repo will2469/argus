@@ -137,6 +137,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: "Argus ${{ env.RELEASE_TAG }}"
+          body_path: release_notes.md
           files: |
             artifacts/*
           generate_release_notes: true
