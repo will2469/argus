@@ -16,7 +16,7 @@ const RuleCode = "ARGUS-A08"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A08.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a08_tx_external_io",
+	Name: "a08",
 	Doc:  "Prohibits blocking external I/O (network, HTTP, disk, sleep, exec) inside database transactions",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

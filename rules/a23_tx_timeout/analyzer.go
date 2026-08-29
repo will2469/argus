@@ -19,7 +19,7 @@ const RuleCode = "ARGUS-A23"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A23.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a23_transaction_timeout_config",
+	Name: "a23",
 	Doc:  "Enforce explicit transaction_timeout GUC parameter on pgxpool configuration for PostgreSQL 17/18+ targets (CWE-400)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

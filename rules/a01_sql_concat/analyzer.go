@@ -17,7 +17,7 @@ const RuleCode = "ARGUS-A01"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A01.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a01_sql_concatenation",
+	Name: "a01",
 	Doc:  "Prohibits dynamic SQL concatenation and formatting without parameterization or identifier sanitization",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

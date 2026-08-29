@@ -15,7 +15,7 @@ const RuleCode = "ARGUS-A02"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A02.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a02_missing_defer_close",
+	Name: "a02",
 	Doc:  "Enforces defer rows.Close() or auto-closing helper for all Query() calls",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

@@ -18,7 +18,7 @@ const RuleCode = "ARGUS-A26"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A26.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a26_like_wildcard_injection",
+	Name: "a26",
 	Doc:  "Enforce explicit escaping of wildcard characters (%, _, \\) on input bound to LIKE/ILIKE queries (CWE-89, CWE-400)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

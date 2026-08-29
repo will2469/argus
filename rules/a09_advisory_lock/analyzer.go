@@ -18,7 +18,7 @@ const RuleCode = "ARGUS-A09"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A09.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a09_advisory_lock",
+	Name: "a09",
 	Doc:  "Enforces transaction-scoped advisory locks and namespaced identifiers",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

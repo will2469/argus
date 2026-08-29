@@ -17,7 +17,7 @@ const RuleCode = "ARGUS-A15"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A15.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a15_forbidden_ddl_app_role_grant",
+	Name: "a15",
 	Doc:  "Forbids granting DDL permissions (CREATE, TRUNCATE, ALL PRIVILEGES) or table ownership to runtime app roles",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

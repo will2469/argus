@@ -17,7 +17,7 @@ const RuleCode = "ARGUS-A27"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A27.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a27_non_concurrent_index_creation",
+	Name: "a27",
 	Doc:  "Enforce CREATE INDEX CONCURRENTLY on existing tables in migrations to prevent production write outages",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

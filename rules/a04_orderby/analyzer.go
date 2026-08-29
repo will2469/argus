@@ -18,7 +18,7 @@ const RuleCode = "ARGUS-A04"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A04.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a04_unsafe_order_by",
+	Name: "a04",
 	Doc:  "Enforces closed-set allowlist map or switch-case validation for dynamic ORDER BY clauses",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

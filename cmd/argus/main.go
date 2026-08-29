@@ -40,11 +40,11 @@ func isStandaloneRun(args []string) bool {
 			strings.HasPrefix(arg, "--dirs") || strings.HasPrefix(arg, "-dirs") ||
 			strings.HasPrefix(arg, "--migrations") || strings.HasPrefix(arg, "-migrations") ||
 			arg == "--no-report" || arg == "-no-report" ||
-			arg == "-h" || arg == "--help" || arg == "help" ||
-			arg == "-v" || arg == "--version" || arg == "version" ||
-			arg == "-u" || arg == "--update" || arg == "update" || arg == "upgrade" ||
+			arg == "-h" || arg == "--help" || arg == "-help" || arg == "help" ||
+			arg == "-v" || arg == "--version" || arg == "-version" || arg == "version" ||
+			arg == "-u" || arg == "--update" || arg == "-update" || arg == "update" || arg == "upgrade" ||
 			arg == "mcp" || arg == "serve-mcp" ||
-			arg == "uninstall" || arg == "--uninstall" ||
+			arg == "uninstall" || arg == "--uninstall" || arg == "-uninstall" ||
 			arg == "audit" || arg == "report" || arg == "check" || arg == "scan" {
 			return true
 		}
@@ -72,13 +72,13 @@ func runStandalone() {
 
 	for _, arg := range os.Args[1:] {
 		switch {
-		case arg == "-v" || arg == "--version" || arg == "version":
+		case arg == "-v" || arg == "--version" || arg == "-version" || arg == "version":
 			fmt.Printf("argus %s (commit: %s, built: %s)\n", version, commit, date)
 			os.Exit(0)
-		case arg == "-h" || arg == "--help" || arg == "help":
+		case arg == "-h" || arg == "--help" || arg == "-help" || arg == "help":
 			printUsage()
 			os.Exit(0)
-		case arg == "-u" || arg == "--update" || arg == "update" || arg == "upgrade":
+		case arg == "-u" || arg == "--update" || arg == "-update" || arg == "update" || arg == "upgrade":
 			if err := updater.CheckAndApplyUpdate(version); err != nil {
 				fmt.Fprintf(os.Stderr, "Error updating Argus: %v\n", err)
 				os.Exit(1)
@@ -90,7 +90,7 @@ func runStandalone() {
 				os.Exit(1)
 			}
 			os.Exit(0)
-		case arg == "uninstall" || arg == "--uninstall":
+		case arg == "uninstall" || arg == "--uninstall" || arg == "-uninstall":
 			if err := updater.Uninstall(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error uninstalling Argus: %v\n", err)
 				os.Exit(1)

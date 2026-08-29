@@ -17,7 +17,7 @@ const RuleCode = "ARGUS-A10"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A10.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a10_isolation_level",
+	Name: "a10",
 	Doc:  "Enforces explicit Serializable/RepeatableRead or row locking on critical table transactions",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

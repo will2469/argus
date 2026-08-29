@@ -16,7 +16,7 @@ const RuleCode = "ARGUS-A17"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A17.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a17_forbidden_query_in_loop",
+	Name: "a17",
 	Doc:  "Detect and eliminate N+1 database query patterns inside loops in favor of set-based or batch operations",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

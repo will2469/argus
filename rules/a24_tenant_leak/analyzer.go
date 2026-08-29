@@ -18,7 +18,7 @@ const RuleCode = "ARGUS-A24"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A24.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a24_tenant_isolation_leak",
+	Name: "a24",
 	Doc:  "Enforce explicit tenant boundary predicates (tenant_id/org_id) or verified RLS session context on multi-tenant tables (CWE-284, OWASP API1:2023 BOLA)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

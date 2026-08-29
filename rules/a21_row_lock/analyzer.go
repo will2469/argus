@@ -19,7 +19,7 @@ const RuleCode = "ARGUS-A21"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A21.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a21_unbounded_row_lock_blocking",
+	Name: "a21",
 	Doc:  "Enforce SKIP LOCKED or NOWAIT on multi-row FOR UPDATE queue polling queries to prevent lock convoys and deadlocks (CWE-662, CWE-833)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

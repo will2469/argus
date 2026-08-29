@@ -17,7 +17,7 @@ const RuleCode = "ARGUS-A30"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A30.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a30_timestamp_without_timezone",
+	Name: "a30",
 	Doc:  "Enforce TIMESTAMPTZ over bare TIMESTAMP to guarantee UTC chronological data integrity",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

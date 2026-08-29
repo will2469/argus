@@ -20,7 +20,7 @@ const RuleCode = "ARGUS-A12"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A12.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a12_timeout_config",
+	Name: "a12",
 	Doc:  "Enforce explicit server-side timeout configuration (statement_timeout, lock_timeout, idle_in_transaction) on pgxpool initialization",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

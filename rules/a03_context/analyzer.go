@@ -16,7 +16,7 @@ const RuleCode = "ARGUS-A03"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A03.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a03_unbounded_context",
+	Name: "a03",
 	Doc:  "Prohibits raw context.Background() or context.TODO() in database operations",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

@@ -16,7 +16,7 @@ const RuleCode = "ARGUS-A06"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A06.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a06_runtime_ddl",
+	Name: "a06",
 	Doc:  "Prohibits execution of DDL statements (CREATE, ALTER, DROP, TRUNCATE, GRANT, REVOKE) in runtime Go application code",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

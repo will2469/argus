@@ -16,7 +16,7 @@ const RuleCode = "ARGUS-A11"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A11.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a11_destructive_migration",
+	Name: "a11",
 	Doc:  "Forbids destructive DDL operations (DROP COLUMN, DROP TABLE, TRUNCATE, RENAME, ALTER TYPE) in .up.sql migrations",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

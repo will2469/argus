@@ -19,7 +19,7 @@ const RuleCode = "ARGUS-A22"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A22.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a22_serialization_failure_retry",
+	Name: "a22",
 	Doc:  "Enforce automatic retry loops on Serializable and RepeatableRead transactions catching SQLSTATE 40001 and 40P01 (CWE-362)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

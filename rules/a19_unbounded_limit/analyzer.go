@@ -19,7 +19,7 @@ const RuleCode = "ARGUS-A19"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A19.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a19_unbounded_query_limit",
+	Name: "a19",
 	Doc:  "Enforce explicit LIMIT or keyset pagination on high-cardinality tables to prevent buffer pool eviction and OOM crashes (CWE-400)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

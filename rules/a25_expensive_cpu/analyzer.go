@@ -19,7 +19,7 @@ const RuleCode = "ARGUS-A25"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A25.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a25_expensive_cpu_in_transaction",
+	Name: "a25",
 	Doc:  "Prohibit CPU-expensive computations (bcrypt, argon2, RSA keygen, PDF rendering) inside active database transactions (CWE-400, CWE-662)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

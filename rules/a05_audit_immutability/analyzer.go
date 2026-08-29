@@ -18,7 +18,7 @@ const RuleCode = "ARGUS-A05"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A05.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a05_audit_log_immutability",
+	Name: "a05",
 	Doc:  "Enforces strict append-only immutability on audit log tables (prohibiting UPDATE, DELETE, TRUNCATE, MERGE, DROP)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

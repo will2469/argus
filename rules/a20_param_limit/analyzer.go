@@ -19,7 +19,7 @@ const RuleCode = "ARGUS-A20"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A20.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a20_param_limit_65535",
+	Name: "a20",
 	Doc:  "Enforce PostgreSQL 65,535 bind parameter limit in dynamic multi-row statements; recommend pgx.CopyFrom (CWE-400)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

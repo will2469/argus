@@ -18,7 +18,7 @@ const RuleCode = "ARGUS-A14"
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A14.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a14_select_star",
+	Name: "a14",
 	Doc:  "Forbid unconstrained 'SELECT *' wildcard queries; require explicit column projection to mitigate TOAST bloat and PII leak (CWE-200)",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

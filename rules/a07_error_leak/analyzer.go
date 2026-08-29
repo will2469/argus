@@ -16,7 +16,7 @@ const RuleCode = "ARGUS-A07"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A07.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a07_error_leak",
+	Name: "a07",
 	Doc:  "Detects exposure of raw database errors and pgconn.PgError Detail/Hint/Where into API responses",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

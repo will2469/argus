@@ -17,7 +17,7 @@ const RuleCode = "ARGUS-A28"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A28.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a28_table_locking_constraint_addition",
+	Name: "a28",
 	Doc:  "Enforce 2-phase zero-downtime constraint addition (NOT VALID followed by VALIDATE CONSTRAINT) on existing tables",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

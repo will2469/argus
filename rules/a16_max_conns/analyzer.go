@@ -18,7 +18,7 @@ const RuleCode = "ARGUS-A16"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A16.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a16_max_conns_config",
+	Name: "a16",
 	Doc:  "Enforce explicit, bounded MaxConns configuration on pgxpool to prevent process thrashing and connection exhaustion",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

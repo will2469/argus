@@ -49,7 +49,7 @@ go vet ./...
    )
 
    var Analyzer = &analysis.Analyzer{
-       Name:     "argus_a31_unpinned_search_path",
+       Name:     "a31",
        Doc:      "Enforce explicit search_path pinning on SECURITY DEFINER functions and database sessions",
        Run:      run,
        Requires: []*analysis.Analyzer{directives.Analyzer},

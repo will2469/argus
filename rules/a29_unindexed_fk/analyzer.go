@@ -16,7 +16,7 @@ const RuleCode = "ARGUS-A29"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A29.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a29_unindexed_foreign_key",
+	Name: "a29",
 	Doc:  "Enforce supporting B-tree index on foreign key columns to avoid full table scans on parent deletes",
 	Run:  run,
 	Requires: []*analysis.Analyzer{

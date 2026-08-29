@@ -16,7 +16,7 @@ const RuleCode = "ARGUS-A18"
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A18.
 var Analyzer = &analysis.Analyzer{
-	Name: "argus_a18_missing_rows_err_check",
+	Name: "a18",
 	Doc:  "Enforce mandatory rows.Err() check immediately after for rows.Next() loop to prevent silent dataset truncation",
 	Run:  run,
 	Requires: []*analysis.Analyzer{
