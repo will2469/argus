@@ -12,6 +12,7 @@ import (
 	"github.com/will2469/argus/rules"
 	"github.com/will2469/argus/runner"
 	"github.com/will2469/argus/shared/config"
+	"github.com/will2469/argus/shared/mcp"
 	"github.com/will2469/argus/shared/updater"
 )
 
@@ -42,6 +43,7 @@ func isStandaloneRun(args []string) bool {
 			arg == "-h" || arg == "--help" || arg == "help" ||
 			arg == "-v" || arg == "--version" || arg == "version" ||
 			arg == "-u" || arg == "--update" || arg == "update" || arg == "upgrade" ||
+			arg == "mcp" || arg == "serve-mcp" ||
 			arg == "audit" || arg == "report" {
 			return true
 		}
@@ -77,6 +79,12 @@ func runStandalone() {
 		case arg == "-u" || arg == "--update" || arg == "update" || arg == "upgrade":
 			if err := updater.CheckAndApplyUpdate(version); err != nil {
 				fmt.Fprintf(os.Stderr, "Error updating Argus: %v\n", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		case arg == "mcp" || arg == "serve-mcp":
+			if err := mcp.ServeStdio(); err != nil {
+				fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 				os.Exit(1)
 			}
 			os.Exit(0)
@@ -199,13 +207,18 @@ func findRepoRoot() (string, error) {
 func printUsage() {
 	fmt.Println("Usage: argus [options] [directories...]")
 	fmt.Println("       argus update")
+	fmt.Println("       argus mcp")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  update                  Check and update Argus to the latest release")
+	fmt.Println("  mcp                     Start MCP (Model Context Protocol) server for AI agents")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  --output=<file.md>      Path to output markdown report")
 	fmt.Println("  --dirs=<d1,d2>          Comma-separated list of Go directories/files to scan")
 	fmt.Println("  --migrations=<d1,d2>    Comma-separated list of SQL migration directories")
 	fmt.Println("  --no-report             Run in memory without generating a report file")
-	fmt.Println("  -u, --update, update    Check and update Argus to the latest release")
+	fmt.Println("  -u, --update            Alias for 'argus update'")
 	fmt.Println("  -v, --version           Show version information and exit")
 	fmt.Println("  -h, --help              Show this help message")
 }

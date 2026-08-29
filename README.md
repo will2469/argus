@@ -64,6 +64,35 @@ argus update # or: argus --update, argus -u
 
 ---
 
+## 🤖 AI Agent Integration (MCP)
+
+Argus ships with a built-in [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. AI coding agents like **Cursor**, **Claude Desktop**, **VS Code Copilot**, and **Antigravity** can automatically invoke Argus to audit database queries in real-time — no manual tagging required.
+
+**Setup** — Add to your AI editor's MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "argus": {
+      "command": "argus",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Exposed Tools:**
+
+| Tool | Description |
+|:-----|:------------|
+| `argus_scan` | Full audit of Go source files and SQL migrations against all 30 rules |
+| `argus_check_migration` | Instant safety check for raw SQL DDL/DML snippets |
+| `argus_explain_rule` | Retrieve documentation and fix patterns for any rule (A01–A30) |
+
+> 💡 The `argus_scan` tool description instructs AI models to **automatically invoke it** after writing or modifying database queries — no `.cursorrules` or prompt engineering needed.
+
+---
+
 ## The 30 Argus Rules Matrix
 
 > 📖 **Full Documentation:** Every rule is thoroughly documented in the [Argus Wiki](https://github.com/will2469/argus/wiki). Click on any rule code or identifier below to open its dedicated specification, failure modes, and code fix examples.
