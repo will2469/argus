@@ -25,10 +25,22 @@ Traditional linters only inspect Go syntax, while schema linters only look at mi
 
 ### Installation
 
+#### Linux & macOS (One-Line Installer)
 ```bash
-# Install standalone binary via Go toolchain
+curl -fsSL https://raw.githubusercontent.com/will2469/argus/main/install.sh | bash
+```
+
+#### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/will2469/argus/main/install.ps1 | iex
+```
+
+#### Via Go Toolchain
+```bash
 go install github.com/will2469/argus/cmd/argus@latest
 ```
+
+*Or download pre-compiled binaries directly from [GitHub Releases](https://github.com/will2469/argus/releases).*
 
 ### Basic Usage
 
