@@ -28,6 +28,7 @@ type OptionsConfig struct {
 	FailOn        string   `yaml:"fail_on"`        // "CRITICAL", "HIGH", "MEDIUM", "LOW"
 	ScanDirs      []string `yaml:"scan_dirs"`      // Directories/files to scan for Go code
 	MigrationDirs []string `yaml:"migration_dirs"` // Directories containing SQL migrations
+	Telemetry     *bool    `yaml:"telemetry"`      // Controls external issue reporting (default: true)
 }
 
 // RuleConfig defines parameters for an individual rule.
@@ -39,6 +40,7 @@ type RuleConfig struct {
 
 // DefaultConfig returns safe, sensible defaults when .argus.yaml is not present.
 func DefaultConfig() *Config {
+	defaultTelemetry := true
 	cfg := &Config{
 		Version: "1",
 		Options: OptionsConfig{
@@ -46,6 +48,7 @@ func DefaultConfig() *Config {
 			FailOn:        "HIGH",
 			ScanDirs:      []string{"."},
 			MigrationDirs: []string{"migrations"},
+			Telemetry:     &defaultTelemetry,
 		},
 		Rules: make(map[string]RuleConfig),
 	}
@@ -60,6 +63,24 @@ func DefaultConfig() *Config {
 	}
 
 	return cfg
+}
+
+// IsTelemetryEnabled checks whether issue reporting / telemetry is enabled.
+// ARGUS_TELEMETRY environment variable takes precedence over .argus.yaml.
+func (c *Config) IsTelemetryEnabled() bool {
+	if env := os.Getenv("ARGUS_TELEMETRY"); env != "" {
+		norm := strings.ToLower(strings.TrimSpace(env))
+		if norm == "false" || norm == "0" || norm == "off" || norm == "no" {
+			return false
+		}
+		if norm == "true" || norm == "1" || norm == "on" || norm == "yes" {
+			return true
+		}
+	}
+	if c != nil && c.Options.Telemetry != nil {
+		return *c.Options.Telemetry
+	}
+	return true
 }
 
 func formatRuleCode(i int) string {

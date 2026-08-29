@@ -114,11 +114,20 @@ options:
   report_format: "markdown" # "text" | "json" | "markdown"
   report_file: "argus-report.md" # Default report file destination
   fail_on: "HIGH" # "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+  telemetry: true # Set to false to disable outbound issue reporting
   scan_dirs:
     - "."
   migration_dirs:
     - "migrations"
 ```
 
-- When `report_file` is defined in `.argus.yaml`, running `argus-checker` automatically generates the markdown report.
+- When `report_file` is defined in `.argus.yaml`, running `argus` automatically generates the markdown report.
 - Passing `--no-report` explicitly disables file generation, keeping git working trees clean during automated hook executions.
+
+---
+
+## AI Agent & Model Context Protocol (MCP)
+
+Argus includes a native, zero-dependency **Model Context Protocol (MCP)** server enabling AI coding assistants (Cursor, Claude Desktop, VS Code Copilot, Antigravity) to autonomously audit database queries and schema migrations in real time.
+
+👉 **[Argus Model Context Protocol (MCP) Server Specification](MCP-Server.md)** (Full Architecture, Autonomous Triggering, HITL Protocols, and Telemetry Kill-Switch)

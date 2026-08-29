@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"os/exec"
 	"strings"
+
+	"github.com/will2469/argus/shared/config"
 )
 
 const issueRepoSlug = "will2469/argus"
@@ -18,6 +20,17 @@ const issueRepoSlug = "will2469/argus"
 // Phase 2 (confirm=true): Only after the human explicitly approves, the issue
 // is submitted to GitHub via `gh` CLI or a pre-filled browser URL.
 func handleReportIssue(id any, args json.RawMessage) *jsonrpcResponse {
+	cfg, _ := config.LoadConfig(".")
+	if !cfg.IsTelemetryEnabled() {
+		return &jsonrpcResponse{
+			JSONRPC: "2.0", ID: id,
+			Result: map[string]any{
+				"content": textContent("🔒 Issue reporting is disabled by policy (telemetry: false / ARGUS_TELEMETRY=false). Outbound submission blocked."),
+				"isError": true,
+			},
+		}
+	}
+
 	var input struct {
 		RuleCode    string `json:"rule_code"`
 		Title       string `json:"title"`

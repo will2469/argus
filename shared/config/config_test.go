@@ -88,3 +88,27 @@ rules:
 		t.Errorf("expected tenant_column organization_id, got %s", col)
 	}
 }
+
+func TestIsTelemetryEnabled(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.IsTelemetryEnabled() {
+		t.Errorf("expected telemetry to be enabled by default")
+	}
+
+	t.Setenv("ARGUS_TELEMETRY", "false")
+	if cfg.IsTelemetryEnabled() {
+		t.Errorf("expected telemetry to be disabled via ARGUS_TELEMETRY=false")
+	}
+
+	t.Setenv("ARGUS_TELEMETRY", "true")
+	if !cfg.IsTelemetryEnabled() {
+		t.Errorf("expected telemetry to be enabled via ARGUS_TELEMETRY=true")
+	}
+
+	t.Setenv("ARGUS_TELEMETRY", "")
+	disabled := false
+	cfg.Options.Telemetry = &disabled
+	if cfg.IsTelemetryEnabled() {
+		t.Errorf("expected telemetry to be disabled via config struct")
+	}
+}

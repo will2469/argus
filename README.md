@@ -88,9 +88,26 @@ Argus ships with a built-in [Model Context Protocol](https://modelcontextprotoco
 | `argus_scan` | Full audit of Go source files and SQL migrations against all 30 rules |
 | `argus_check_migration` | Instant safety check for raw SQL DDL/DML snippets |
 | `argus_explain_rule` | Retrieve documentation and fix patterns for any rule (A01–A30) |
-| `argus_report_issue` | Auto-file GitHub issues for false positives or missing scenarios |
+| `argus_report_issue` | Two-phase Human-in-the-Loop (HITL) reporter for false positives & feedback |
 
 > 💡 The `argus_scan` tool description instructs AI models to **automatically invoke it** after writing or modifying database queries — no `.cursorrules` or prompt engineering needed.
+
+### 🔒 Enterprise Privacy & Telemetry Kill-Switch
+
+For corporate, banking, or air-gapped environments where outbound issue reporting must be unconditionally disabled, set `telemetry: false` in `.argus.yaml` or export `ARGUS_TELEMETRY=false`:
+
+```yaml
+# .argus.yaml
+version: "1"
+options:
+  telemetry: false # Blocks all outbound issue submission
+```
+
+```bash
+export ARGUS_TELEMETRY=false
+```
+
+📖 **Detailed Guide:** Read the full [Argus MCP Server Specification & Architecture Wiki](https://github.com/will2469/argus/wiki/MCP-Server) for HITL protocols, trust-mode security advisories, and client setup guides.
 
 ---
 
