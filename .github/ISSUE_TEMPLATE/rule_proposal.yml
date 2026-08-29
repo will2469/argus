@@ -1,0 +1,77 @@
+name: New Rule Proposal
+description: Propose a new compile-time database safety or PostgreSQL hygiene rule for Argus
+title: "[Rule Proposal]: "
+labels: ["rule-proposal", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Argus welcomes proposals for new static analysis rules enforcing PostgreSQL invariants and Go database safety.
+        Please provide the database rationale, PostgreSQL engine behavior, and concrete code examples below.
+
+  - type: input
+    id: proposed_name
+    attributes:
+      label: Proposed Rule Identifier
+      description: Follow the `SCREAMING_SNAKE_CASE` convention (e.g. `UNINDEXED_PARTITION_KEY`, `UNBOUNDED_JSONB_EXTRACTION`).
+      placeholder: "UNSAFE_TRANSACTION_ISOLATION"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Architectural Category
+      options:
+        - "Security & Injection Prevention"
+        - "Resource & Connection Pool Lifecycle"
+        - "Performance & Concurrency"
+        - "Zero-Downtime Migration Hygiene"
+        - "Temporal & Multi-Tenancy Hygiene"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: default_severity
+    attributes:
+      label: Recommended Severity
+      options:
+        - "CRITICAL (blocks compilation / fails CI by default)"
+        - "HIGH (emits high-priority warning / fails CI)"
+        - "MEDIUM (informational hygiene check)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: invariant_rationale
+    attributes:
+      label: Database Invariant & Rationale
+      description: Explain the failure mode in PostgreSQL engine internals (e.g. MVCC bloat, table lockouts, connection pool exhaustion, serialization failures).
+    validations:
+      required: true
+
+  - type: textarea
+    id: bad_example
+    attributes:
+      label: Non-Compliant Code Example (Violation)
+      description: Show what Go code or SQL migration should trigger this rule.
+      render: go
+    validations:
+      required: true
+
+  - type: textarea
+    id: good_example
+    attributes:
+      label: Compliant Remediation Example
+      description: Show what the recommended compliant pattern looks like.
+      render: go
+    validations:
+      required: true
+
+  - type: textarea
+    id: false_positives
+    attributes:
+      label: False-Positive Risks & Whitelist Heuristics
+      description: What legitimate patterns might look like violations and how should Argus whitelist them?
+    validations:
+      required: true

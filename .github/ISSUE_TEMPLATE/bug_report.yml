@@ -1,0 +1,125 @@
+name: Bug Report / False Positive
+description: File a bug report, false positive diagnostic, or unexpected analyzer failure
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue with **Argus**! 
+        Please provide as much reproducible context as possible so we can diagnose and resolve the issue quickly.
+
+  - type: dropdown
+    id: rule
+    attributes:
+      label: Affected Component / Rule
+      description: Select the specific Argus rule or CLI component where the issue occurred.
+      options:
+        - "General CLI / Runner"
+        - "ARGUS-A01 (UNSAFE_SQL_CONCATENATION)"
+        - "ARGUS-A02 (MISSING_DEFER_CLOSE)"
+        - "ARGUS-A03 (UNBOUNDED_CONTEXT)"
+        - "ARGUS-A04 (UNSAFE_ORDER_BY)"
+        - "ARGUS-A05 (AUDIT_LOG_IMMUTABILITY)"
+        - "ARGUS-A06 (RUNTIME_DDL)"
+        - "ARGUS-A07 (ERROR_LEAK)"
+        - "ARGUS-A08 (TX_EXTERNAL_IO)"
+        - "ARGUS-A09 (ADVISORY_LOCK)"
+        - "ARGUS-A10 (ISOLATION_LEVEL)"
+        - "ARGUS-A11 (DESTRUCTIVE_MIGRATION)"
+        - "ARGUS-A12 (TIMEOUT_CONFIG)"
+        - "ARGUS-A13 (MISSING_DOWN_MIGRATION)"
+        - "ARGUS-A14 (FORBIDDEN_SELECT_STAR)"
+        - "ARGUS-A15 (FORBIDDEN_DDL_APP_ROLE_GRANT)"
+        - "ARGUS-A16 (MAX_CONNS_CONFIG)"
+        - "ARGUS-A17 (FORBIDDEN_QUERY_IN_LOOP)"
+        - "ARGUS-A18 (MISSING_ROWS_ERR_CHECK)"
+        - "ARGUS-A19 (UNBOUNDED_QUERY_LIMIT)"
+        - "ARGUS-A20 (PARAM_LIMIT_65535)"
+        - "ARGUS-A21 (UNBOUNDED_ROW_LOCK_BLOCKING)"
+        - "ARGUS-A22 (SERIALIZATION_FAILURE_RETRY)"
+        - "ARGUS-A23 (TRANSACTION_TIMEOUT_CONFIG)"
+        - "ARGUS-A24 (TENANT_ISOLATION_LEAK)"
+        - "ARGUS-A25 (EXPENSIVE_CPU_IN_TRANSACTION)"
+        - "ARGUS-A26 (LIKE_WILDCARD_INJECTION)"
+        - "ARGUS-A27 (NON_CONCURRENT_INDEX_CREATION)"
+        - "ARGUS-A28 (TABLE_LOCKING_CONSTRAINT_ADDITION)"
+        - "ARGUS-A29 (UNINDEXED_FOREIGN_KEY)"
+        - "ARGUS-A30 (TIMESTAMP_WITHOUT_TIMEZONE)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - "Linux (x86_64 / amd64)"
+        - "Linux (arm64 / aarch64)"
+        - "macOS (Apple Silicon M1-M4)"
+        - "macOS (Intel x86_64)"
+        - "Windows (x86_64)"
+    validations:
+      required: true
+
+  - type: input
+    id: go_version
+    attributes:
+      label: Go Version
+      description: Run `go version` in your terminal and paste the output here.
+      placeholder: "go version go1.25.0 linux/amd64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug / False Positive Description
+      description: A clear and concise description of what the problem is. If this is a false-positive finding, explain why the flagged code is safe.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal Reproducible Code Example
+      description: Provide a minimal Go code snippet or SQL migration that triggers the issue.
+      render: go
+      placeholder: |
+        package main
+
+        import "database/sql"
+
+        func Example(db *sql.DB) error {
+            // Snippet that triggers the bug/false positive
+            return nil
+        }
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen? (e.g. "Argus should not report a violation because...")
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_output
+    attributes:
+      label: Actual Argus Output
+      description: Paste the diagnostic output emitted by Argus.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I have verified this behavior using the latest release of Argus.
+          required: true
+        - label: I searched existing issues and confirmed this is not a duplicate.
+          required: true

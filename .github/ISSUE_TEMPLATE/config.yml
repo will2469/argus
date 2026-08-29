@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Argus Documentation & Wiki
+    url: https://github.com/will2469/argus/wiki
+    about: Read comprehensive guides, rule specifications, and remediation examples in the official Wiki.
