@@ -1,0 +1,59 @@
+name: Request Collaborator Access
+description: Apply for collaborator access to submit pull requests or contribute to Argus development
+title: "[Collaborator Request]: @"
+labels: ["collaborator-request", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Interested in actively contributing to **Argus**? 
+        Because direct Pull Request creation is restricted to verified collaborators to maintain project stability, please fill out this short application to request collaborator access.
+
+  - type: input
+    id: github_username
+    attributes:
+      label: GitHub Username
+      description: Your exact GitHub username so we can send the invitation.
+      placeholder: "e.g. will2469"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: areas_of_interest
+    attributes:
+      label: Areas of Contribution
+      description: Which areas of the project do you want to work on?
+      options:
+        - label: New Rule Implementation (AST inspection, Go & SQL rules)
+        - label: Bug Fixes & False-Positive Reductions
+        - label: Performance, CGO & Benchmarks
+        - label: Documentation, Wiki & Rule Remediation Guides
+        - label: CI/CD, Packaging & Multi-Platform Tooling
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation & Relevant Experience
+      description: Briefly describe your background with Go, PostgreSQL internals, static analysis, or what you intend to contribute.
+      placeholder: "e.g. I have experience working with pgx/v5 and want to help implement new migration hygiene rules..."
+    validations:
+      required: true
+
+  - type: input
+    id: related_issue
+    attributes:
+      label: Related Issue (Optional)
+      description: If you are requesting access to resolve a specific issue or rule proposal, link it here.
+      placeholder: "#12"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: commitments
+    attributes:
+      label: Engineering Commitments
+      options:
+        - label: I agree to uphold Argus engineering guardrails (Anti-fat code ~250 lines/file, Zero False-Positive target, analysistest suites).
+          required: true
+        - label: I will follow Conventional Commits for all commit messages and PR titles.
+          required: true
