@@ -10,9 +10,13 @@ import (
 
 const issueRepoSlug = "will2469/argus"
 
-// handleReportIssue creates a structured GitHub issue on the Argus repository
-// for false positives, missing scenarios, or rule improvement suggestions.
-// Uses the `gh` CLI if available; otherwise generates a pre-filled browser URL.
+// handleReportIssue implements a two-phase Human-in-the-Loop (HITL) pattern:
+//
+// Phase 1 (confirm=false, default): Returns a formatted preview of the issue
+// for the AI agent to show to the human. No side effects.
+//
+// Phase 2 (confirm=true): Only after the human explicitly approves, the issue
+// is submitted to GitHub via `gh` CLI or a pre-filled browser URL.
 func handleReportIssue(id any, args json.RawMessage) *jsonrpcResponse {
 	var input struct {
 		RuleCode    string `json:"rule_code"`
@@ -20,6 +24,7 @@ func handleReportIssue(id any, args json.RawMessage) *jsonrpcResponse {
 		Description string `json:"description"`
 		Snippet     string `json:"snippet"`
 		Category    string `json:"category"`
+		Confirm     bool   `json:"confirm"`
 	}
 	if err := json.Unmarshal(args, &input); err != nil {
 		return &jsonrpcResponse{
@@ -40,20 +45,41 @@ func handleReportIssue(id any, args json.RawMessage) *jsonrpcResponse {
 		category = "false-positive"
 	}
 
-	label := labelForCategory(category)
 	issueTitle := formatIssueTitle(input.RuleCode, input.Title)
 	issueBody := formatIssueBody(input.RuleCode, input.Description, input.Snippet, category)
+	label := labelForCategory(category)
 
-	// Try gh CLI first (uses existing auth).
-	if ghPath, err := exec.LookPath("gh"); err == nil {
-		return createViaGH(id, ghPath, issueTitle, issueBody, label)
+	// Phase 1: Preview mode (default). Show draft to the human for approval.
+	if !input.Confirm {
+		return buildPreview(id, issueTitle, issueBody, category)
 	}
 
-	// Fallback: generate a pre-filled GitHub issue URL.
-	return createViaURL(id, issueTitle, issueBody, label)
+	// Phase 2: Human approved. Submit the issue.
+	if ghPath, err := exec.LookPath("gh"); err == nil {
+		return submitViaGH(id, ghPath, issueTitle, issueBody, label)
+	}
+	return submitViaURL(id, issueTitle, issueBody, label)
 }
 
-func createViaGH(id any, ghPath, title, body, label string) *jsonrpcResponse {
+func buildPreview(id any, title, body, category string) *jsonrpcResponse {
+	var sb strings.Builder
+	sb.WriteString("📋 **Issue Draft Preview — Awaiting Human Approval**\n\n")
+	sb.WriteString(fmt.Sprintf("**Title:** %s\n", title))
+	sb.WriteString(fmt.Sprintf("**Category:** %s\n", categoryLabel(category)))
+	sb.WriteString(fmt.Sprintf("**Repository:** github.com/%s\n\n", issueRepoSlug))
+	sb.WriteString("---\n\n")
+	sb.WriteString(body)
+	sb.WriteString("\n---\n\n")
+	sb.WriteString("⚠️ **This issue has NOT been submitted yet.**\n")
+	sb.WriteString("Ask the user for approval, then call this tool again with `\"confirm\": true` to submit.")
+
+	return &jsonrpcResponse{
+		JSONRPC: "2.0", ID: id,
+		Result: map[string]any{"content": textContent(sb.String())},
+	}
+}
+
+func submitViaGH(id any, ghPath, title, body, label string) *jsonrpcResponse {
 	args := []string{"issue", "create",
 		"--repo", issueRepoSlug,
 		"--title", title,
@@ -64,19 +90,18 @@ func createViaGH(id any, ghPath, title, body, label string) *jsonrpcResponse {
 	cmd := exec.Command(ghPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// Fall back to URL if gh fails (e.g. not authenticated).
-		return createViaURL(id, title, body, label)
+		return submitViaURL(id, title, body, label)
 	}
 
 	issueURL := strings.TrimSpace(string(output))
-	msg := fmt.Sprintf("✓ Issue created successfully!\n\n%s", issueURL)
+	msg := fmt.Sprintf("✓ Issue submitted successfully!\n\n%s", issueURL)
 	return &jsonrpcResponse{
 		JSONRPC: "2.0", ID: id,
 		Result: map[string]any{"content": textContent(msg)},
 	}
 }
 
-func createViaURL(id any, title, body, label string) *jsonrpcResponse {
+func submitViaURL(id any, title, body, label string) *jsonrpcResponse {
 	params := url.Values{}
 	params.Set("title", title)
 	params.Set("body", body)
@@ -123,7 +148,7 @@ func formatIssueBody(ruleCode, description, snippet, category string) string {
 	}
 
 	sb.WriteString("\n---\n")
-	sb.WriteString("*This issue was automatically filed by an AI agent via `argus mcp` → `argus_report_issue`.*\n")
+	sb.WriteString("*This issue was filed via `argus mcp` → `argus_report_issue` with human approval.*\n")
 
 	return sb.String()
 }
@@ -132,9 +157,7 @@ func labelForCategory(category string) string {
 	switch strings.ToLower(category) {
 	case "false-positive":
 		return "bug"
-	case "missing-scenario":
-		return "enhancement"
-	case "rule-improvement":
+	case "missing-scenario", "rule-improvement":
 		return "enhancement"
 	default:
 		return "bug"

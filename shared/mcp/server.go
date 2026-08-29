@@ -114,10 +114,12 @@ var tools = []toolDef{
 	},
 	{
 		Name: "argus_report_issue",
-		Description: "Reports a false positive, missing detection scenario, or rule improvement " +
-			"suggestion to the Argus GitHub repository. Use this when you detect that Argus " +
-			"incorrectly flagged valid code (false positive), missed a genuine violation " +
-			"(false negative), or when you have a concrete improvement idea for a rule.",
+		Description: "HUMAN-IN-THE-LOOP: Reports a false positive, missing scenario, or rule " +
+			"improvement to the Argus GitHub repository. This tool uses a TWO-PHASE flow: " +
+			"(1) First call WITHOUT confirm to generate a preview draft — you MUST show this " +
+			"preview to the user and ask for their explicit approval before proceeding. " +
+			"(2) Only after the user explicitly approves, call again with confirm=true to submit. " +
+			"NEVER set confirm=true without the user's explicit consent.",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]propDef{
@@ -140,6 +142,10 @@ var tools = []toolDef{
 				"category": {
 					Type:        "string",
 					Description: "One of: false-positive, missing-scenario, rule-improvement.",
+				},
+				"confirm": {
+					Type:        "boolean",
+					Description: "Set to true ONLY after the user has explicitly approved the draft. Default: false (preview mode).",
 				},
 			},
 			Required: []string{"title", "description"},
