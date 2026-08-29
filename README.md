@@ -60,6 +60,9 @@ go vet -vettool=$(which argus) ./...
 
 # 4. Self-update to the latest release
 argus update # or: argus --update, argus -u
+
+# 5. Uninstall Argus from system
+argus uninstall # or: argus --uninstall
 ```
 
 ---

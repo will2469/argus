@@ -44,6 +44,7 @@ func isStandaloneRun(args []string) bool {
 			arg == "-v" || arg == "--version" || arg == "version" ||
 			arg == "-u" || arg == "--update" || arg == "update" || arg == "upgrade" ||
 			arg == "mcp" || arg == "serve-mcp" ||
+			arg == "uninstall" || arg == "--uninstall" ||
 			arg == "audit" || arg == "report" {
 			return true
 		}
@@ -85,6 +86,12 @@ func runStandalone() {
 		case arg == "mcp" || arg == "serve-mcp":
 			if err := mcp.ServeStdio(); err != nil {
 				fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		case arg == "uninstall" || arg == "--uninstall":
+			if err := updater.Uninstall(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error uninstalling Argus: %v\n", err)
 				os.Exit(1)
 			}
 			os.Exit(0)
@@ -208,10 +215,12 @@ func printUsage() {
 	fmt.Println("Usage: argus [options] [directories...]")
 	fmt.Println("       argus update")
 	fmt.Println("       argus mcp")
+	fmt.Println("       argus uninstall")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  update                  Check and update Argus to the latest release")
 	fmt.Println("  mcp                     Start MCP (Model Context Protocol) server for AI agents")
+	fmt.Println("  uninstall               Remove the Argus binary from your system")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  --output=<file.md>      Path to output markdown report")
