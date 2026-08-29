@@ -88,6 +88,7 @@ Argus ships with a built-in [Model Context Protocol](https://modelcontextprotoco
 | `argus_scan` | Full audit of Go source files and SQL migrations against all 30 rules |
 | `argus_check_migration` | Instant safety check for raw SQL DDL/DML snippets |
 | `argus_explain_rule` | Retrieve documentation and fix patterns for any rule (A01–A30) |
+| `argus_report_issue` | Auto-file GitHub issues for false positives or missing scenarios |
 
 > 💡 The `argus_scan` tool description instructs AI models to **automatically invoke it** after writing or modifying database queries — no `.cursorrules` or prompt engineering needed.
 

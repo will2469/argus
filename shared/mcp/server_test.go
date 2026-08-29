@@ -66,14 +66,15 @@ func TestToolsList(t *testing.T) {
 		t.Fatalf("expected tools to be array, got %T", toolsRaw)
 	}
 
-	if len(toolsList) != 3 {
-		t.Fatalf("expected 3 tools, got %d", len(toolsList))
+	if len(toolsList) != 4 {
+		t.Fatalf("expected 4 tools, got %d", len(toolsList))
 	}
 
 	expectedNames := map[string]bool{
 		"argus_scan":            false,
 		"argus_check_migration": false,
 		"argus_explain_rule":    false,
+		"argus_report_issue":    false,
 	}
 	for _, toolRaw := range toolsList {
 		tool, ok := toolRaw.(map[string]any)

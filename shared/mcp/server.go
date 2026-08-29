@@ -112,6 +112,39 @@ var tools = []toolDef{
 			Required: []string{"rule_code"},
 		},
 	},
+	{
+		Name: "argus_report_issue",
+		Description: "Reports a false positive, missing detection scenario, or rule improvement " +
+			"suggestion to the Argus GitHub repository. Use this when you detect that Argus " +
+			"incorrectly flagged valid code (false positive), missed a genuine violation " +
+			"(false negative), or when you have a concrete improvement idea for a rule.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]propDef{
+				"rule_code": {
+					Type:        "string",
+					Description: "The Argus rule code related to this report, e.g. \"A14\", \"A17\".",
+				},
+				"title": {
+					Type:        "string",
+					Description: "Brief summary of the issue.",
+				},
+				"description": {
+					Type:        "string",
+					Description: "Detailed explanation of the false positive, missing scenario, or improvement.",
+				},
+				"snippet": {
+					Type:        "string",
+					Description: "The Go or SQL code snippet that triggered the issue.",
+				},
+				"category": {
+					Type:        "string",
+					Description: "One of: false-positive, missing-scenario, rule-improvement.",
+				},
+			},
+			Required: []string{"title", "description"},
+		},
+	},
 }
 
 // ServeStdio starts the MCP server reading from stdin and writing to stdout.
@@ -204,6 +237,8 @@ func handleToolCall(req jsonrpcRequest) *jsonrpcResponse {
 		return handleCheckMigration(req.ID, params.Arguments)
 	case "argus_explain_rule":
 		return handleExplainRule(req.ID, params.Arguments)
+	case "argus_report_issue":
+		return handleReportIssue(req.ID, params.Arguments)
 	default:
 		return &jsonrpcResponse{
 			JSONRPC: "2.0", ID: req.ID,
