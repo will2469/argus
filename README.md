@@ -57,6 +57,9 @@ argus --output=argus-report.md
 
 # 3. Integrate directly into go vet
 go vet -vettool=$(which argus) ./...
+
+# 4. Self-update to the latest release
+argus update # or: argus --update, argus -u
 ```
 
 ---

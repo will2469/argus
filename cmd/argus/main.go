@@ -12,6 +12,7 @@ import (
 	"github.com/will2469/argus/rules"
 	"github.com/will2469/argus/runner"
 	"github.com/will2469/argus/shared/config"
+	"github.com/will2469/argus/shared/updater"
 )
 
 var (
@@ -40,6 +41,7 @@ func isStandaloneRun(args []string) bool {
 			arg == "--no-report" || arg == "-no-report" ||
 			arg == "-h" || arg == "--help" || arg == "help" ||
 			arg == "-v" || arg == "--version" || arg == "version" ||
+			arg == "-u" || arg == "--update" || arg == "update" || arg == "upgrade" ||
 			arg == "audit" || arg == "report" {
 			return true
 		}
@@ -71,6 +73,12 @@ func runStandalone() {
 			os.Exit(0)
 		case arg == "-h" || arg == "--help" || arg == "help":
 			printUsage()
+			os.Exit(0)
+		case arg == "-u" || arg == "--update" || arg == "update" || arg == "upgrade":
+			if err := updater.CheckAndApplyUpdate(version); err != nil {
+				fmt.Fprintf(os.Stderr, "Error updating Argus: %v\n", err)
+				os.Exit(1)
+			}
 			os.Exit(0)
 		case arg == "--no-report" || arg == "-no-report":
 			noReport = true
@@ -190,12 +198,14 @@ func findRepoRoot() (string, error) {
 
 func printUsage() {
 	fmt.Println("Usage: argus [options] [directories...]")
+	fmt.Println("       argus update")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  --output=<file.md>      Path to output markdown report")
 	fmt.Println("  --dirs=<d1,d2>          Comma-separated list of Go directories/files to scan")
 	fmt.Println("  --migrations=<d1,d2>    Comma-separated list of SQL migration directories")
 	fmt.Println("  --no-report             Run in memory without generating a report file")
+	fmt.Println("  -u, --update, update    Check and update Argus to the latest release")
 	fmt.Println("  -v, --version           Show version information and exit")
 	fmt.Println("  -h, --help              Show this help message")
 }
