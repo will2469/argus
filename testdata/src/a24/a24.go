@@ -1,0 +1,74 @@
+package a24
+
+import (
+	"context"
+)
+
+type DB interface {
+	Query(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx context.Context, sql string, args ...any) (any, error)
+}
+
+// 1. Safe SELECT on multi-tenant table with tenant_id predicate (Compliant)
+func SafeSelectWithTenant(ctx context.Context, db DB, tenantID string) (any, error) {
+	const query = "SELECT id, email, name FROM users WHERE tenant_id = $1 AND status = 'ACTIVE'"
+	return db.Query(ctx, query, tenantID)
+}
+
+// 2. Safe UPDATE on multi-tenant table with tenant_id predicate (Compliant)
+func SafeUpdateWithTenant(ctx context.Context, db DB, tenantID string, id string) (any, error) {
+	const query = "UPDATE orders SET status = 'DONE' WHERE tenant_id = $1 AND id = $2"
+	return db.Exec(ctx, query, tenantID, id)
+}
+
+// 3. Safe DELETE on multi-tenant table with tenant_id predicate (Compliant)
+func SafeDeleteWithTenant(ctx context.Context, db DB, tenantID string, id string) (any, error) {
+	const query = "DELETE FROM accounts WHERE tenant_id = $1 AND id = $2"
+	return db.Exec(ctx, query, tenantID, id)
+}
+
+// 4. Safe query on non-tenant reference table (Compliant)
+func SafeNonTenantQuery(ctx context.Context, db DB) (any, error) {
+	const query = "SELECT code, name FROM lookup_countries WHERE active = true"
+	return db.Query(ctx, query)
+}
+
+// 5. Safe query under verified RLS session setup (Compliant)
+func SafeRLSTransaction(ctx context.Context, db DB, tenantID string) (any, error) {
+	if _, err := db.Exec(ctx, "SET LOCAL app.tenant_id = $1", tenantID); err != nil {
+		return nil, err
+	}
+	return db.Query(ctx, "SELECT id, email, name FROM users")
+}
+
+// 6. Unsafe SELECT missing tenant_id predicate on users (Violation)
+func UnsafeSelectMissingTenant(ctx context.Context, db DB) (any, error) {
+	const query = "SELECT id, email, name FROM users WHERE status = 'ACTIVE'"
+	return db.Query(ctx, query) // want `\[ARGUS-A24\] query on multi-tenant table 'users' missing 'tenant_id' predicate; risk of cross-tenant data breach \(CWE-284, OWASP API1:2023 BOLA\)`
+}
+
+// 7. Unsafe UPDATE missing tenant_id predicate on orders (Violation)
+func UnsafeUpdateMissingTenant(ctx context.Context, db DB, cutoff string) (any, error) {
+	const query = "UPDATE orders SET status = 'EXPIRED' WHERE created_at < $1"
+	return db.Exec(ctx, query, cutoff) // want `\[ARGUS-A24\] UPDATE on multi-tenant table 'orders' missing 'tenant_id' predicate; risk of cross-tenant data mutation \(CWE-284, OWASP API1:2023 BOLA\)`
+}
+
+// 8. Unsafe DELETE missing tenant_id predicate on accounts (Violation)
+func UnsafeDeleteMissingTenant(ctx context.Context, db DB) (any, error) {
+	const query = "DELETE FROM accounts WHERE status = 'DELETED'"
+	return db.Exec(ctx, query) // want `\[ARGUS-A24\] DELETE on multi-tenant table 'accounts' missing 'tenant_id' predicate; risk of cross-tenant data deletion \(CWE-284, OWASP API1:2023 BOLA\)`
+}
+
+// 9. Ignored via directive
+func IgnoredQuery(ctx context.Context, db DB) (any, error) {
+	const query = "SELECT COUNT(*) FROM users GROUP BY country"
+	// argus:ignore ARGUS-A24 global analytics rollup
+	return db.Query(ctx, query)
+}
+
+// 10. Ignored via shortcode
+func IgnoredShortcode(ctx context.Context, db DB) (any, error) {
+	const query = "SELECT id FROM users WHERE status = 'PENDING'"
+	// argus:ignore-a24 telemetry aggregation
+	return db.Query(ctx, query)
+}

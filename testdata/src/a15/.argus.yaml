@@ -1,0 +1,7 @@
+version: "1"
+rules:
+  ARGUS-A15:
+    enabled: true
+    runtime_app_roles:
+      - "app_user"
+      - "public"

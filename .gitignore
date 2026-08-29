@@ -1,0 +1,35 @@
+# Binaries and build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries and profiles
+*.test
+*.out
+coverage.txt
+coverage.html
+profile.pprof
+
+# Dependency and cache directories
+.cache/
+
+# Local configuration overrides (keep .argus.yaml.example in git)
+/.argus.yaml
+!testdata/**/.argus.yaml
+
+# Local format and AI hygiene scripts (untracked for public repo)
+.githooks/format-all.sh
+.githooks/clean-ai-artifacts.sh
+.githooks/remove-emojis.sh
+format-all.sh
+
+# OS and Editor artifacts
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

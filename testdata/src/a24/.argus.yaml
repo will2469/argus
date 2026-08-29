@@ -1,0 +1,9 @@
+version: "1"
+rules:
+  ARGUS-A24:
+    enabled: true
+    tenant_column: "tenant_id"
+    tenant_tables:
+      - "users"
+      - "accounts"
+      - "orders"

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Standard Golang Pre-Push Hook for Argus
+set -euo pipefail
+
+export GOWORK="${GOWORK:-off}"
+
+echo "🚀 [Argus] Running Go pre-push verification suite..."
+
+# 1. Run unit tests with race detection
+echo "🧪 [Argus] Running go test -race ./..."
+go test -race ./...
+
+# 2. Verify binary compilation
+echo "🔨 [Argus] Verifying binary compilation..."
+go build -v -o bin/argus-checker .
+
+# 3. Check module integrity
+echo "📦 [Argus] Verifying go.mod & go.sum cleanliness..."
+go mod tidy
+if ! git diff --quiet go.mod go.sum; then
+    echo "❌ [Argus] go.mod or go.sum was modified by 'go mod tidy'."
+    echo "💡 Please stage and commit the updated go.mod and go.sum."
+    exit 1
+fi
+
+echo "✅ [Argus] Pre-push verification passed!"

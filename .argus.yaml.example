@@ -1,0 +1,112 @@
+# Argus Configuration Example (.argus.yaml)
+version: "1"
+
+# Global options
+options:
+  report_format: "markdown" # "text" | "json" | "markdown"
+  report_file: "argus-report.md"
+  fail_on: "HIGH"       # "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+  scan_dirs:
+    - "."
+  migration_dirs:
+    - "migrations"
+
+rules:
+  ARGUS-A01:
+    enabled: true
+  ARGUS-A02:
+    enabled: true
+  ARGUS-A03:
+    enabled: true
+  ARGUS-A04:
+    enabled: true
+    allowed_columns:
+      - "id"
+      - "created_at"
+      - "updated_at"
+      - "deleted_at"
+      - "name"
+      - "nama"
+      - "email"
+      - "status"
+      - "role"
+      - "created_by"
+      - "updated_by"
+      - "is_active"
+  ARGUS-A05:
+    enabled: true
+    audit_tables:
+      - "audit_logs"
+      - "security_events"
+  ARGUS-A06:
+    enabled: true
+  ARGUS-A07:
+    enabled: true
+  ARGUS-A08:
+    enabled: true
+  ARGUS-A09:
+    enabled: true
+  ARGUS-A10:
+    enabled: true
+  ARGUS-A11:
+    enabled: true
+  ARGUS-A12:
+    enabled: true
+  ARGUS-A13:
+    enabled: true
+  ARGUS-A14:
+    enabled: true
+  ARGUS-A15:
+    enabled: true
+    runtime_app_roles:
+      - "app_user"
+      - "web_runtime"
+  ARGUS-A16:
+    enabled: true
+    max_conns_limit: 50
+  ARGUS-A17:
+    enabled: true
+  ARGUS-A18:
+    enabled: true
+  ARGUS-A19:
+    enabled: true
+    default_max_limit: 1000
+    high_growth_tables:
+      - "orders"
+      - "transactions"
+      - "audit_logs"
+    point_lookup_columns:
+      - "id"
+      - "uuid"
+      - "pk"
+      - "order_id"
+      - "user_id"
+  ARGUS-A20:
+    enabled: true
+  ARGUS-A21:
+    enabled: true
+  ARGUS-A22:
+    enabled: true
+    max_retries: 5
+  ARGUS-A23:
+    enabled: true
+    recommended_timeout_sec: 30
+  ARGUS-A24:
+    enabled: true
+    tenant_column: "tenant_id"
+    tenant_tables:
+      - "customers"
+      - "invoices"
+      - "accounts"
+  ARGUS-A25:
+    enabled: true
+  ARGUS-A26:
+    enabled: true
+  ARGUS-A27:
+    enabled: true
+  ARGUS-A28:
+    enabled: true
+  ARGUS-A29:
+    enabled: true
+  ARGUS-A30:
+    enabled: true
