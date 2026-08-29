@@ -50,6 +50,10 @@ esac
 
 info "Detected platform: ${TARGET_OS}/${TARGET_ARCH}"
 
+if [ "${TARGET_OS}" = "darwin" ] && [ "${TARGET_ARCH}" = "amd64" ]; then
+    error "macOS Intel (x86_64) is discontinued. Argus officially supports Apple Silicon (M1-M4, arm64). Please install via 'go install github.com/will2469/argus/cmd/argus@latest' or compile from source."
+fi
+
 # 3. Determine Latest Release Tag
 info "Checking for latest release..."
 TAG=""
