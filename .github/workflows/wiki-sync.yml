@@ -1,0 +1,44 @@
+name: sync-wiki
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'wiki/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-wiki:
+    name: Sync Wiki to GitHub Wiki
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Main Repository
+        uses: actions/checkout@v7
+        with:
+          path: main-repo
+
+      - name: Checkout Wiki Repository
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync Wiki Files
+        shell: bash
+        run: |
+          cd wiki-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          rm -rf *
+          cp -r ../main-repo/wiki/* .
+          if [[ -n $(git status -s) ]]; then
+            git add .
+            git commit -m "docs(wiki): sync documentation from main repository"
+            git push origin master
+          else
+            echo "Wiki is already up to date."
+          fi
