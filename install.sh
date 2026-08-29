@@ -63,7 +63,7 @@ if [ -z "${TAG}" ] && command -v curl >/dev/null 2>&1; then
     TAG="${LATEST_URL##*/}"
 fi
 
-if [ -z "${TAG}" ] || [ "${TAG}" = "latest" ]; then
+if [ -z "${TAG}" ] || [ "${TAG}" = "latest" ] || [ "${TAG}" = "releases" ]; then
     TAG="v1.0.0"
     warn "Could not resolve latest release tag via GitHub API, falling back to ${TAG}"
 fi
