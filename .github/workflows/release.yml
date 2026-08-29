@@ -1,0 +1,159 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name for release (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            binary_name: argus
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            binary_name: argus
+            cross_cc: aarch64-linux-gnu-gcc
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            binary_name: argus
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            binary_name: argus
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            binary_name: argus.exe
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Install ARM64 Cross-Compiler (Linux ARM64)
+        if: matrix.cross_cc == 'aarch64-linux-gnu-gcc'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Determine Release Tag
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          fi
+          echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
+
+      - name: Compile Binary (CGO Enabled)
+        shell: bash
+        run: |
+          mkdir -p dist
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LDFLAGS="-s -w -X main.version=${RELEASE_TAG} -X main.commit=${{ github.sha }} -X main.date=${BUILD_DATE}"
+          
+          export CGO_ENABLED=1
+          export GOOS=${{ matrix.goos }}
+          export GOARCH=${{ matrix.goarch }}
+          
+          if [[ -n "${{ matrix.cross_cc }}" ]]; then
+            export CC=${{ matrix.cross_cc }}
+          fi
+          
+          go build -trimpath -ldflags="${LDFLAGS}" -o dist/${{ matrix.binary_name }} ./cmd/argus
+
+      - name: Package Archive (Unix)
+        if: matrix.goos != 'windows'
+        shell: bash
+        run: |
+          ARCHIVE_NAME="argus_${RELEASE_TAG}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          cd dist
+          cp ../README.md ../LICENSE .
+          tar -czvf "../${ARCHIVE_NAME}" "${{ matrix.binary_name }}" README.md LICENSE
+          cd ..
+          shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+
+      - name: Package Archive (Windows)
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          ARCHIVE_NAME="argus_${RELEASE_TAG}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          cd dist
+          cp ../README.md ../LICENSE .
+          7z a "../${ARCHIVE_NAME}" "${{ matrix.binary_name }}" README.md LICENSE
+          cd ..
+          sha256sum "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            argus_*.*
+          retention-days: 2
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Determine Release Tag
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          fi
+          echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate Combined Checksums
+        shell: bash
+        run: |
+          cd artifacts
+          cat *.sha256 > checksums.txt
+          rm -f *.sha256
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "Argus ${{ env.RELEASE_TAG }}"
+          files: |
+            artifacts/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

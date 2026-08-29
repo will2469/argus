@@ -14,6 +14,12 @@ import (
 	"github.com/will2469/argus/shared/config"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	if isStandaloneRun(os.Args[1:]) {
 		runStandalone()
@@ -32,7 +38,9 @@ func isStandaloneRun(args []string) bool {
 			strings.HasPrefix(arg, "--dirs") || strings.HasPrefix(arg, "-dirs") ||
 			strings.HasPrefix(arg, "--migrations") || strings.HasPrefix(arg, "-migrations") ||
 			arg == "--no-report" || arg == "-no-report" ||
-			arg == "--help" || arg == "audit" || arg == "report" {
+			arg == "-h" || arg == "--help" || arg == "help" ||
+			arg == "-v" || arg == "--version" || arg == "version" ||
+			arg == "audit" || arg == "report" {
 			return true
 		}
 		if strings.HasPrefix(arg, "-flags") || strings.HasPrefix(arg, "-V") || strings.HasPrefix(arg, "-test=") {
@@ -58,7 +66,10 @@ func runStandalone() {
 
 	for _, arg := range os.Args[1:] {
 		switch {
-		case arg == "-h" || arg == "--help":
+		case arg == "-v" || arg == "--version" || arg == "version":
+			fmt.Printf("argus %s (commit: %s, built: %s)\n", version, commit, date)
+			os.Exit(0)
+		case arg == "-h" || arg == "--help" || arg == "help":
 			printUsage()
 			os.Exit(0)
 		case arg == "--no-report" || arg == "-no-report":
@@ -185,5 +196,6 @@ func printUsage() {
 	fmt.Println("  --dirs=<d1,d2>          Comma-separated list of Go directories/files to scan")
 	fmt.Println("  --migrations=<d1,d2>    Comma-separated list of SQL migration directories")
 	fmt.Println("  --no-report             Run in memory without generating a report file")
+	fmt.Println("  -v, --version           Show version information and exit")
 	fmt.Println("  -h, --help              Show this help message")
 }
