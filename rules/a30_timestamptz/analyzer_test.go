@@ -2,6 +2,7 @@ package a30_timestamptz
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/analysis/analysistest"
@@ -86,3 +87,18 @@ func TestScanMigrationDir_TestData(t *testing.T) {
 		t.Fatalf("expected exactly 1 issue from testdata, got %d: %v", len(issues), issues)
 	}
 }
+
+func TestCheckMigration_ParseError(t *testing.T) {
+	badSQL := `ALTER TABEL corrupt SYNTAX;;;`
+	issues := CheckMigration("005_bad.sql", badSQL, nil)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for malformed SQL, got %d", len(issues))
+	}
+	if issues[0].Rule != "ARGUS-E001" {
+		t.Errorf("expected rule ARGUS-E001, got %s", issues[0].Rule)
+	}
+	if !strings.Contains(issues[0].Message, "unable to analyze migration") {
+		t.Errorf("unexpected error message: %s", issues[0].Message)
+	}
+}
+

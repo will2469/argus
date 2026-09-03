@@ -29,6 +29,7 @@ type OptionsConfig struct {
 	ScanDirs      []string `yaml:"scan_dirs"`      // Directories/files to scan for Go code
 	MigrationDirs []string `yaml:"migration_dirs"` // Directories containing SQL migrations
 	Telemetry     *bool    `yaml:"telemetry"`      // Controls external issue reporting (default: true)
+	StrictMode    *bool    `yaml:"strict_mode"`    // Controls failure on parse errors (default: true)
 }
 
 // RuleConfig defines parameters for an individual rule.
@@ -49,6 +50,7 @@ func DefaultConfig() *Config {
 			ScanDirs:      []string{"."},
 			MigrationDirs: []string{"migrations"},
 			Telemetry:     &defaultTelemetry,
+			StrictMode:    &defaultTelemetry, // default: true
 		},
 		Rules: make(map[string]RuleConfig),
 	}
@@ -79,6 +81,25 @@ func (c *Config) IsTelemetryEnabled() bool {
 	}
 	if c != nil && c.Options.Telemetry != nil {
 		return *c.Options.Telemetry
+	}
+	return true
+}
+
+// IsStrictMode checks whether strict parsing mode is enabled.
+// In strict mode, unparseable migrations fail the audit; in permissive mode, they are logged as warnings.
+// ARGUS_STRICT environment variable takes precedence over .argus.yaml.
+func (c *Config) IsStrictMode() bool {
+	if env := os.Getenv("ARGUS_STRICT"); env != "" {
+		norm := strings.ToLower(strings.TrimSpace(env))
+		if norm == "false" || norm == "0" || norm == "off" || norm == "no" {
+			return false
+		}
+		if norm == "true" || norm == "1" || norm == "on" || norm == "yes" {
+			return true
+		}
+	}
+	if c != nil && c.Options.StrictMode != nil {
+		return *c.Options.StrictMode
 	}
 	return true
 }

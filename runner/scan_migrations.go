@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/directives"
 	"github.com/will2469/argus/shared/migration"
+	"github.com/will2469/argus/shared/sqlparser"
 )
 
 // scanMigrationDirectories runs all migration checker rules across specified migration directories.
@@ -52,6 +54,22 @@ func scanMigrationDirectories(migrationDirs []string, rootDir string, tracker *M
 				continue
 			}
 			content := string(data)
+
+			// Pre-validate PostgreSQL AST parseability (prevent silent failure / false negatives)
+			if _, err := sqlparser.Parse(content); err != nil {
+				msg := fmt.Sprintf("unable to analyze migration; PostgreSQL parser rejected statement: %v", err)
+				if cfg == nil || cfg.IsStrictMode() {
+					addMigrationIssue(migration.Issue{
+						Filename: file,
+						Line:     1,
+						Message:  msg,
+					}, "ARGUS-E001", rootDir, tracker)
+				} else {
+					fmt.Fprintf(os.Stderr, "⚠️ [ARGUS-E001] WARNING: %s: %s (permissive mode)\n", file, msg)
+				}
+				continue
+			}
+
 			fileDm := directives.ParseSQLDirectives(content, file)
 
 			// A11: Destructive Migrations

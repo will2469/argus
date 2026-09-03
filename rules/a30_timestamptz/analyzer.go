@@ -3,6 +3,7 @@
 package a30_timestamptz
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"golang.org/x/tools/go/analysis"
@@ -47,7 +48,15 @@ func run(pass *analysis.Pass) (interface{}, error) {
 func CheckMigration(filename, content string, dm *directives.DirectiveMap) []migration.Issue {
 	tree, err := sqlparser.Parse(content)
 	if err != nil {
-		return nil
+		return []migration.Issue{
+			{
+				Rule:     "ARGUS-E001",
+				Filename: filename,
+				Line:     1,
+				Message:  fmt.Sprintf("unable to analyze migration; PostgreSQL parser rejected statement: %v", err),
+				Severity: "CRITICAL",
+			},
+		}
 	}
 
 	return InspectTableStatements(filename, content, tree, dm)

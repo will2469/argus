@@ -40,6 +40,8 @@ func isStandaloneRun(args []string) bool {
 			strings.HasPrefix(arg, "--dirs") || strings.HasPrefix(arg, "-dirs") ||
 			strings.HasPrefix(arg, "--migrations") || strings.HasPrefix(arg, "-migrations") ||
 			arg == "--no-report" || arg == "-no-report" ||
+			arg == "--strict" || arg == "-strict" ||
+			arg == "--permissive" || arg == "-permissive" ||
 			arg == "-h" || arg == "--help" || arg == "-help" || arg == "help" ||
 			arg == "-v" || arg == "--version" || arg == "-version" || arg == "version" ||
 			arg == "-u" || arg == "--update" || arg == "-update" || arg == "update" || arg == "upgrade" ||
@@ -68,6 +70,7 @@ func runStandalone() {
 		noReport      bool
 		scanDirs      []string
 		migrationDirs []string
+		strictFlag    *bool
 	)
 
 	args := os.Args[1:]
@@ -129,6 +132,12 @@ func runStandalone() {
 				i++
 				appendDirs(&migrationDirs, args[i])
 			}
+		case arg == "--strict" || arg == "-strict":
+			t := true
+			strictFlag = &t
+		case arg == "--permissive" || arg == "-permissive":
+			f := false
+			strictFlag = &f
 		case !strings.HasPrefix(arg, "-"):
 			if arg == "audit" || arg == "report" || arg == "check" || arg == "scan" {
 				continue
@@ -162,6 +171,9 @@ func runStandalone() {
 	}
 
 	appCfg, _ := config.LoadConfig(rootDir)
+	if strictFlag != nil && appCfg != nil {
+		appCfg.Options.StrictMode = strictFlag
+	}
 
 	cfg := runner.AuditConfig{
 		RootDir:       rootDir,
@@ -250,6 +262,8 @@ func printUsage() {
 	fmt.Println("  --dirs=<d1,d2>          Comma-separated list of Go directories/files to scan")
 	fmt.Println("  --migrations=<d1,d2>    Comma-separated list of SQL migration directories")
 	fmt.Println("  --no-report             Run in memory without generating a report file")
+	fmt.Println("  --strict                Fail scan if any migration cannot be parsed (default)")
+	fmt.Println("  --permissive            Emit warning instead of failure on unparseable migrations")
 	fmt.Println("  -u, --update            Alias for 'argus update'")
 	fmt.Println("  -v, --version           Show version information and exit")
 	fmt.Println("  -h, --help              Show this help message")
