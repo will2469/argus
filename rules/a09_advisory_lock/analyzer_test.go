@@ -8,11 +8,14 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	analysistest.Run(t, testdata, Analyzer, "a09")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/correctness/a09/positive",
+		"./tests/correctness/a09/negative",
+	)
 }
 
 func TestInspectAdvisorySQL_Unit(t *testing.T) {

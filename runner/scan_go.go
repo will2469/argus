@@ -18,6 +18,7 @@ import (
 	"github.com/will2469/argus/rules/a06_runtime_ddl"
 	"github.com/will2469/argus/rules/a07_error_leak"
 	"github.com/will2469/argus/rules/a08_tx_io"
+	"github.com/will2469/argus/rules/a09_advisory_lock"
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
@@ -195,7 +196,20 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 		})
 	}
 
-	// 10. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
+	// 10. ARGUS-A09: Advisory Lock Scope & Namespace Hygiene
+	a09Issues := a09_advisory_lock.InspectFile(pass, fset, node, dm)
+	for _, issue := range a09Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "UNSAFE_ADVISORY_LOCK",
+			Message:  issue.Message,
+			Category: "reliability",
+		})
+	}
+
+	// 11. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
 	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
 	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {

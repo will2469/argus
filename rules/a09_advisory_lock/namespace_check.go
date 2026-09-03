@@ -3,6 +3,7 @@ package a09_advisory_lock
 
 import (
 	"go/ast"
+	"go/token"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -11,7 +12,7 @@ import (
 )
 
 // CheckAdvisoryHelperArgs inspects Go calls to WithAdvisoryLock and ExecuteLockedTx.
-func CheckAdvisoryHelperArgs(pass *analysis.Pass, call *ast.CallExpr, dm *directives.DirectiveMap) {
+func CheckAdvisoryHelperArgs(pass *analysis.Pass, fset *token.FileSet, call *ast.CallExpr, dm *directives.DirectiveMap, issues *[]Issue) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return
@@ -36,14 +37,17 @@ func CheckAdvisoryHelperArgs(pass *analysis.Pass, call *ast.CallExpr, dm *direct
 		}
 	}
 
-	if lockArg == nil || dm.IsIgnored(pass.Fset, lockArg.Pos(), RuleCode) {
+	if lockArg == nil || (fset != nil && dm != nil && dm.IsIgnored(fset, lockArg.Pos(), RuleCode)) {
 		return
 	}
 
 	if lit, ok := lockArg.(*ast.BasicLit); ok && lit.Kind.String() == "STRING" {
 		raw := strings.Trim(lit.Value, "`\"")
 		if raw == "" {
-			pass.Reportf(lockArg.Pos(), "[%s] empty advisory lock name; must provide a namespaced identifier", RuleCode)
+			*issues = append(*issues, Issue{
+				Pos:     lockArg.Pos(),
+				Message: "empty advisory lock name; must provide a namespaced identifier",
+			})
 		}
 	}
 }

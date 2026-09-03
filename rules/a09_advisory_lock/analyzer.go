@@ -3,6 +3,7 @@
 package a09_advisory_lock
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"strings"
@@ -27,6 +28,134 @@ var Analyzer = &analysis.Analyzer{
 	},
 }
 
+// Issue describes a detected violation of ARGUS-A09.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
+
+// InspectFile inspects an AST file for unsafe advisory lock usages.
+// Can be called with pass == nil in standalone CLI runner mode.
+func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	if file == nil {
+		return nil
+	}
+	if fset == nil && pass != nil {
+		fset = pass.Fset
+	}
+
+	pos := fset.Position(file.Package)
+	if strings.HasSuffix(pos.Filename, "_test.go") {
+		return nil
+	}
+
+	var issues []Issue
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			checkDBCallAdvisoryLock(fset, call, fn.Body, dm, &issues)
+			CheckAdvisoryHelperArgs(pass, fset, call, dm, &issues)
+			return true
+		})
+	}
+
+	return issues
+}
+
+func checkDBCallAdvisoryLock(fset *token.FileSet, call *ast.CallExpr, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
+		return
+	}
+
+	// Filter non-db receivers
+	if id, ok := sel.X.(*ast.Ident); ok {
+		switch strings.ToLower(id.Name) {
+		case "log", "logger", "search", "client", "http", "queue", "cmd", "runner", "cache":
+			return
+		}
+	}
+
+	queries := extractAllQueryStrings(call, body)
+	for _, query := range queries {
+		if strings.TrimSpace(query) == "" {
+			continue
+		}
+		reportAdvisoryViolations(fset, query, call.Pos(), dm, issues)
+	}
+}
+
+func extractAllQueryStrings(call *ast.CallExpr, body *ast.BlockStmt) []string {
+	if call == nil || len(call.Args) == 0 {
+		return nil
+	}
+
+	var results []string
+	for _, arg := range call.Args {
+		switch e := arg.(type) {
+		case *ast.BasicLit:
+			if e.Kind == token.STRING {
+				results = append(results, strings.Trim(e.Value, "`\""))
+			}
+		case *ast.Ident:
+			if body != nil {
+				ast.Inspect(body, func(n ast.Node) bool {
+					assign, ok := n.(*ast.AssignStmt)
+					if !ok || assign.Pos() >= call.Pos() {
+						return true
+					}
+					for i, lhs := range assign.Lhs {
+						if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
+							if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+								results = append(results, strings.Trim(lit.Value, "`\""))
+							}
+						}
+					}
+					return true
+				})
+			}
+		}
+	}
+
+	if len(results) == 0 {
+		if s, ok := callsite.ExtractQueryString(call); ok {
+			results = append(results, s)
+		}
+	}
+
+	return results
+}
+
+func reportAdvisoryViolations(fset *token.FileSet, query string, pos token.Pos, dm *directives.DirectiveMap, issues *[]Issue) {
+	if fset != nil && dm != nil && dm.IsIgnored(fset, pos, RuleCode) {
+		return
+	}
+
+	violations := InspectAdvisorySQL(query)
+	for _, v := range violations {
+		switch v.Type {
+		case ViolationSessionLock:
+			*issues = append(*issues, Issue{
+				Pos:     pos,
+				Message: fmt.Sprintf("forbidden session-level advisory lock %q; use transaction-scoped \"pg_advisory_xact_lock\" or \"argus.WithAdvisoryLock\" to prevent connection pool leaks", v.FuncName),
+			})
+		case ViolationHardcodedIntKey:
+			*issues = append(*issues, Issue{
+				Pos:     pos,
+				Message: "hardcoded integer advisory lock key in SQL; use registered namespace constants or argus.LockKey(domain, resource) to prevent collision",
+			})
+		}
+	}
+}
+
 func run(pass *analysis.Pass) (interface{}, error) {
 	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
 	if !cfg.IsRuleEnabled(RuleCode) {
@@ -36,51 +165,11 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
 
 	for _, file := range pass.Files {
-		pos := pass.Fset.Position(file.Package)
-		if strings.HasSuffix(pos.Filename, "_test.go") {
-			continue
+		issues := InspectFile(pass, pass.Fset, file, dm)
+		for _, iss := range issues {
+			pass.Reportf(iss.Pos, "[%s] %s", RuleCode, iss.Message)
 		}
-
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			checkDBCallAdvisoryLock(pass, call, dm)
-			CheckAdvisoryHelperArgs(pass, call, dm)
-			return true
-		})
 	}
 
 	return nil, nil
-}
-
-func checkDBCallAdvisoryLock(pass *analysis.Pass, call *ast.CallExpr, dm *directives.DirectiveMap) {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
-		return
-	}
-
-	query, found := callsite.ExtractQueryString(call)
-	if !found || strings.TrimSpace(query) == "" {
-		return
-	}
-
-	reportAdvisoryViolations(pass, query, call.Pos(), dm)
-}
-
-func reportAdvisoryViolations(pass *analysis.Pass, query string, pos token.Pos, dm *directives.DirectiveMap) {
-	if dm.IsIgnored(pass.Fset, pos, RuleCode) {
-		return
-	}
-
-	violations := InspectAdvisorySQL(query)
-	for _, v := range violations {
-		switch v.Type {
-		case ViolationSessionLock:
-			pass.Reportf(pos, "[%s] forbidden session-level advisory lock %q; use transaction-scoped \"pg_advisory_xact_lock\" or \"argus.WithAdvisoryLock\" to prevent connection pool leaks", RuleCode, v.FuncName)
-		case ViolationHardcodedIntKey:
-			pass.Reportf(pos, "[%s] hardcoded integer advisory lock key in SQL; use registered namespace constants or argus.LockKey(domain, resource) to prevent collision", RuleCode)
-		}
-	}
 }
