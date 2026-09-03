@@ -56,7 +56,7 @@ func RunAuditWithConfig(cfg AuditConfig) (*AuditResult, error) {
 			continue
 		}
 		tracker.IncrementScannedFiles(1)
-		scanGoSourceFile(file, rootDir, tracker)
+		scanGoSourceFile(file, rootDir, tracker, appCfg)
 	}
 
 	// 2. Scan migration SQL files with all migration rules (A11, A13, A15, A27, A28, A29, A30)

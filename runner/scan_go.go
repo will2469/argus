@@ -33,10 +33,11 @@ import (
 	"github.com/will2469/argus/rules/a24_tenant_leak"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
 	"github.com/will2469/argus/shared/callsite"
+	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/directives"
 )
 
-func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
+func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg *config.Config) {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
 	if err != nil {
@@ -360,7 +361,8 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 	}
 
 	// 5. ARGUS-A24: Multi-tenant table isolation leak (anti-BOLA)
-	a24Issues := a24_tenant_leak.InspectFile(pass, fset, node, dm, nil)
+	tcA24 := a24_tenant_leak.LoadTenantConfig(appCfg)
+	a24Issues := a24_tenant_leak.InspectFile(pass, fset, node, dm, tcA24)
 	for _, issue := range a24Issues {
 		pos := fset.Position(issue.Pos)
 		tracker.AddIssue(Issue{
