@@ -139,6 +139,3 @@ func SafeQueryInsideRLSBranch(ctx context.Context, db DB, tenantID string, isSpe
 	}
 	return nil, nil
 }
-
-
-

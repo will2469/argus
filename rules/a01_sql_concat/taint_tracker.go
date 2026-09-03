@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -112,58 +111,20 @@ func (t *TaintTracker) markSources(fn *ast.FuncDecl) {
 	}
 }
 
-func isTaintSourceAST(name string, typeStr string) bool {
-	switch strings.ToLower(name) {
-	case "id", "nik", "email", "userid", "user_id", "param", "params", "query", "q",
-		"search", "filter", "sort", "order", "orderby", "order_by", "table", "column", "rawsql", "sql":
-		return true
-	}
-	if typeStr != "" {
-		if strings.HasSuffix(typeStr, "Request") || strings.HasSuffix(typeStr, "DTO") ||
-			strings.HasSuffix(typeStr, "Input") || strings.HasSuffix(typeStr, "Params") ||
-			strings.HasSuffix(typeStr, "Filter") || strings.Contains(typeStr, "http.Request") {
-			return true
-		}
-	}
-	return false
-}
-
-func astExprToString(e ast.Expr) string {
-	switch x := e.(type) {
-	case *ast.Ident:
-		return x.Name
-	case *ast.StarExpr:
-		return "*" + astExprToString(x.X)
-	case *ast.SelectorExpr:
-		return astExprToString(x.X) + "." + x.Sel.Name
-	default:
-		return ""
-	}
-}
-
-func isTaintSource(name string, typ types.Type) bool {
-	switch strings.ToLower(name) {
-	case "id", "nik", "email", "userid", "user_id", "param", "params", "query", "q",
-		"search", "filter", "sort", "order", "orderby", "order_by", "table", "column", "rawsql", "sql":
-		return true
-	}
-	if typ != nil {
-		s := typ.String()
-		if strings.HasSuffix(s, "Request") || strings.HasSuffix(s, "DTO") ||
-			strings.HasSuffix(s, "Input") || strings.HasSuffix(s, "Params") ||
-			strings.HasSuffix(s, "Filter") || strings.Contains(s, "http.Request") {
-			return true
-		}
-	}
-	return false
-}
-
 func (t *TaintTracker) propagateAssign(stmt *ast.AssignStmt) {
 	tainted := false
 	for _, rhs := range stmt.Rhs {
 		if t.IsTaintedExpr(rhs) {
 			tainted = true
 			break
+		}
+	}
+	if stmt.Tok == token.ADD_ASSIGN {
+		for _, lhs := range stmt.Lhs {
+			if t.IsTaintedExpr(lhs) {
+				tainted = true
+				break
+			}
 		}
 	}
 	for _, lhs := range stmt.Lhs {
@@ -205,17 +166,15 @@ func (t *TaintTracker) IsTaintedExpr(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.BasicLit:
 		return false // String constants are safe compile-time literals
+	case *ast.ParenExpr:
+		return t.IsTaintedExpr(x.X)
+	case *ast.UnaryExpr:
+		return t.IsTaintedExpr(x.X)
+	case *ast.StarExpr:
+		return t.IsTaintedExpr(x.X)
 	case *ast.BinaryExpr:
 		if x.Op == token.ADD {
-			_, xLit := x.X.(*ast.BasicLit)
-			_, yLit := x.Y.(*ast.BasicLit)
-			if xLit && yLit {
-				return false
-			}
-			if (xLit && IsSanitized(x.Y)) || (yLit && IsSanitized(x.X)) {
-				return false
-			}
-			return t.IsTaintedExpr(x.X) || t.IsTaintedExpr(x.Y)
+			return !IsSafeConcat(x)
 		}
 	case *ast.Ident:
 		if t.pass != nil && t.pass.TypesInfo != nil {

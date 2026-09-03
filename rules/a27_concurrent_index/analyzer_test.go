@@ -98,4 +98,3 @@ func TestCheckMigration_ParseError(t *testing.T) {
 		t.Errorf("unexpected error message: %s", issues[0].Message)
 	}
 }
-

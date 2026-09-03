@@ -54,15 +54,15 @@ func TestIsUnsafeSQL_Sanitizer(t *testing.T) {
 }
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	analysistest.Run(t, testdata, Analyzer, "a01")
+	analysistest.Run(t, rootDir, Analyzer, "./tests/correctness/a01/positive", "./tests/correctness/a01/negative")
 }
 
 func TestInspectFile_StandaloneParity(t *testing.T) {
-	fixturePath := filepath.Join("..", "..", "testdata", "src", "a01", "a01.go")
+	fixturePath := filepath.Join("..", "..", "tests", "correctness", "a01", "positive", "positive.go")
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, fixturePath, nil, parser.ParseComments)
 	if err != nil {
@@ -73,11 +73,11 @@ func TestInspectFile_StandaloneParity(t *testing.T) {
 	issues := InspectFile(nil, fset, file, dm)
 
 	expectedLines := map[int]bool{
-		53:  true,
-		59:  true,
-		63:  true,
-		71:  true,
-		118: true,
+		17: true,
+		24: true,
+		34: true,
+		41: true,
+		50: true,
 	}
 
 	for _, issue := range issues {
@@ -130,4 +130,3 @@ func TestCompliant(logger Logger, client HTTPClient, q Queue, search SearchEngin
 		t.Fatalf("expected 0 issues for non-DB negative corpus, got %d: %+v", len(issues), issues)
 	}
 }
-

@@ -115,5 +115,3 @@ func extractSimpleString(expr ast.Expr) (string, bool) {
 	}
 	return "", false
 }
-
-

@@ -61,4 +61,3 @@ func TestCalculateCheckedComponents(t *testing.T) {
 		t.Errorf("[A14] expected fallback to 100 files, got %d", val)
 	}
 }
-

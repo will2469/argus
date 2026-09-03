@@ -109,7 +109,7 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 
 				if !IsArgumentSanitized(argExpr, currentFuncBody) {
 					issues = append(issues, Issue{
-						Pos: argExpr.Pos(),
+						Pos:     argExpr.Pos(),
 						Message: fmt.Sprintf("unsanitized wildcard parameter bound to LIKE/ILIKE clause ($%d); risk of pattern language hijacking, PII exposure, and sequential scan DoS (CWE-89, CWE-400)", paramIdx),
 					})
 				}

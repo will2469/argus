@@ -104,4 +104,3 @@ func SafeSearchEngineLoop(ctx context.Context, search SearchEngine, items []stri
 		_ = search.Query(ctx, item)
 	}
 }
-

@@ -47,9 +47,9 @@ func ExtractColumnStorage(colDef *pg_query.ColumnDef) StorageMode {
 // GeneratedColumnInfo contains metadata regarding generated columns in PostgreSQL DDL.
 type GeneratedColumnInfo struct {
 	IsGenerated   bool
-	GeneratedWhen string          // "a" for ALWAYS, "d" for BY DEFAULT
-	Expression    *pg_query.Node  // AST of the generation expression
-	IsStored      bool            // In PG <= 18, all generated columns are STORED
+	GeneratedWhen string         // "a" for ALWAYS, "d" for BY DEFAULT
+	Expression    *pg_query.Node // AST of the generation expression
+	IsStored      bool           // In PG <= 18, all generated columns are STORED
 }
 
 // ExtractGeneratedColumnInfo inspects ColumnDef constraints for CONSTR_GENERATED.

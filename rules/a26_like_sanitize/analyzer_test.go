@@ -234,4 +234,3 @@ func fn(userInput string, trusted bool) {
 		return true
 	})
 }
-

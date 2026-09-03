@@ -132,6 +132,10 @@ func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr, sel *ast.SelectorEx
 		}
 	}
 
+	if hasSQLArgument(call) {
+		return true
+	}
+
 	recvName := ""
 	if id, ok := sel.X.(*ast.Ident); ok {
 		recvName = strings.ToLower(id.Name)
@@ -141,18 +145,13 @@ func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr, sel *ast.SelectorEx
 		return false
 	}
 
-	if isDatabaseReceiverName(recvName) {
-		return true
-	}
-
-	return hasSQLArgument(call)
+	return isDatabaseReceiverName(recvName)
 }
 
 func isNonDatabaseReceiverName(name string) bool {
 	switch name {
 	case "logger", "log", "slog", "zap", "http", "client", "httpclient",
-		"queue", "search", "searchengine", "cmd", "command", "os", "exec",
-		"metrics", "redis", "cache", "memcache", "url", "req", "response":
+		"queue", "search", "searchengine", "cmd", "command", "os":
 		return true
 	}
 	return false
@@ -160,71 +159,12 @@ func isNonDatabaseReceiverName(name string) bool {
 
 func isDatabaseReceiverName(name string) bool {
 	switch name {
-	case "db", "pool", "tx", "conn", "queries", "querier", "database", "store", "repo", "repository", "r":
+	case "db", "pool", "tx", "conn", "queries", "querier", "database", "store", "repo", "repository", "r", "exec":
 		return true
 	}
-	for _, suffix := range []string{"db", "pool", "tx", "conn", "repo", "store"} {
+	for _, suffix := range []string{"db", "pool", "tx", "conn", "repo", "store", "exec"} {
 		if strings.HasSuffix(name, suffix) {
 			return true
-		}
-	}
-	return false
-}
-
-func hasSQLArgument(call *ast.CallExpr) bool {
-	sqlArg := extractSQLArgument(call)
-	if sqlArg == nil {
-		return false
-	}
-	if s, ok := extractSimpleString(sqlArg); ok {
-		upper := strings.ToUpper(strings.TrimSpace(s))
-		for _, prefix := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "CREATE", "DROP", "ALTER"} {
-			if strings.HasPrefix(upper, prefix) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func extractSimpleString(e ast.Expr) (string, bool) {
-	switch x := e.(type) {
-	case *ast.BasicLit:
-		if x.Kind == token.STRING && len(x.Value) >= 2 {
-			return x.Value[1 : len(x.Value)-1], true
-		}
-	case *ast.BinaryExpr:
-		if x.Op == token.ADD {
-			return extractSimpleString(x.X)
-		}
-	}
-	return "", false
-}
-
-func extractSQLArgument(call *ast.CallExpr) ast.Expr {
-	if len(call.Args) == 0 {
-		return nil
-	}
-	if len(call.Args) >= 2 {
-		if isContextArg(call.Args[0]) {
-			return call.Args[1]
-		}
-		return call.Args[0]
-	}
-	return call.Args[0]
-}
-
-func isContextArg(arg ast.Expr) bool {
-	if id, ok := arg.(*ast.Ident); ok {
-		lower := strings.ToLower(id.Name)
-		return lower == "ctx" || lower == "context" || strings.HasPrefix(lower, "ctx")
-	}
-	if call, ok := arg.(*ast.CallExpr); ok {
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-			lower := strings.ToLower(sel.Sel.Name)
-			if lower == "context" || lower == "background" || lower == "todo" {
-				return true
-			}
 		}
 	}
 	return false
@@ -241,17 +181,13 @@ func isUnsafeSQL(e ast.Expr, tracker *TaintTracker) bool {
 	switch x := e.(type) {
 	case *ast.BasicLit:
 		return false // Pure string literal is safe
+	case *ast.ParenExpr:
+		return isUnsafeSQL(x.X, tracker)
+	case *ast.StarExpr:
+		return isUnsafeSQL(x.X, tracker)
 	case *ast.BinaryExpr:
 		if x.Op == token.ADD {
-			_, xLit := x.X.(*ast.BasicLit)
-			_, yLit := x.Y.(*ast.BasicLit)
-			if xLit && yLit {
-				return false
-			}
-			if (xLit && IsSanitized(x.Y)) || (yLit && IsSanitized(x.X)) {
-				return false
-			}
-			return true
+			return !IsSafeConcat(x)
 		}
 	case *ast.CallExpr:
 		if IsFormattingCall(x, tracker) {

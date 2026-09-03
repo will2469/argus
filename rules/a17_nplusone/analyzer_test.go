@@ -86,4 +86,3 @@ func TestIsDBQueryCall_Rejection(t *testing.T) {
 		t.Errorf("call on db.Query must be identified as a DB query")
 	}
 }
-

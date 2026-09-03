@@ -170,5 +170,3 @@ func containsTenantColumn(node *pg_query.Node, targetCols map[string]bool) bool 
 	}
 	return false
 }
-
-

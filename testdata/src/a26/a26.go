@@ -116,5 +116,3 @@ func SafeQueryInsideBranch(ctx context.Context, db DB, keyword string, trusted b
 	}
 	return nil, nil
 }
-
-

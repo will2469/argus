@@ -109,14 +109,14 @@ func checkUpdate(upd *pg_query.UpdateStmt, tc *TenantConfig) (bool, string) {
 	}
 
 	table := strings.ToLower(upd.Relation.Relname)
-		targetCols := map[string]bool{
-			strings.ToLower(tc.TenantColumn): true,
-			"tenant_id":                      true,
-			"org_id":                         true,
-			"organization_id":                true,
-		}
-		if tc.IsTenantTable(table) || containsTenantColumn(upd.WhereClause, targetCols) {
-			tr := TableRef{Name: table, Alias: table}
+	targetCols := map[string]bool{
+		strings.ToLower(tc.TenantColumn): true,
+		"tenant_id":                      true,
+		"org_id":                         true,
+		"organization_id":                true,
+	}
+	if tc.IsTenantTable(table) || containsTenantColumn(upd.WhereClause, targetCols) {
+		tr := TableRef{Name: table, Alias: table}
 		if !nodeEnforcesTableTenant(upd.WhereClause, tr, 1, targetCols) {
 			return true, fmt.Sprintf("UPDATE on multi-tenant table '%s' missing '%s' predicate; risk of cross-tenant data mutation (CWE-284, OWASP API1:2023 BOLA)", table, tc.TenantColumn)
 		}
@@ -146,8 +146,6 @@ func checkDelete(del *pg_query.DeleteStmt, tc *TenantConfig) (bool, string) {
 
 	return false, ""
 }
-
-
 
 func nodeEnforcesTableTenant(node *pg_query.Node, t TableRef, totalTenantTables int, targetCols map[string]bool) bool {
 	if node == nil {

@@ -223,4 +223,3 @@ func hasDBMethodSet(t types.Type) bool {
 
 	return hasQuery && hasExec
 }
-

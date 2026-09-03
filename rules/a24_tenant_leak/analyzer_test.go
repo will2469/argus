@@ -146,7 +146,6 @@ func TestCheckTenantQuery_AutoDetectTenantQuery(t *testing.T) {
 	}
 }
 
-
 func TestIsRLSActiveAt_DominanceAnalysis(t *testing.T) {
 	src := `package testpkg
 
@@ -215,4 +214,3 @@ func caseInsideBranch(isSpecial bool) {
 		})
 	}
 }
-
