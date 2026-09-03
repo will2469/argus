@@ -84,3 +84,37 @@ func IgnoredBadBuilder(ctx context.Context, db DBExecutor, req UserRequest) {
 	// argus:ignore ARGUS-A01 isolated admin query builder
 	db.Query(ctx, sb.String())
 }
+
+type Logger struct{}
+
+func (Logger) Exec(ctx context.Context, msg string) {}
+
+type HTTPClient struct{}
+
+func (HTTPClient) Exec(ctx context.Context, cmd string) {}
+
+type Queue struct{}
+
+func (Queue) Query(ctx context.Context, topic string) {}
+
+type SearchEngine struct{}
+
+func (SearchEngine) Query(ctx context.Context, q string) string { return q }
+
+func CompliantNonDBCalls(ctx context.Context, logger Logger, http HTTPClient, queue Queue, search SearchEngine, name string) {
+	// Compliant: non-DB calls using Exec/Query must NOT trigger ARGUS-A01
+	logger.Exec(ctx, "Starting process: "+name)
+	http.Exec(ctx, "cmd: "+name)
+	queue.Query(ctx, "job:"+name)
+	search.Query(ctx, "query: "+name)
+}
+
+type PlainDB interface {
+	Query(sql string, args ...any) (any, error)
+	Exec(sql string, args ...any) (any, error)
+}
+
+func BadSQLNoContext(db PlainDB, table string) {
+	db.Query("SELECT * FROM "+table, 123) // want `\[ARGUS-A01\] unsafe SQL concatenation or formatting`
+}
+

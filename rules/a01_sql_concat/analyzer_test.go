@@ -73,10 +73,11 @@ func TestInspectFile_StandaloneParity(t *testing.T) {
 	issues := InspectFile(nil, fset, file, dm)
 
 	expectedLines := map[int]bool{
-		53: true,
-		59: true,
-		63: true,
-		71: true,
+		53:  true,
+		59:  true,
+		63:  true,
+		71:  true,
+		118: true,
 	}
 
 	for _, issue := range issues {
@@ -94,3 +95,39 @@ func TestInspectFile_StandaloneParity(t *testing.T) {
 		}
 	}
 }
+
+func TestInspectFile_NegativeCorpus(t *testing.T) {
+	src := `package testpkg
+
+type Logger struct{}
+func (Logger) Exec(msg string) {}
+
+type HTTPClient struct{}
+func (HTTPClient) Exec(cmd string) {}
+
+type Queue struct{}
+func (Queue) Query(topic string) {}
+
+type SearchEngine struct{}
+func (SearchEngine) Query(q string) string { return q }
+
+func TestCompliant(logger Logger, client HTTPClient, q Queue, search SearchEngine, param string) {
+	logger.Exec("Starting process: " + param)
+	client.Exec("curl " + param)
+	q.Query("job:" + param)
+	search.Query("search: " + param)
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	dm := directives.ParseGoDirectives(file, fset)
+	issues := InspectFile(nil, fset, file, dm)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for non-DB negative corpus, got %d: %+v", len(issues), issues)
+	}
+}
+

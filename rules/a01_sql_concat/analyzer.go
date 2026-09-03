@@ -5,6 +5,7 @@ package a01_sql_concat
 import (
 	"go/ast"
 	"go/token"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -67,6 +68,10 @@ func InspectFileWithTracker(pass *analysis.Pass, fset *token.FileSet, file *ast.
 				return true
 			}
 
+			if !isDatabaseCall(pass, call, sel) {
+				return true
+			}
+
 			sqlArg := extractSQLArgument(call)
 			if sqlArg == nil {
 				return true
@@ -113,15 +118,116 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
+func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr, sel *ast.SelectorExpr) bool {
+	if call == nil || sel == nil {
+		return false
+	}
+
+	if pass != nil && pass.TypesInfo != nil {
+		if selType, ok := pass.TypesInfo.Selections[sel]; ok && selType.Recv() != nil {
+			return callsite.IsPgxOrSQLType(selType.Recv())
+		}
+		if tv, ok := pass.TypesInfo.Types[sel.X]; ok && tv.Type != nil {
+			return callsite.IsPgxOrSQLType(tv.Type)
+		}
+	}
+
+	recvName := ""
+	if id, ok := sel.X.(*ast.Ident); ok {
+		recvName = strings.ToLower(id.Name)
+	}
+
+	if isNonDatabaseReceiverName(recvName) {
+		return false
+	}
+
+	if isDatabaseReceiverName(recvName) {
+		return true
+	}
+
+	return hasSQLArgument(call)
+}
+
+func isNonDatabaseReceiverName(name string) bool {
+	switch name {
+	case "logger", "log", "slog", "zap", "http", "client", "httpclient",
+		"queue", "search", "searchengine", "cmd", "command", "os", "exec",
+		"metrics", "redis", "cache", "memcache", "url", "req", "response":
+		return true
+	}
+	return false
+}
+
+func isDatabaseReceiverName(name string) bool {
+	switch name {
+	case "db", "pool", "tx", "conn", "queries", "querier", "database", "store", "repo", "repository", "r":
+		return true
+	}
+	for _, suffix := range []string{"db", "pool", "tx", "conn", "repo", "store"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSQLArgument(call *ast.CallExpr) bool {
+	sqlArg := extractSQLArgument(call)
+	if sqlArg == nil {
+		return false
+	}
+	if s, ok := extractSimpleString(sqlArg); ok {
+		upper := strings.ToUpper(strings.TrimSpace(s))
+		for _, prefix := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "CREATE", "DROP", "ALTER"} {
+			if strings.HasPrefix(upper, prefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func extractSimpleString(e ast.Expr) (string, bool) {
+	switch x := e.(type) {
+	case *ast.BasicLit:
+		if x.Kind == token.STRING && len(x.Value) >= 2 {
+			return x.Value[1 : len(x.Value)-1], true
+		}
+	case *ast.BinaryExpr:
+		if x.Op == token.ADD {
+			return extractSimpleString(x.X)
+		}
+	}
+	return "", false
+}
+
 func extractSQLArgument(call *ast.CallExpr) ast.Expr {
 	if len(call.Args) == 0 {
 		return nil
 	}
-	// Common signature: (ctx, sql, args...) or (sql, args...)
 	if len(call.Args) >= 2 {
-		return call.Args[1]
+		if isContextArg(call.Args[0]) {
+			return call.Args[1]
+		}
+		return call.Args[0]
 	}
 	return call.Args[0]
+}
+
+func isContextArg(arg ast.Expr) bool {
+	if id, ok := arg.(*ast.Ident); ok {
+		lower := strings.ToLower(id.Name)
+		return lower == "ctx" || lower == "context" || strings.HasPrefix(lower, "ctx")
+	}
+	if call, ok := arg.(*ast.CallExpr); ok {
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			lower := strings.ToLower(sel.Sel.Name)
+			if lower == "context" || lower == "background" || lower == "todo" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isUnsafeSQL(e ast.Expr, tracker *TaintTracker) bool {
