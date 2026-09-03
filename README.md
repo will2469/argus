@@ -224,6 +224,19 @@ jobs:
 
 ---
 
+## 🧪 1-SSOT Golden Corpus & Testing Methodology
+
+Argus is built with **zero tolerance for false positives and silent escapes**. Every rule is stress-tested against a 1-SSOT (Single Source of Truth) Golden Corpus:
+
+- **17-Pattern Corpus Matrix (Go AST):** Evaluates Positive (`P1`–`P5`), Negative (`N1`–`N5` with compiler whitelists), and Adversarial (`A1`–`A7` branching, reassignment, closures, generics, interface dispatch).
+- **M1–M7 Adversarial Matrix (SQL Migration):** Tests multi-statement batching, casing variations, quoted identifiers, schema qualifications, and non-leading index variants against native `libpg_query` C-AST trees.
+- **Dual-Path Parity Invariant:** Proves mathematically identical detections between the `go vet` analysis driver and standalone CLI runner.
+- **100% Adoption Gate:** Verified across all 30 rules via `TestGoldenCorpus_AdoptionMatrix`.
+
+📖 **Deep Dive:** Read the full [Argus 1-SSOT Golden Corpus & Adversarial Testing Methodology](https://github.com/will2469/argus/wiki/Testing-Methodology) in the wiki.
+
+---
+
 ## License
 
 Argus is open-source software licensed under the [MIT License](LICENSE).

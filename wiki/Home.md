@@ -131,3 +131,12 @@ options:
 Argus includes a native, zero-dependency **Model Context Protocol (MCP)** server enabling AI coding assistants (Cursor, Claude Desktop, VS Code Copilot, Antigravity) to autonomously audit database queries and schema migrations in real time.
 
 👉 **[Argus Model Context Protocol (MCP) Server Specification](MCP-Server.md)** (Full Architecture, Autonomous Triggering, HITL Protocols, and Telemetry Kill-Switch)
+
+---
+
+## Quality Assurance & Testing Methodology
+
+Argus is rigorously engineered with the **1-SSOT Golden Corpus & Adversarial Testing Methodology** across all 30 rules, guaranteeing zero false positives on compliant idioms and zero escapes on subtle AST obfuscations.
+
+👉 **[Argus 1-SSOT Golden Corpus & Adversarial Testing Methodology](Testing-Methodology.md)** (The 17-Pattern Matrix, M1–M7 Migration Evasion Vectors, Dual-Path Parity Invariant, and 100% Adoption Verification)
+
