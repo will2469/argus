@@ -31,6 +31,7 @@ import (
 	"github.com/will2469/argus/rules/a22_serializable_retry"
 	"github.com/will2469/argus/rules/a23_tx_timeout"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
+	"github.com/will2469/argus/rules/a25_expensive_cpu"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
 	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/config"
@@ -373,4 +374,16 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 			Category: "security",
 		})
 	}
+
+	// 22. ARGUS-A25: Expensive CPU Computations in Active Database Transactions
+	a25_expensive_cpu.InspectFile(node, fset, dm, func(pos token.Pos, format string, args ...any) {
+		p := fset.Position(pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     p.Line,
+			Rule:     "EXPENSIVE_CPU_IN_TX",
+			Message:  fmt.Sprintf(format, args...),
+			Category: "performance",
+		})
+	})
 }

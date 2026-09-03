@@ -20,6 +20,15 @@ func ExtractTxClosure(call *ast.CallExpr) *ast.FuncLit {
 			if lit, ok := arg.(*ast.FuncLit); ok {
 				return lit
 			}
+			if id, ok := arg.(*ast.Ident); ok && id.Obj != nil {
+				if assign, ok := id.Obj.Decl.(*ast.AssignStmt); ok {
+					for _, rhs := range assign.Rhs {
+						if lit, ok := rhs.(*ast.FuncLit); ok {
+							return lit
+						}
+					}
+				}
+			}
 		}
 	}
 	return nil

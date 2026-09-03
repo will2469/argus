@@ -42,55 +42,62 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			continue
 		}
 
-		funcDecls := make(map[string]*ast.FuncDecl)
-		for _, decl := range file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
-				funcDecls[fn.Name.Name] = fn
-			}
-		}
-
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-
-			inspectFunctionTransactions(pass, fn.Body, funcDecls, dm)
-		}
+		InspectFile(file, pass.Fset, dm, func(pos token.Pos, format string, args ...any) {
+			pass.Reportf(pos, format, args...)
+		})
 	}
 
 	return nil, nil
 }
 
-func inspectFunctionTransactions(pass *analysis.Pass, body *ast.BlockStmt, funcDecls map[string]*ast.FuncDecl, dm *directives.DirectiveMap) {
-	visited := make(map[string]bool)
+// InspectFile walks an AST file and reports violations of ARGUS-A25.
+func InspectFile(file *ast.File, fset *token.FileSet, dm *directives.DirectiveMap, report func(pos token.Pos, format string, args ...any)) {
+	if file == nil {
+		return
+	}
 
-	// 1. Check closure-based transactions (BeginFunc, ExecuteTx, ExecuteLockedTx, WithTx)
-	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
+	funcDecls := make(map[string]*ast.FuncDecl)
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+			funcDecls[fn.Name.Name] = fn
+		}
+	}
+
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
 		}
 
-		closure := ExtractTxClosure(call)
-		if closure != nil && closure.Body != nil {
-			ast.Inspect(closure.Body, func(innerNode ast.Node) bool {
-				CheckTxNode(innerNode, funcDecls, visited, pass.Fset, dm, func(pos token.Pos, reason string) {
-					pass.Reportf(pos, "[%s] %s", RuleCode, reason)
+		visited := make(map[string]bool)
+
+		// 1. Check closure-based transactions (BeginFunc, ExecuteTx, ExecuteLockedTx, WithTx)
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+
+			closure := ExtractTxClosure(call)
+			if closure != nil && closure.Body != nil {
+				ast.Inspect(closure.Body, func(innerNode ast.Node) bool {
+					CheckTxNode(innerNode, funcDecls, visited, fset, dm, func(pos token.Pos, reason string) {
+						report(pos, "[%s] %s", RuleCode, reason)
+					})
+					return true
+				})
+			}
+			return true
+		})
+
+		// 2. Check explicit transaction blocks (pool.Begin ... tx.Commit)
+		InspectExplicitTxRanges(fn.Body, func(stmt ast.Stmt) {
+			ast.Inspect(stmt, func(n ast.Node) bool {
+				CheckTxNode(n, funcDecls, visited, fset, dm, func(pos token.Pos, reason string) {
+					report(pos, "[%s] %s", RuleCode, reason)
 				})
 				return true
 			})
-		}
-		return true
-	})
-
-	// 2. Check explicit transaction blocks (pool.Begin ... tx.Commit)
-	InspectExplicitTxRanges(body, func(stmt ast.Stmt) {
-		ast.Inspect(stmt, func(n ast.Node) bool {
-			CheckTxNode(n, funcDecls, visited, pass.Fset, dm, func(pos token.Pos, reason string) {
-				pass.Reportf(pos, "[%s] %s", RuleCode, reason)
-			})
-			return true
 		})
-	})
+	}
 }
