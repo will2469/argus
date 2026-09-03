@@ -32,6 +32,7 @@ type OptionsConfig struct {
 	AllowedRoots  []string `yaml:"allowed_roots"`  // Explicitly allowed filesystem roots for MCP/scan
 	Telemetry     *bool    `yaml:"telemetry"`      // Controls external issue reporting (default: true)
 	StrictMode    *bool    `yaml:"strict_mode"`    // Controls failure on parse errors (default: true)
+	GHCliPath     string   `yaml:"gh_cli_path"`    // Absolute path to GitHub CLI binary (optional, bypasses PATH)
 }
 
 // RuleConfig defines parameters for an individual rule.
@@ -53,6 +54,7 @@ func DefaultConfig() *Config {
 			MigrationDirs: []string{"migrations"},
 			Telemetry:     &defaultTelemetry,
 			StrictMode:    &defaultTelemetry, // default: true
+			GHCliPath:     "",                // Empty = use PATH resolution
 		},
 		Rules: make(map[string]RuleConfig),
 	}
@@ -127,6 +129,15 @@ func (c *Config) GetAllowedRoots() []string {
 		return roots
 	}
 	return []string{baseDir}
+}
+
+// GetGHCliPath returns the configured absolute path to GitHub CLI binary.
+// If not configured, returns empty string to fall back to PATH resolution.
+func (c *Config) GetGHCliPath() string {
+	if c != nil && c.Options.GHCliPath != "" {
+		return filepath.Clean(c.Options.GHCliPath)
+	}
+	return ""
 }
 
 func formatRuleCode(i int) string {

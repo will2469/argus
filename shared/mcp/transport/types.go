@@ -40,6 +40,13 @@ var (
 // HandlerFunc defines the execution signature for a validated JSON-RPC request.
 type HandlerFunc func(ctx context.Context, req ParsedRequest) *mcperrors.JSONRPCResponse
 
+// RequestMeta represents per-request protocol metadata in MCP 2026-07-28.
+type RequestMeta struct {
+	ProtocolVersion    string          `json:"io.modelcontextprotocol/protocolVersion"`
+	ClientInfo         json.RawMessage `json:"io.modelcontextprotocol/clientInfo"`
+	ClientCapabilities json.RawMessage `json:"io.modelcontextprotocol/clientCapabilities"`
+}
+
 // ParsedRequest represents a strictly validated JSON-RPC 2.0 request or notification.
 type ParsedRequest struct {
 	JSONRPC        string
@@ -47,6 +54,7 @@ type ParsedRequest struct {
 	HasID          bool
 	Method         string
 	Params         json.RawMessage
+	Meta           *RequestMeta // nil if request did not include _meta (legacy clients)
 	IsNotification bool
 }
 

@@ -106,9 +106,72 @@ func TestIsTelemetryEnabled(t *testing.T) {
 	}
 
 	t.Setenv("ARGUS_TELEMETRY", "")
+	cfg2 := DefaultConfig()
 	disabled := false
-	cfg.Options.Telemetry = &disabled
-	if cfg.IsTelemetryEnabled() {
+	cfg2.Options.Telemetry = &disabled
+	if cfg2.IsTelemetryEnabled() {
 		t.Errorf("expected telemetry to be disabled via config struct")
+	}
+}
+
+func TestGetGHCliPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   *Config
+		expected string
+	}{
+		{
+			name:     "nil config returns empty",
+			config:   nil,
+			expected: "",
+		},
+		{
+			name:     "empty config returns empty",
+			config:   &Config{},
+			expected: "",
+		},
+		{
+			name: "no gh_cli_path configured returns empty",
+			config: &Config{
+				Options: OptionsConfig{},
+			},
+			expected: "",
+		},
+		{
+			name: "configured absolute path returned cleaned",
+			config: &Config{
+				Options: OptionsConfig{
+					GHCliPath: "/usr/local/bin/gh",
+				},
+			},
+			expected: "/usr/local/bin/gh",
+		},
+		{
+			name: "configured path with trailing slash cleaned",
+			config: &Config{
+				Options: OptionsConfig{
+					GHCliPath: "/usr/local/bin/gh/",
+				},
+			},
+			expected: "/usr/local/bin/gh",
+		},
+		{
+			name: "configured relative path cleaned",
+			config: &Config{
+				Options: OptionsConfig{
+					GHCliPath: "./bin/gh",
+				},
+			},
+			expected: "bin/gh",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.config.GetGHCliPath()
+			if result != tt.expected {
+				t.Errorf("GetGHCliPath() = %q, expected %q", result, tt.expected)
+			}
+		})
 	}
 }

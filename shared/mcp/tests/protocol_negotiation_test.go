@@ -11,8 +11,8 @@ import (
 )
 
 func TestInitialize_ProtocolVersionNegotiation(t *testing.T) {
-	// 1. Supported protocol version matches exactly
-	t.Run("supported_version_negotiated", func(t *testing.T) {
+	// 1a. Supported protocol version (2024-11-05) matches exactly
+	t.Run("supported_2024_version_negotiated", func(t *testing.T) {
 		req := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}` + "\n"
 		var out bytes.Buffer
 		_ = mcp.Serve(strings.NewReader(req), &out)
@@ -25,6 +25,23 @@ func TestInitialize_ProtocolVersionNegotiation(t *testing.T) {
 		resMap := resp.Result.(map[string]any)
 		if resMap["protocolVersion"] != "2024-11-05" {
 			t.Fatalf("expected protocolVersion=2024-11-05, got: %v", resMap["protocolVersion"])
+		}
+	})
+
+	// 1b. Supported protocol version (2026-07-28) matches exactly
+	t.Run("supported_2026_version_negotiated", func(t *testing.T) {
+		req := `{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2026-07-28"}}` + "\n"
+		var out bytes.Buffer
+		_ = mcp.Serve(strings.NewReader(req), &out)
+
+		var resp mcperrors.JSONRPCResponse
+		_ = json.Unmarshal(out.Bytes(), &resp)
+		if resp.Error != nil {
+			t.Fatalf("unexpected error: %v", resp.Error)
+		}
+		resMap := resp.Result.(map[string]any)
+		if resMap["protocolVersion"] != "2026-07-28" {
+			t.Fatalf("expected protocolVersion=2026-07-28, got: %v", resMap["protocolVersion"])
 		}
 	})
 

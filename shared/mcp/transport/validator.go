@@ -75,12 +75,36 @@ func ValidateJSONRPC(data []byte) (*ParsedRequest, *mcperrors.JSONRPCResponse) {
 	}
 
 	// 7. Validate params shape if present (MUST be structured: object or array)
+	var meta *RequestMeta
 	rawParams, paramsExists := rawMap["params"]
 	if paramsExists {
 		trimmedParams := bytes.TrimSpace(rawParams)
 		if !bytes.Equal(trimmedParams, []byte("null")) {
 			if len(trimmedParams) == 0 || (trimmedParams[0] != '{' && trimmedParams[0] != '[') {
 				return nil, mcperrors.ProtocolError(idVal, mcperrors.CodeInvalidRequest, "Invalid Request: params must be structured (object or array)")
+			}
+			if trimmedParams[0] == '{' {
+				var withMeta struct {
+					Meta struct {
+						ProtocolVersion    string          `json:"io.modelcontextprotocol/protocolVersion"`
+						FallbackVersion    string          `json:"protocolVersion"`
+						ClientInfo         json.RawMessage `json:"io.modelcontextprotocol/clientInfo"`
+						ClientCapabilities json.RawMessage `json:"io.modelcontextprotocol/clientCapabilities"`
+					} `json:"_meta"`
+				}
+				if err := json.Unmarshal(trimmedParams, &withMeta); err == nil {
+					v := withMeta.Meta.ProtocolVersion
+					if v == "" {
+						v = withMeta.Meta.FallbackVersion
+					}
+					if v != "" || len(withMeta.Meta.ClientInfo) > 0 || len(withMeta.Meta.ClientCapabilities) > 0 {
+						meta = &RequestMeta{
+							ProtocolVersion:    v,
+							ClientInfo:         withMeta.Meta.ClientInfo,
+							ClientCapabilities: withMeta.Meta.ClientCapabilities,
+						}
+					}
+				}
 			}
 		}
 	}
@@ -91,6 +115,7 @@ func ValidateJSONRPC(data []byte) (*ParsedRequest, *mcperrors.JSONRPCResponse) {
 		HasID:          hasID,
 		Method:         methodStr,
 		Params:         rawParams,
+		Meta:           meta,
 		IsNotification: !hasID,
 	}, nil
 }

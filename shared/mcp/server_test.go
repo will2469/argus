@@ -8,7 +8,7 @@ import (
 )
 
 func TestInitialize(t *testing.T) {
-	req := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}` + "\n"
+	req := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}` + "\n"
 
 	var out bytes.Buffer
 	err := serve(strings.NewReader(req), &out)
@@ -32,8 +32,8 @@ func TestInitialize(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected result to be map, got %T", resp.Result)
 	}
-	if result["protocolVersion"] != protocolVersion {
-		t.Fatalf("expected protocolVersion=%s, got %v", protocolVersion, result["protocolVersion"])
+	if result["protocolVersion"] != LatestProtocolVersion {
+		t.Fatalf("expected protocolVersion=%s, got %v", LatestProtocolVersion, result["protocolVersion"])
 	}
 }
 

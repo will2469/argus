@@ -30,7 +30,8 @@ func BuildPreview(id any, title, body, category, token string) *mcperrors.JSONRP
 }
 
 // SubmitViaGH performs outbound issue creation using GitHub CLI.
-func SubmitViaGH(id any, title, body, label string) *mcperrors.JSONRPCResponse {
+// If ghPath is provided, uses the absolute path; otherwise falls back to PATH resolution.
+func SubmitViaGH(id any, title, body, label, ghPath string) *mcperrors.JSONRPCResponse {
 	args := []string{"issue", "create",
 		"--repo", issueRepoSlug,
 		"--title", title,
@@ -38,7 +39,13 @@ func SubmitViaGH(id any, title, body, label string) *mcperrors.JSONRPCResponse {
 		"--label", label,
 	}
 
-	cmd := exec.Command("gh", args...)
+	// Use configured absolute path if available, otherwise fall back to PATH
+	binary := "gh"
+	if ghPath != "" {
+		binary = ghPath
+	}
+
+	cmd := exec.Command(binary, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		reason := fmt.Sprintf("gh command failed: %s", strings.TrimSpace(string(output)))

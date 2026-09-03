@@ -7,8 +7,9 @@ const (
 	CodeMethodNotFound       = -32601
 	CodeInvalidParams        = -32602
 	CodeInternalError        = -32603
-	CodeServerNotInitialized = -32002 // MCP and LSP standard: Server not initialized
-	CodeCancelled            = -32800 // MCP RequestCancelled specification
+	CodeServerNotInitialized       = -32002 // MCP and LSP standard: Server not initialized
+	CodeUnsupportedProtocolVersion = -32022 // MCP 2026-07-28 standard: Unsupported protocol version
+	CodeCancelled                  = -32800 // MCP RequestCancelled specification
 )
 
 // JSONRPCResponse represents an RFC-compliant JSON-RPC 2.0 response.

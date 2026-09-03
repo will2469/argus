@@ -138,3 +138,80 @@ func TestReportIssue_FallbackURLSemanticStatus(t *testing.T) {
 		t.Fatalf("expected browser creation URL in output, got: %s", text2)
 	}
 }
+
+func TestEscapeCodeFence(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "no backticks",
+			input:    "func foo() { return 42 }",
+			expected: "func foo() { return 42 }",
+		},
+		{
+			name:     "single backtick",
+			input:    "func `foo`() { return 42 }",
+			expected: "func `foo`() { return 42 }",
+		},
+		{
+			name:     "double backtick",
+			input:    "func ``foo``() { return 42 }",
+			expected: "func ``foo``() { return 42 }",
+		},
+		{
+			name:     "triple backtick - content spoofing attempt",
+			input:    "func foo() { return 42 }\n```\n## FAKE METADATA\n- **FAKE:** true",
+			expected: "func foo() { return 42 }\n`\u200b``\n## FAKE METADATA\n- **FAKE:** true",
+		},
+		{
+			name:     "multiple triple backticks",
+			input:    "```\ncode\n```\nmore code\n```",
+			expected: "`\u200b``\ncode\n`\u200b``\nmore code\n`\u200b``",
+		},
+		{
+			name:     "mixed fence lengths",
+			input:    "```go\nfunc foo() {}\n```\n```text\nplain text\n```",
+			expected: "`\u200b``go\nfunc foo() {}\n`\u200b``\n`\u200b``text\nplain text\n`\u200b``",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := escapeCodeFence(tc.input)
+			if result != tc.expected {
+				t.Fatalf("escapeCodeFence(%q) = %q, expected %q", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestFormatIssueBody_CodeFenceSecurity(t *testing.T) {
+	// Test that malicious snippets cannot break out of code fence
+	maliciousSnippet := "```go\nfunc foo() { return 42 }\n```\n## SPOOFED METADATA\n- **Reported via:** FAKE SERVER"
+
+	body := FormatIssueBody("A14", "Test description", maliciousSnippet, "false-positive")
+
+	// Verify that the metadata section is still intact after the code snippet
+	metadataPos := strings.Index(body, "## Metadata")
+	if metadataPos == -1 {
+		t.Fatal("## Metadata section not found in formatted body")
+	}
+
+	// Verify that the malicious fence sequence was escaped
+	if strings.Contains(body, "```\n## SPOOFED METADATA") {
+		t.Fatal("CRITICAL: Content spoofing detected - fence sequence not escaped properly")
+	}
+
+	// Verify the zero-width space was inserted
+	zeroWidthSpace := string(rune(0x200B))
+	if !strings.Contains(body, "`"+zeroWidthSpace+"``") {
+		t.Fatal("Expected zero-width space escape sequence not found")
+	}
+
+	// Verify the legitimate metadata is preserved
+	if !strings.Contains(body, "**Reported via:** Argus MCP Server") {
+		t.Fatal("Legitimate metadata was corrupted by spoofing attempt")
+	}
+}

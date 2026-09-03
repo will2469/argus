@@ -21,6 +21,14 @@ func MethodNotFoundError(id any, method string) *JSONRPCResponse {
 	return ProtocolError(id, CodeMethodNotFound, fmt.Sprintf("Method not found: %s", method))
 }
 
+// UnsupportedProtocolVersionError constructs a standard -32022 JSON-RPC unsupported protocol version error.
+func UnsupportedProtocolVersionError(id any, message string) *JSONRPCResponse {
+	if message == "" {
+		message = "Unsupported protocol version"
+	}
+	return ProtocolError(id, CodeUnsupportedProtocolVersion, message)
+}
+
 // CancelledError constructs a standard -32800 JSON-RPC request cancelled error.
 func CancelledError(id any, message string) *JSONRPCResponse {
 	if message == "" {

@@ -28,13 +28,22 @@ const (
 var ErrOversizedMessage = errors.New("mcp: message exceeds maximum allowed size")
 
 // LatestProtocolVersion is the canonical protocol version offered by Argus.
-const LatestProtocolVersion = "2024-11-05"
+const LatestProtocolVersion = "2026-07-28"
 
 const protocolVersion = LatestProtocolVersion
 
 // SupportedProtocolVersions contains the set of MCP protocol versions supported by Argus.
 var SupportedProtocolVersions = map[string]bool{
 	"2024-11-05": true,
+	"2025-03-26": true,
+	"2025-06-18": true,
+	"2025-11-25": true,
+	"2026-07-28": true, // stateless core
+}
+
+// isStatelessEra distinguishes MCP protocol versions that operate in stateless mode (no initialize handshake).
+func isStatelessEra(v string) bool {
+	return v == "2026-07-28"
 }
 
 // NegotiateProtocolVersion negotiates an MCP protocol version according to the MCP specification:
@@ -57,6 +66,7 @@ const (
 
 type ResourceCost = transport.ResourceCost
 type ParsedRequest = transport.ParsedRequest
+type RequestMeta = transport.RequestMeta
 type Dispatcher = transport.Dispatcher
 type SynchronizedWriter = transport.SynchronizedWriter
 type RequestTracker = transport.RequestTracker
@@ -77,17 +87,19 @@ const (
 	CodeMethodNotFound       = errorspkg.CodeMethodNotFound
 	CodeInvalidParams        = errorspkg.CodeInvalidParams
 	CodeInternalError        = errorspkg.CodeInternalError
-	CodeServerNotInitialized = errorspkg.CodeServerNotInitialized
-	CodeCancelled            = errorspkg.CodeCancelled
+	CodeServerNotInitialized       = errorspkg.CodeServerNotInitialized
+	CodeUnsupportedProtocolVersion = errorspkg.CodeUnsupportedProtocolVersion
+	CodeCancelled                  = errorspkg.CodeCancelled
 )
 
 var (
-	ProtocolError       = errorspkg.ProtocolError
-	InvalidParamsError  = errorspkg.InvalidParamsError
-	MethodNotFoundError = errorspkg.MethodNotFoundError
-	CancelledError      = errorspkg.CancelledError
-	ToolSuccess         = errorspkg.ToolSuccess
-	ToolError           = errorspkg.ToolError
+	ProtocolError                  = errorspkg.ProtocolError
+	InvalidParamsError             = errorspkg.InvalidParamsError
+	MethodNotFoundError            = errorspkg.MethodNotFoundError
+	UnsupportedProtocolVersionError = errorspkg.UnsupportedProtocolVersionError
+	CancelledError                 = errorspkg.CancelledError
+	ToolSuccess                    = errorspkg.ToolSuccess
+	ToolError                      = errorspkg.ToolError
 
 	ValidateJSONRPC       = transport.ValidateJSONRPC
 	NewDispatcher         = transport.NewDispatcher

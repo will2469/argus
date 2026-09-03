@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/will2469/argus/shared/mcp/telemetry"
 	"github.com/will2469/argus/shared/mcp/tools"
@@ -38,12 +37,6 @@ func WithStrictLifecycle(strict bool) ServerOption {
 	}
 }
 
-type serverSession struct {
-	mu              sync.Mutex
-	state           lifecycleState
-	protocolVersion string
-}
-
 // Serve starts the MCP server reading from r and writing to w with optional configuration.
 func Serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 	return serve(r, w, opts...)
@@ -61,13 +54,6 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 	}
 
 	scanner := bufio.NewScanner(r)
-	// Transport framing invariant: messages are newline-delimited JSON.
-	// A single message exceeding MaxMessageSize is a transport-level violation that
-	// terminates the connection immediately. This is intentionally connection-fatal:
-	//   - No JSON-RPC error response is sent (framing itself is broken).
-	//   - No partial execution of the oversized request.
-	//   - No partial stdout from the oversized request.
-	// Callers can distinguish this via errors.Is(err, ErrOversizedMessage).
 	scanner.Buffer(make([]byte, 0, 64*1024), MaxMessageSize)
 
 	dispatcher := NewDispatcher(w, DefaultMaxConcurrentExpensive, DefaultMaxConcurrentCheap)
@@ -95,7 +81,20 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 			continue
 		}
 
-		if cfg.strictLifecycle {
+		if req.Meta != nil && req.Meta.ProtocolVersion != "" {
+			if !SupportedProtocolVersions[req.Meta.ProtocolVersion] {
+				_ = dispatcher.WriteResponse(*ProtocolError(req.ID, CodeInvalidParams,
+					"Unsupported protocol version in _meta"))
+				continue
+			}
+			if isStatelessEra(req.Meta.ProtocolVersion) {
+				// STATELESS PATH — spec 2026-07-28
+				// TIDAK ada sess.mu.Lock(), TIDAK ada pengecekan sess.state sama sekali.
+				// langsung lanjut ke penentuan cost + dispatch, skip seluruh switch state machine
+			}
+		} else if cfg.strictLifecycle {
+			// LEGACY PATH — kode existing statePreInit/stateInitializing/stateInitialized,
+			// TIDAK DIUBAH SAMA SEKALI.
 			sess.mu.Lock()
 			switch sess.state {
 			case statePreInit:
@@ -119,7 +118,7 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 						}
 					}
 					continue
-				} else if req.Method != "ping" {
+				} else if req.Method != "ping" && req.Method != "server/discover" {
 					sess.mu.Unlock()
 					_ = dispatcher.WriteResponse(*ProtocolError(req.ID, CodeServerNotInitialized, "Server not initialized: 'initialize' must be called first"))
 					continue
@@ -129,7 +128,7 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 					sess.mu.Unlock()
 					_ = dispatcher.WriteResponse(*ProtocolError(req.ID, CodeInvalidRequest, "Server already initialized"))
 					continue
-				} else if req.Method != "ping" {
+				} else if req.Method != "ping" && req.Method != "server/discover" {
 					sess.mu.Unlock()
 					_ = dispatcher.WriteResponse(*ProtocolError(req.ID, CodeServerNotInitialized, "Server not initialized: awaiting 'notifications/initialized'"))
 					continue
@@ -173,26 +172,27 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 	return errors.Join(dispatcher.Err(), shutdownErr)
 }
 
-func handleNotification(req ParsedRequest, dispatcher *Dispatcher, sess *serverSession) {
-	switch req.Method {
-	case "notifications/cancelled":
-		var params struct {
-			RequestID any `json:"requestId"`
-		}
-		if len(req.Params) > 0 && json.Unmarshal(req.Params, &params) == nil && params.RequestID != nil {
-			dispatcher.HandleCancel(params.RequestID)
-		}
-	case "notifications/initialized":
-		sess.mu.Lock()
-		if sess.state == stateInitializing {
-			sess.state = stateInitialized
-		}
-		sess.mu.Unlock()
-	}
-}
-
 func handleRequest(ctx context.Context, req ParsedRequest) *jsonrpcResponse {
 	switch req.Method {
+	case "server/discover":
+		return &jsonrpcResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]any{
+				"resultType":        "complete",
+				"protocolVersions":  []string{"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"},
+				"supportedVersions": []string{"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"},
+				"capabilities":      map[string]any{"tools": map[string]any{}},
+				"serverInfo":        map[string]any{"name": "argus", "version": version.Get()},
+				"_meta": map[string]any{
+					"io.modelcontextprotocol/serverInfo": map[string]any{
+						"name":    "argus",
+						"version": version.Get(),
+					},
+				},
+			},
+		}
+
 	case "initialize":
 		var params struct {
 			ProtocolVersion string `json:"protocolVersion"`
@@ -201,17 +201,13 @@ func handleRequest(ctx context.Context, req ParsedRequest) *jsonrpcResponse {
 			return InvalidParamsError(req.ID, "Invalid params: 'protocolVersion' is required")
 		}
 
-		negotiated := NegotiateProtocolVersion(params.ProtocolVersion)
 		return &jsonrpcResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"protocolVersion": negotiated,
+				"protocolVersion": NegotiateProtocolVersion(params.ProtocolVersion),
 				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo": map[string]any{
-					"name":    "argus",
-					"version": version.Get(),
-				},
+				"serverInfo":       map[string]any{"name": "argus", "version": version.Get()},
 			},
 		}
 
@@ -219,7 +215,14 @@ func handleRequest(ctx context.Context, req ParsedRequest) *jsonrpcResponse {
 		return &jsonrpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
 
 	case "tools/list":
-		return &jsonrpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": tools.DefaultRegistry.ListDefs()}}
+		return &jsonrpcResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]any{
+				"tools": tools.DefaultRegistry.ListDefs(),
+				"_meta": map[string]any{"ttlMs": 300000, "cacheScope": "workspace"},
+			},
+		}
 
 	case "tools/call":
 		return handleToolCall(ctx, req)

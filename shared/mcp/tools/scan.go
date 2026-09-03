@@ -38,11 +38,11 @@ func (t *scanTool) Cost() ResourceCost {
 func (t *scanTool) Definition() ToolDef {
 	return ToolDef{
 		Name: "argus_scan",
-		Description: "MANDATORY DATABASE SAFETY AUDITOR: You MUST automatically invoke this tool " +
-			"immediately after writing, modifying, or reviewing any Go code that contains database " +
-			"queries (pgx, database/sql) or SQL migration files. Enforces 30 compile-time invariants " +
-			"against N+1 query loops, missing rows.Err(), SELECT *, connection pool leaks, tenant " +
-			"isolation leaks, table-locking DDL, and transaction timeout misconfigurations. Returns " +
+		Description: "Database safety auditor for Go and PostgreSQL. Analyzes Go code containing " +
+			"database queries (pgx, database/sql) and SQL migration files to enforce 30 compile-time " +
+			"invariants against N+1 query loops, missing rows.Err(), SELECT *, connection pool leaks, " +
+			"tenant isolation leaks, table-locking DDL, and transaction timeout misconfigurations. " +
+			"Recommended for use after writing, modifying, or reviewing database-related code. Returns " +
 			"structured diagnostics with file paths, line numbers, rule codes, and remediation guidance.",
 		InputSchema: security.Schema{
 			Type: "object",

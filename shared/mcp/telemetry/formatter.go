@@ -29,7 +29,7 @@ func FormatIssueBody(ruleCode, description, snippet, category string) string {
 	if snippet != "" {
 		sb.WriteString("## Code Snippet\n\n")
 		sb.WriteString("```go\n")
-		sb.WriteString(snippet)
+		sb.WriteString(escapeCodeFence(snippet))
 		sb.WriteString("\n```\n\n")
 	}
 
@@ -78,4 +78,14 @@ func NormalizeCode(code string) string {
 		c = "A0" + c[1:]
 	}
 	return c
+}
+
+// escapeCodeFence prevents content spoofing by breaking code fence sequences
+// within user-provided snippets. It replaces triple backticks with a
+// zero-width space to prevent fence termination attacks in GitHub issues.
+func escapeCodeFence(snippet string) string {
+	// Replace triple backticks with backtick + zero-width space + backtick + backtick
+	// This breaks the fence sequence while preserving visual rendering
+	zeroWidthSpace := string(rune(0x200B))
+	return strings.ReplaceAll(snippet, "```", "`"+zeroWidthSpace+"``")
 }

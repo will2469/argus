@@ -40,6 +40,8 @@ func (r *Registry) Register(t Tool) {
 		panic(fmt.Sprintf("mcp: tool %q has invalid cost classification: %v", name, cost))
 	}
 
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, exists := r.tools[name]; !exists {
 		r.order = append(r.order, name)
 	}
@@ -48,6 +50,8 @@ func (r *Registry) Register(t Tool) {
 
 // Unregister removes a tool from the registry.
 func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.tools, name)
 	for i, n := range r.order {
 		if n == name {
@@ -59,12 +63,16 @@ func (r *Registry) Unregister(name string) {
 
 // Get retrieves a registered tool by name.
 func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	t, ok := r.tools[name]
 	return t, ok
 }
 
 // GetCost returns the declared resource cost of a tool and whether the tool was found in the registry.
 func (r *Registry) GetCost(name string) (ResourceCost, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if tool, ok := r.tools[name]; ok {
 		return tool.Cost(), true
 	}
@@ -73,6 +81,8 @@ func (r *Registry) GetCost(name string) (ResourceCost, bool) {
 
 // ListDefs returns definitions of all registered tools in deterministic order.
 func (r *Registry) ListDefs() []ToolDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	defs := make([]ToolDef, 0, len(r.order))
 	for _, name := range r.order {
 		defs = append(defs, r.tools[name].Definition())
@@ -83,7 +93,9 @@ func (r *Registry) ListDefs() []ToolDef {
 // Dispatch coordinates Tier-1 Schema validation, Tier-2 Policy validation,
 // and tool execution for incoming tool calls with cancellation context support.
 func (r *Registry) Dispatch(ctx context.Context, name string, id any, args json.RawMessage) *errors.JSONRPCResponse {
+	r.mu.RLock()
 	tool, exists := r.tools[name]
+	r.mu.RUnlock()
 	if !exists {
 		return errors.InvalidParamsError(id, fmt.Sprintf("Unknown tool: %s", name))
 	}

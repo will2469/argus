@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/will2469/argus/shared/mcp/errors"
 	"github.com/will2469/argus/shared/mcp/security"
@@ -36,7 +37,9 @@ type Tool interface {
 }
 
 // Registry manages the collection of available MCP tools and handles multi-tier validation dispatching.
+// It is protected by sync.RWMutex to prevent data races during dynamic registration or hot-reloads.
 type Registry struct {
+	mu    sync.RWMutex
 	tools map[string]Tool
 	order []string
 }

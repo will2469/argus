@@ -138,8 +138,13 @@ func HandleReportIssue(id any, args json.RawMessage) *mcperrors.JSONRPCResponse 
 		return mcperrors.ToolError(id, fmt.Sprintf("🔒 HUMAN APPROVAL AUTHORIZATION REJECTED: %v", err))
 	}
 
+	// Use configured absolute path if available, otherwise check PATH
+	ghPath := cfg.GetGHCliPath()
+	if ghPath != "" {
+		return SubmitViaGH(id, issueTitle, issueBody, label, ghPath)
+	}
 	if _, err := exec.LookPath("gh"); err == nil {
-		return SubmitViaGH(id, issueTitle, issueBody, label)
+		return SubmitViaGH(id, issueTitle, issueBody, label, "")
 	}
 	return SubmitViaURL(id, issueTitle, issueBody, label, "GitHub CLI (`gh`) not found in PATH")
 }
