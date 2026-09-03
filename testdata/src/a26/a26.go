@@ -67,3 +67,11 @@ func IgnoredShortcode(ctx context.Context, db DB, rawPattern string) (any, error
 	// argus:ignore-a26 internal diagnostic query
 	return db.Query(ctx, query, rawPattern)
 }
+
+// 8. Unsafe query using unrelated ReplaceAll (Violation)
+func UnsafeReplaceFooBar(ctx context.Context, db DB, keyword string) (any, error) {
+	safe := strings.ReplaceAll(keyword, "foo", "bar")
+	const query = "SELECT id, name FROM users WHERE name ILIKE $1"
+	return db.Query(ctx, query, safe) // want `\[ARGUS-A26\] unsanitized wildcard parameter bound to LIKE/ILIKE clause \(\$1\); risk of pattern language hijacking, PII exposure, and sequential scan DoS \(CWE-89, CWE-400\)`
+}
+

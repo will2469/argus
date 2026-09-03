@@ -1,6 +1,7 @@
 package a26_like_sanitize
 
 import (
+	"go/ast"
 	"path/filepath"
 	"testing"
 
@@ -136,3 +137,31 @@ func TestFindLikeParamIndicesRegex_ScannerDirect(t *testing.T) {
 		})
 	}
 }
+
+func TestIsArgumentSanitized_SemanticWhitelist(t *testing.T) {
+	// Call expression AST helpers
+	makeCall := func(name string) *ast.CallExpr {
+		return &ast.CallExpr{
+			Fun: &ast.Ident{Name: name},
+		}
+	}
+
+	if isSanitizerCall(makeCall("ReplaceAll")) {
+		t.Errorf("ReplaceAll must NOT be considered a safe LIKE sanitizer")
+	}
+	if isSanitizerCall(makeCall("strings.ReplaceAll")) {
+		t.Errorf("strings.ReplaceAll must NOT be considered a safe LIKE sanitizer")
+	}
+
+	validSanitizers := []string{
+		"SanitizeLike", "SanitizeLikePattern", "SanitizeLikeWildcards",
+		"FormatLikeContains", "FormatLikePrefix", "FormatLikeSuffix",
+		"EscapeLike", "EscapeLikePattern", "QuoteLike", "CleanLikePattern",
+	}
+	for _, name := range validSanitizers {
+		if !isSanitizerCall(makeCall(name)) {
+			t.Errorf("expected %s to be recognized as a valid sanitizer", name)
+		}
+	}
+}
+

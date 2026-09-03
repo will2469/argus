@@ -4,6 +4,7 @@ package a26_like_sanitize
 import (
 	"go/ast"
 	"go/token"
+	"strings"
 )
 
 // IsArgumentSanitized traces an AST expression to determine if it is properly sanitized against SQL wildcard injection.
@@ -38,15 +39,13 @@ func isSanitizerCall(call *ast.CallExpr) bool {
 		return false
 	}
 
-	methodName := getCallMethodName(call.Fun)
+	methodName := strings.ToLower(getCallMethodName(call.Fun))
 	switch methodName {
-	case "SanitizeLikePattern", "SanitizeLike", "SanitizeLikeWildcards",
-		"FormatLikeContains", "FormatLikePrefix", "FormatLikeSuffix":
-		return true
-	}
-
-	if methodName == "ReplaceAll" {
-		// strings.ReplaceAll sanitization heuristic
+	case "sanitizelikepattern", "sanitizelike", "sanitizelikewildcards", "sanitizewildcards",
+		"formatlikecontains", "formatlikeprefix", "formatlikesuffix",
+		"escapelikepattern", "escapelike", "escapelikewildcards", "escapelikestring",
+		"quotelikepattern", "quotelike",
+		"cleanlikepattern", "cleanlike":
 		return true
 	}
 
