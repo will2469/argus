@@ -59,6 +59,12 @@ func isStrictLevelVal(expr ast.Expr) bool {
 	case *ast.BasicLit:
 		val := strings.ToLower(strings.Trim(e.Value, `"'`))
 		return val == "serializable" || val == "repeatable read" || val == "repeatable_read"
+	case *ast.CallExpr:
+		for _, arg := range e.Args {
+			if isStrictLevelVal(arg) {
+				return true
+			}
+		}
 	}
 	return false
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/will2469/argus/rules/a19_unbounded_limit"
 	"github.com/will2469/argus/rules/a20_param_limit"
 	"github.com/will2469/argus/rules/a21_row_lock"
+	"github.com/will2469/argus/rules/a22_serializable_retry"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
 	"github.com/will2469/argus/shared/callsite"
@@ -317,6 +318,18 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 			Rule:     "BLOCKING_ROW_LOCK",
 			Message:  fmt.Sprintf(format, args...),
 			Category: "performance",
+		})
+	})
+
+	// 20. ARGUS-A22: Serializable / RepeatableRead Retry Loop
+	a22_serializable_retry.InspectFile(node, fset, dm, func(pos token.Pos, format string, args ...any) {
+		p := fset.Position(pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     p.Line,
+			Rule:     "MISSING_SERIALIZABLE_RETRY",
+			Message:  fmt.Sprintf(format, args...),
+			Category: "reliability",
 		})
 	})
 
