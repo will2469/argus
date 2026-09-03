@@ -1,0 +1,5 @@
+CREATE TABLE events (
+    id UUID PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE
+);

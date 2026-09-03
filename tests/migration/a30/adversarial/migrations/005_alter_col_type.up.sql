@@ -1,0 +1,1 @@
+ALTER TABLE metrics ALTER COLUMN measured_at TYPE TIMESTAMP;

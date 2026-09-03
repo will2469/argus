@@ -11,12 +11,15 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatalf("failed to resolve testdata path: %v", err)
+		t.Fatalf("failed to resolve rootDir: %v", err)
 	}
 
-	analysistest.Run(t, testdata, Analyzer, "a30")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/migration/a30/positive",
+		"./tests/migration/a30/negative",
+	)
 }
 
 func TestCheckMigration_TimestamptzCompliant(t *testing.T) {
@@ -76,7 +79,7 @@ CREATE TABLE legacy_ticks (
 }
 
 func TestScanMigrationDir_TestData(t *testing.T) {
-	testDir := "../../testdata/src/a30/migrations"
+	testDir := "../../tests/migration/a30/positive/migrations"
 	issues, err := ScanMigrationDir(testDir)
 	if err != nil {
 		t.Fatalf("failed to scan testdata: %v", err)
