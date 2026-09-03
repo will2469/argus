@@ -23,6 +23,7 @@ import (
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a16_max_conns"
 	"github.com/will2469/argus/rules/a17_nplusone"
+	"github.com/will2469/argus/rules/a18_rows_err"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
 	"github.com/will2469/argus/shared/callsite"
@@ -260,6 +261,19 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 			Rule:     "FORBIDDEN_QUERY_IN_LOOP",
 			Message:  issue.Message,
 			Category: "performance",
+		})
+	}
+
+	// 16. ARGUS-A18: Mandatory rows.Err() Check After Cursor Loop
+	a18Issues := a18_rows_err.InspectFile(pass, fset, node, dm)
+	for _, issue := range a18Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "MISSING_ROWS_ERR_CHECK",
+			Message:  issue.Message,
+			Category: "reliability",
 		})
 	}
 
