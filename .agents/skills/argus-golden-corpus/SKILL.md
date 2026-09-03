@@ -1,6 +1,6 @@
 ---
 name: argus-golden-corpus
-description: "MANDATORY 1-SSOT ADVERSARIAL HARNESS & RESILIENCE CORPUS: Comprehensive testing framework and Single Source of Truth (SSOT) for Argus rules (Go AST correctness & SQL migrations). Enforces the 17-pattern matrix: Positive (P1-P5 obvious, indirect, helper, nested, alias violations), Negative (N1-N5 obvious safe, legitimate idioms, unrelated APIs, sanitized inputs, static constants), and Adversarial (A1-A7 branching, reassignment, aliasing, wrappers, nested closures, generics, interfaces). Codifies the 1-SSOT rule (eliminating duplicate legacy testdata/ in favor of tests/), wires analysistest.Run to module paths, and tracks rule-by-rule adoption progress via TestGoldenCorpus_AdoptionMatrix ('golden corpus', 'test corpus', 'adversarial corpus', 'P1-P5', 'N1-N5', 'A1-A7', 'ssot test', 'adoption matrix')."
+description: "MANDATORY 1-SSOT ADVERSARIAL HARNESS & RESILIENCE CORPUS: Comprehensive testing framework and Single Source of Truth (SSOT) for Argus rules (Go AST correctness & SQL migrations). Enforces the 17-pattern matrix: Positive (P1-P5 obvious, indirect, helper, nested, alias violations), Negative (N1-N5 obvious safe, legitimate idioms, unrelated APIs, sanitized inputs, static constants), and Adversarial (A1-A7 branching, reassignment, aliasing, wrappers, nested closures, generics, interfaces). Codifies the canonical 1-SSOT architecture under tests/, wires analysistest.Run to module paths, and tracks rule-by-rule adoption progress via TestGoldenCorpus_AdoptionMatrix ('golden corpus', 'test corpus', 'adversarial corpus', 'P1-P5', 'N1-N5', 'A1-A7', 'ssot test', 'adoption matrix')."
 compatibility: "Go 1.25+, golang.org/x/tools/go/analysis, pg_query_go/v6"
 metadata:
   version: "2.0.0"
@@ -19,7 +19,7 @@ metadata:
 > 1. **"Can obviously safe code survive?"** (Defending against false positives that destroy developer trust).
 > 2. **"Can subtly bad code evade?"** (Defending against real-world obfuscations, wrappers, branching, and data-flow breaks).
 >
-> **The 1-SSOT Mandate:** Dilarang keras menduplikasi test fixture antara `testdata/` legacy dan `tests/`. Setiap rule yang mengadopsi Golden Corpus menjadikan `tests/correctness/<rule>/` atau `tests/migration/<rule>/` sebagai **Satu-Satunya Sumber Kebenaran (Single Source of Truth)**. Driver resmi Go (`analysistest.Run`) dan Standalone Runner keduanya mengevaluasi sumber yang sama.
+> **The 1-SSOT Mandate:** Seluruh aturan Argus (A01–A30) berpusat secara tunggal pada arsitektur **1-SSOT Golden Corpus** dengan `tests/correctness/<rule>/` (untuk aturan Go AST) atau `tests/migration/<rule>/` (untuk aturan SQL Migration) sebagai **Satu-Satunya Sumber Kebenaran (Single Source of Truth)**. Driver resmi Go (`analysistest.Run`) dan Standalone Runner keduanya mengevaluasi sumber kanonikal yang sama.
 
 ---
 
@@ -60,13 +60,13 @@ Setiap aturan yang mengadopsi Golden Corpus wajib mengimplementasikan matriks ka
 
 ## 2. Directory Hierarchy & 1-SSOT Architecture
 
-Semua fixture pengujian berpusat di direktori `tests/`. Folder legacy `testdata/src/<rule>` **dihapus tuntas** begitu rule mengadopsi Golden Corpus. Standar layout dibuat **100% simetris** antara aturan Go AST dan SQL Migration:
+Semua fixture pengujian berpusat secara eksklusif di direktori `tests/`. Standar layout dibuat **100% simetris** antara aturan Go AST dan SQL Migration:
 
 ```text
 tests/
-├── golden_corpus_status_test.go     # Automated Adoption Matrix Checker (30 Rules)
-├── correctness/                     # Go AST rules
-│   ├── a01/                         # ARGUS-A01: Unsafe SQL Concat (ADOPTED)
+├── golden_corpus_status_test.go     # Automated Adoption Matrix Checker (30 Rules - 100% ADOPTED)
+├── correctness/                     # 24 Go AST rules (A01-A10, A12, A14, A16-A26 - ALL ADOPTED)
+│   ├── a01/                         # ARGUS-A01: Unsafe SQL Concat
 │   │   ├── positive/                # P1 - P5 (annotated with // want)
 │   │   │   └── positive.go
 │   │   ├── negative/                # N1 - N5 (0 diagnostics expected)
@@ -74,29 +74,28 @@ tests/
 │   │   ├── adversarial/             # A1 - A7 (stress-testing & evasion matrix)
 │   │   │   └── adversarial.go
 │   │   └── a01_corpus_test.go       # Automated resilience & dual-path harness
-│   ├── a02/ s/d a10/                # ADOPTED
-│   └── a12, a14, a16 - a26          # Queued Correctness Rules
+│   └── a02/ s/d a26/                # Semuanya 100% teradopsi & teruji
 │
-└── migration/                       # SQL Migration rules (100% Symmetric Standard)
+└── migration/                       # 6 SQL Migration rules (A11, A13, A15, A27-A30 - ALL ADOPTED)
     ├── a11/                         # ARGUS-A11: Destructive Migrations
     │   ├── positive/                # positive.go (// want) + migrations/*.up.sql
     │   │   ├── positive.go
     │   │   └── migrations/          # Violating migrations (DROP TABLE, DROP COLUMN, etc.)
     │   ├── negative/                # negative.go (0 want) + migrations/*.up.sql
     │   │   ├── negative.go
-    │   │   └── migrations/          # Safe migrations, -- argus:contract, -- argus:ignore
+    │   │   └── migrations/          # Safe migrations, -- argus:ignore
     │   ├── adversarial/             # adversarial.go + migrations/*.up.sql
     │   │   ├── adversarial.go
     │   │   └── migrations/          # SQL AST evasion (multistmt, casing, quotes, schema)
     │   └── a11_corpus_test.go       # SQL parser resilience & standalone runner parity
-    └── a13, a15, a27 - a30          # Queued Migration Rules
+    └── a13, a15, a27, a28, a29, a30 # Semuanya 100% teradopsi & teruji
 ```
 
 ---
 
 ## 3. Wiring `analysistest.Run` ke 1-SSOT Module Root
 
-Untuk menghindari duplikasi fixture antara `testdata/` dan `tests/`, `rules/aXX/analyzer_test.go` diarahkan langsung ke `tests/correctness/aXX/` atau `tests/migration/aXX/` menggunakan module mode bawaan Go:
+Untuk menegakkan Single Source of Truth (1-SSOT), `rules/aXX/analyzer_test.go` diarahkan langsung ke `tests/correctness/aXX/` atau `tests/migration/aXX/` menggunakan module mode bawaan Go:
 
 ### Untuk Aturan Go AST (`tests/correctness/`):
 ```go
@@ -154,47 +153,50 @@ Untuk aturan SQL Migration, folder `adversarial/migrations/` menguji ketahanan p
 
 ---
 
-## 5. Rule-by-Rule Iteration Protocol (Alur Migrasi Per Rule)
+## 5. Authoring New Rules Protocol (ARGUS-A31+)
 
-Saat memigrasikan rule dari legacy unit-test ke Golden Corpus:
+Saat menambahkan aturan baru ke Argus Checker:
 
-1. **Step 1: Scaffolding Corpus Folders**
-   - Untuk Go: buat `tests/correctness/<rule>/` dengan subfolder `positive/`, `negative/`, `adversarial/`.
-   - Untuk Migrasi: buat `tests/migration/<rule>/` dengan subfolder `positive/migrations/`, `negative/migrations/`, `adversarial/migrations/`.
+1. **Step 1: Scaffolding Corpus Folders (Direct 1-SSOT)**
+   - Seluruh fixture baru langsung ditempatkan di direktori 1-SSOT `tests/`.
+   - Untuk Go AST: buat `tests/correctness/<rule>/` dengan subfolder `positive/`, `negative/`, `adversarial/`.
+   - Untuk Migrasi SQL: buat `tests/migration/<rule>/` dengan subfolder `positive/migrations/`, `negative/migrations/`, `adversarial/migrations/`.
 2. **Step 2: Implementasi Pola Matrix**
    - `positive/`: Implementasikan kasus pelanggaran dengan anotasi `// want`.
-   - `negative/`: Implementasikan kasus patuh, valid, serta verifikasi directive (`argus:ignore`, `argus:contract`).
+   - `negative/`: Implementasikan kasus patuh, valid, serta verifikasi directive (`argus:ignore`).
    - `adversarial/`: Implementasikan vektor stress-test (A1–A7 untuk Go AST, M1–M7 untuk Migration SQL).
 3. **Step 3: Test Harness & Paritas Runner**
    - Buat `<rule>_corpus_test.go` yang menguji `InspectFile`/`ScanMigrationDir`, direct assertions, dan `runner.RunAuditWithConfig`.
-4. **Step 4: Wiring SSOT & Hapus Legacy**
-   - Perbarui `rules/<rule>/analyzer_test.go` agar mengarah ke `./tests/<category>/<rule>/...`.
-   - Hapus berkas dan folder lama di `testdata/src/<rule>/`.
+4. **Step 4: Wiring SSOT Driver**
+   - Tulis `rules/<rule>/analyzer_test.go` agar mengarah ke `./tests/<category>/<rule>/positive` dan `./tests/<category>/<rule>/negative`.
 5. **Step 5: Verifikasi Status Adopsi**
+   - Daftarkan rule pada `tests/golden_corpus_status_test.go`.
    - Jalankan `go test -v -run TestGoldenCorpus_AdoptionMatrix ./tests`.
-   - Pastikan status rule berubah dari `PENDING` menjadi `ADOPTED`.
+   - Pastikan status rule terverifikasi `ADOPTED`.
 6. **Step 6: Zero Regression Quality Gate**
-   - Jalankan `make lint` dan `make test` (100% Hijau).
+   - Jalankan `make lint && make test-full` (100% Hijau, 0 race condition).
 
 ---
 
-## 5. Automated Adoption Checker
+## 6. Automated Adoption Checker
 
-Untuk memantau progress adopsi seluruh 30 aturan Argus kapan saja:
+Untuk memantau integritas 1-SSOT seluruh 30 aturan Argus kapan saja:
 
 ```bash
 go test -v -run TestGoldenCorpus_AdoptionMatrix ./tests
 ```
 
-Perintah ini akan mencetak tabel status real-time:
+Status saat ini telah **100% ADOPTED**:
 ```text
 === RUN   TestGoldenCorpus_AdoptionMatrix
 =========================================================================================================
 RULE CODE    | CATEGORY     | STATUS     | SSOT PATH                        | DETAILS
 ---------------------------------------------------------------------------------------------------------
-ARGUS-A01    | Correctness  | ADOPTED    | tests/correctness/a01            | 1 SSOT Golden Corpus (P1-P5, N1-N5, A1-A7)
-ARGUS-A02    | Correctness  | PENDING    | testdata/src/a02                 | Legacy unit-level testdata fixture
+ARGUS-A01    | Correctness  | ADOPTED    | tests/correctness/a01            | 1 SSOT Golden Corpus (P1-P5, N1-N5, A1-A7, analysistest + runner)
+ARGUS-A02    | Correctness  | ADOPTED    | tests/correctness/a02            | 1 SSOT Golden Corpus (P1-P5, N1-N5, A1-A7, analysistest + runner)
 ...
+ARGUS-A29    | Migration    | ADOPTED    | tests/migration/a29              | 1 SSOT Golden Migration Corpus (positive, negative, adversarial + runner)
+ARGUS-A30    | Migration    | ADOPTED    | tests/migration/a30              | 1 SSOT Golden Migration Corpus (positive, negative, adversarial + runner)
 =========================================================================================================
-Golden Corpus Adoption Progress: 1 / 30 rules adopted (3.3%)
+Golden Corpus Adoption Progress: 30 / 30 rules adopted (100.0%)
 ```

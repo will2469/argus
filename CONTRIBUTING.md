@@ -55,10 +55,10 @@ go vet ./...
        Requires: []*analysis.Analyzer{directives.Analyzer},
    }
    ```
-3. **Write Fixture Tests:** Add test cases in `rules/aXX_<name>/testdata/src/a/`:
-   - Compliant code without diagnostics.
-   - Non-compliant code with expected diagnostics using `// want "pattern"`.
-   - Ignored violations with `// argus:ignore`.
+3. **Write 1-SSOT Golden Corpus Tests:** Add test cases in `tests/correctness/aXX/` (or `tests/migration/aXX/`):
+   - `positive/`: Non-compliant code with expected diagnostics using `// want "pattern"`.
+   - `negative/`: Compliant code without diagnostics and ignored cases with `// argus:ignore`.
+   - `adversarial/`: Stress tests and evasion vectors (A1–A7 or M1–M7).
 4. **Register the Rule:** Register your new analyzer in `rules/rules.go`.
 5. **Run Verification:**
    ```bash

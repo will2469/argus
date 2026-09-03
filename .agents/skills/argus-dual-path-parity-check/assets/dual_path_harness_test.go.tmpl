@@ -11,21 +11,24 @@ import (
 )
 
 // TestDualPathParity enforces that Path 1 (Analysis Driver) and Path 2 (Standalone CLI)
-// detect the exact same issues on the identical test fixture.
+// detect the exact same issues on the identical test fixture under the 1-SSOT Golden Corpus.
 func TestDualPathParity(t *testing.T) {
-	testdataDir, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatalf("failed to resolve testdata path: %v", err)
+		t.Fatalf("failed to resolve root directory: %v", err)
 	}
 
 	// 1. Path 1: Official Analysis Driver (analysistest)
 	t.Run("Path1_AnalysisDriver", func(t *testing.T) {
-		analysistest.Run(t, testdataDir, {{PKG_NAME}}.Analyzer, "{{SHORT_ID}}")
+		analysistest.Run(t, rootDir, {{PKG_NAME}}.Analyzer,
+			"./tests/correctness/{{SHORT_ID}}/positive",
+			"./tests/correctness/{{SHORT_ID}}/negative",
+		)
 	})
 
 	// 2. Path 2: Standalone CLI Runner (runner.RunAuditWithConfig)
 	t.Run("Path2_StandaloneRunner", func(t *testing.T) {
-		fixtureDir := filepath.Join(testdataDir, "src", "{{SHORT_ID}}")
+		fixtureDir := filepath.Join(rootDir, "tests", "correctness", "{{SHORT_ID}}", "positive")
 		result, err := runner.RunAuditWithConfig(runner.AuditConfig{
 			RootDir:  fixtureDir,
 			ScanDirs: []string{fixtureDir},
@@ -35,7 +38,7 @@ func TestDualPathParity(t *testing.T) {
 		}
 
 		if len(result.Issues) == 0 {
-			t.Fatalf("PARITY DIVERGENCE: Standalone runner reported 0 issues for {{RULE_CODE}} on test fixture! (Possible A01 bug repeat)")
+			t.Fatalf("PARITY DIVERGENCE: Standalone runner reported 0 issues for {{RULE_CODE}} on 1-SSOT positive fixture!")
 		}
 
 		// Verify every reported issue belongs to the rule

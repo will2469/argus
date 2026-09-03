@@ -9,16 +9,16 @@ import (
 )
 
 func TestGoldenCorpus_AuditBehavior(t *testing.T) {
-	testdata, err := filepath.Abs("../tests/golden")
+	goldenDir, err := filepath.Abs("../tests/golden")
 	if err != nil {
-		t.Fatalf("failed to resolve testdata golden path: %v", err)
+		t.Fatalf("failed to resolve golden corpus path: %v", err)
 	}
 
 	cfg := config.DefaultConfig()
 
 	auditCfg := AuditConfig{
-		RootDir:       testdata,
-		ScanDirs:      []string{testdata},
+		RootDir:       goldenDir,
+		ScanDirs:      []string{goldenDir},
 		MigrationDirs: []string{"/tmp/empty_mig"},
 		Config:        cfg,
 		Analyzers:     rules.AllAnalyzers,

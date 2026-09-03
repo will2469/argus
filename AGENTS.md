@@ -24,7 +24,7 @@ Priorities: **safe · sound · unbloated · zero-hallucination · test-backed**.
 | :--------------------- | :------------------------------------------------------------------- |
 | `cmd/argus/`           | Standalone CLI entrypoint (`argus check`, `argus check-migrations`)  |
 | `rules/`               | Individual modular analyzers (`a01_.../`, `a02_.../` s/d `a30_.../`) |
-| `testdata/src/<rule>/` | Central test fixtures evaluated via `analysistest.Run`               |
+| `tests/`               | 1-SSOT Golden Corpus fixtures (`correctness/` and `migration/`)      |
 | `shared/callsite/`     | Common AST call-expression and interface resolution utilities        |
 | `shared/directives/`   | Parsing and enforcement of `// argus:ignore` comments                |
 | `shared/config/`       | Config loader and validation for `.argus.yaml`                       |

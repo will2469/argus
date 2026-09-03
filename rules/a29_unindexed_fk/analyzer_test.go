@@ -121,19 +121,19 @@ CREATE TABLE orders (
 	}
 }
 
-func TestScanMigrationDir_TestData(t *testing.T) {
-	testDir := "../../tests/migration/a29/positive/migrations"
+func TestScanMigrationDir_Corpus(t *testing.T) {
+	migDir := "../../tests/migration/a29/positive/migrations"
 	dm := directives.NewDirectiveMap()
 	cfg := config.DefaultConfig()
 
-	entries, err := os.ReadDir(testDir)
+	entries, err := os.ReadDir(migDir)
 	if err != nil {
-		t.Fatalf("failed to read testdata: %v", err)
+		t.Fatalf("failed to read migrations: %v", err)
 	}
 
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), ".up.sql") {
-			data, _ := os.ReadFile(filepath.Join(testDir, entry.Name()))
+			data, _ := os.ReadFile(filepath.Join(migDir, entry.Name()))
 			fileDm := directives.ParseSQLDirectives(string(data), entry.Name())
 			for l := 1; l <= strings.Count(string(data), "\n")+1; l++ {
 				if fileDm.IsLineIgnored(entry.Name(), l, RuleCode) {
@@ -143,9 +143,9 @@ func TestScanMigrationDir_TestData(t *testing.T) {
 		}
 	}
 
-	issues := ScanMigrationDir(testDir, dm, cfg)
+	issues := ScanMigrationDir(migDir, dm, cfg)
 	if len(issues) != 1 {
-		t.Fatalf("expected exactly 1 issue from testdata, got %d: %v", len(issues), issues)
+		t.Fatalf("expected exactly 1 issue from corpus, got %d: %v", len(issues), issues)
 	}
 }
 

@@ -78,16 +78,15 @@ CREATE TABLE legacy_ticks (
 	}
 }
 
-func TestScanMigrationDir_TestData(t *testing.T) {
-	testDir := "../../tests/migration/a30/positive/migrations"
-	issues, err := ScanMigrationDir(testDir)
+func TestScanMigrationDir_Corpus(t *testing.T) {
+	migDir := "../../tests/migration/a30/positive/migrations"
+	issues, err := ScanMigrationDir(migDir)
 	if err != nil {
-		t.Fatalf("failed to scan testdata: %v", err)
+		t.Fatalf("failed to scan migrations: %v", err)
 	}
 
-	// 000001 (timestamptz), 000002 (date/time), 000004 (ignored) -> only 000003 should fail
 	if len(issues) != 1 {
-		t.Fatalf("expected exactly 1 issue from testdata, got %d: %v", len(issues), issues)
+		t.Fatalf("expected exactly 1 issue from corpus, got %d: %v", len(issues), issues)
 	}
 }
 

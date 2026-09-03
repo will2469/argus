@@ -38,10 +38,10 @@ Setiap pengerjaan satu aturan Argus Checker wajib mengikuti siklus state-machine
 │     - Gunakan Go docstrings standar yang mandiri (self-contained).          │
 │                                  │                                          │
 │                                  ▼                                          │
-│  3. LAB HARNESS & TESTDATA (100% COVERAGE SCOPE)                            │
-│     Buat fixture testdata sentral di testdata/src/aXX/aXX.go.               │
-│     Buat analyzer_test.go (analysistest + unit test).                       │
-│     Pastikan SEMUA skenario (positif, negatif, ignored) teruji.             │
+│  3. 1-SSOT GOLDEN CORPUS HARNESS (100% COVERAGE SCOPE)                    │
+│     Buat fixture 1-SSOT di tests/correctness/aXX/ atau tests/migration/aXX/.│
+│     Buat analyzer_test.go (analysistest module root) & aXX_corpus_test.go.  │
+│     Pastikan SEMUA skenario (positif, negatif, adversarial) teruji.         │
 │                                  │                                          │
 │                                  ▼                                          │
 │  4. DYNAMIC PLUG-AND-PLAY REGISTRATION                                      │
@@ -67,8 +67,9 @@ Setiap pengerjaan satu aturan Argus Checker wajib mengikuti siklus state-machine
 │                                  │                                          │
 │                                  ▼                                          │
 │  8. QUALITY GATE PASS                                                       │
-│     Jalankan `make lint` dan `make test` -> 100% Hijau.                     │
+│     Jalankan `make lint && make test-full` -> 100% Hijau.                   │
 │     BARU DIIZINKAN LANJUT KE RULE BERIKUTNYA.                               │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ````
 
@@ -84,11 +85,13 @@ rules/
     ├── analyzer.go          # Exported var Analyzer (*analysis.Analyzer, <= 250 baris)
     ├── <sub_domain_1>.go    # Logika spesifik AST/Engine (<= 250 baris)
     ├── <sub_domain_2>.go    # Logika evaluator/registry/exceptions (<= 250 baris)
-    └── analyzer_test.go     # Test suite analysistest + unit test (<= 250 baris)
-testdata/
-└── src/
-    └── aXX/
-        └── aXX.go           # Central testdata fixture (compliant, violations, ignore)
+    └── analyzer_test.go     # Test suite analysistest 1-SSOT (<= 250 baris)
+tests/
+└── correctness/aXX/         # Atau tests/migration/aXX/ untuk aturan migrasi
+    ├── positive/            # P1-P5 kasus pelanggaran (// want)
+    ├── negative/            # N1-N5 kasus patuh & supresi
+    ├── adversarial/         # A1-A7 / M1-M7 stress test matrix
+    └── aXX_corpus_test.go   # Runner dual-path parity harness
 ```
 
 ### Standar Pembagian Berkas Sub-Domain:
@@ -98,7 +101,7 @@ testdata/
 - **`exceptions.go` / `size_evaluator.go` / `role_registry.go`**: Evaluator batasan, whitelist pengecualian, atau integrasi konfigurasi `.argus.yaml`.
 - **`standalone_runner.go`**: Runner mandiri jika aturan memeriksa file migrasi `.sql` di luar Go AST.
 - **`analyzer_test.go`**: Memuat:
-  1. `TestAnalyzer`: Menjalankan `analysistest.Run` pada `testdata/src/aXX/aXX.go`.
+  1. `TestAnalyzer`: Menjalankan `analysistest.Run` pada `./tests/<category>/aXX/positive` dan `negative`.
   2. Unit test domain: Menguji fungsi parser/evaluator secara presisi.
 
 ---

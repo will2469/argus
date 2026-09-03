@@ -31,7 +31,7 @@ lint:
 	@echo "Running go vet..."
 	go vet ./...
 	@echo "Checking gofmt..."
-	@test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*' -not -path '*/testdata/*'))" || (echo " Unformatted files found. Run gofmt -w ." && exit 1)
+	@test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*'))" || (echo " Unformatted files found. Run gofmt -w ." && exit 1)
 	@echo " Code hygiene clean!"
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -46,7 +46,7 @@ format:
 	@if [ -x .githooks/format-all.sh ]; then \
 		.githooks/format-all.sh; \
 	else \
-		gofmt -w $$(find . -name '*.go' -not -path './vendor/*' -not -path '*/testdata/*'); \
+		gofmt -w $$(find . -name '*.go' -not -path './vendor/*'); \
 	fi
 
 clean:

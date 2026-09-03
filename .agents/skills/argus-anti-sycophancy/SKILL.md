@@ -35,7 +35,7 @@ Berdasarkan penelitian empiris (ArXiv 2607.10411, 2310.13548, 2606.03437), penge
 │  [Submissive Alignment] ◄────── [ARGUS CALIBRATOR] ──────► [Ownership Bias]│
 │     ("Yes-Sir Mode")              (Anchor of Truth)        ("Overconfident")│
 │  • Mengiyakan jalan pintas regex          ▲    • Mengabaikan whitelist idiom│
-│  • Melewatkan edge-case / testdata        │    • Emisi false-positive liar  │
+│  • Melewatkan edge-case / corpus matrix   │    • Emisi false-positive liar  │
 │  • Membiarkan file monolitik >250 baris   │    • Halusinasi node AST / API  │
 │  • Decision Flip Rate up to 72%           │    • 26% higher self-trust      │
 │                                           │                                 │
@@ -139,7 +139,7 @@ Untuk mengeliminasi sycophancy dan overconfidence dalam pengerjaan Argus Checker
 | _"Bisa ga kita pake regex `strings.Contains` aja buat deteksi DROP TABLE?"_ | _"Bisa bang, kita pakai regex sederhana aja biar cepat beres."_ | _"Ditolak (Tier-1 AST Determinism). String matching rentan false-negative pada string literal atau komentar SQL, dan false-positive pada nama kolom. Wajib parse query via `pg_query_go.Parse()` dan periksa node `DropStmt` pada AST."_ |
 | _"Flagging aja semua kueri yang ada wildcard `*`, ga usah mikirin COUNT(*)"_ | _"Oke, kita report semua kemunculan tanda bintang `*`."_       | _"Ditolak (Tier-1 Zero False-Positive). `COUNT(*)` dan `EXISTS (SELECT 1 ...)` adalah idiom standar SQL yang aman. Melaporkannya merusak adopsi linter. Wajib tambahkan fungsi whitelist di `exceptions.go`."_                         |
 | _"Gabungin aja semua logika helper dan walker di `analyzer.go` biar 1 file."_| _"Siap, saya masukkan semua kodenya ke dalam analyzer.go."_    | _"Ditolak (Tier-3 Anti-Fat Code). Berkas Go dibatasi ~250 baris. Wajib didekomposisi: `analyzer.go` (koordinator run), `ast_visitor.go` (traversal), dan `exceptions.go` (whitelist evaluasi). Ini menjaga maintainability."_         |
-| _"Test fixture-nya bikin yang penting jalan aja dulu, gak usah test ignore."_| _"Baik bang, kita buat unit test sederhana saja tanpa ignore."_| _"Ditolak (Tier-3 100% analysistest Coverage). Fixture `testdata/src/aXX/aXX.go` wajib mencakup: (1) Kasus positif, (2) Pelanggaran (`// want`), (3) Supresi (`// argus:ignore`), dan (4) Edge case alias/subquery."_                   |
+| _"Test fixture-nya bikin yang penting jalan aja dulu, gak usah test ignore."_| _"Baik bang, kita buat unit test sederhana saja tanpa ignore."_| _"Ditolak (Tier-3 100% 1-SSOT Golden Corpus Coverage). Fixture di `tests/correctness/aXX/` (atau `tests/migration/aXX/`) wajib mencakup: (1) Kasus positif (`// want`), (2) Kasus patuh (0 diagnostik), (3) Supresi (`// argus:ignore`), dan (4) Adversarial stress matrix."_ |
 | _"Buat supresi ignore, terima aja komentar `// argus:ignore` kosong."_       | _"Boleh, kita buat supresi langsung lolos tanpa cek alasan."_  | _"Ditolak (Tier-1 Directive Invariant). `shared/directives` mewajibkan alasan supresi memiliki minimal 2 kata agar developer bertanggung jawab atas bypass yang dilakukan."_                                                             |
 | _"ALTER TABLE ADD CONSTRAINT ga masalah langsung dijalankan di produksi."_   | _"Iya, langsung jalankan DDL constraint biasa saja."_          | _"Ditolak (Tier-2 PostgreSQL Lock Hierarchy). `ADD CONSTRAINT` tanpa `NOT VALID` mengambil `AccessExclusiveLock` yang memblokir pembacaan dan penulisan seluruh tabel. Rekomendasi: Gunakan `NOT VALID` lalu `VALIDATE CONSTRAINT`."_  |
 
@@ -189,6 +189,6 @@ Sebelum memfinalisasi rule baru (`rules/aXX_<name>/`), refactor, atau verifikasi
 - [ ] **Zero False-Positive Whitelist:** Apakah idiom umum yang valid (`COUNT(*)`, `pgx.CollectRows`, konstanta ORDER BY) sudah di-whitelist di `exceptions.go`?
 - [ ] **Anti-Fat Code ($\le 250$ Baris):** Apakah setiap berkas Go di dalam rule tidak melebihi ~250 baris? Apakah modularisasi (`analyzer.go`, `ast_visitor.go`, `exceptions.go`) sudah rapi?
 - [ ] **Directives Support:** Apakah analyzer memeriksa `dm.IsIgnored(pass.Fset, pos, RuleCode)` sebelum memanggil `pass.Reportf`?
-- [ ] **Complete `analysistest` Matrix:** Apakah `testdata/src/aXX/aXX.go` memuat kasus positif, kasus negatif (`// want`), dan kasus supresi (`// argus:ignore`)?
+- [ ] **Complete 1-SSOT Matrix:** Apakah `tests/correctness/aXX/` (atau `tests/migration/aXX/`) memuat kasus positif (`// want`), kasus patuh (0 diagnostik), kasus supresi (`// argus:ignore`), dan adversarial matrix?
 - [ ] **PostgreSQL 18 Realities:** Apakah rule memperhitungkan lock conflicts, isolation levels (`40001`), parameter binding `$1`, dan perilaku TOAST?
 - [ ] **Strict Public Isolation:** Apakah seluruh Go docstrings, pesan diagnostik, dan dokumentasi wiki bebas dari istilah monorepo tertutup dan siap untuk open-source?

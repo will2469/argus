@@ -55,8 +55,8 @@ func CheckRuleGoldenStatus(rootDir string, ruleNum int) RuleCorpusStatus {
 			RuleCode:  code,
 			Category:  "Migration",
 			IsAdopted: false,
-			Path:      filepath.Join("testdata", "src", folder),
-			Details:   "Pending migration to tests/migration/" + folder,
+			Path:      filepath.Join("tests", "migration", folder),
+			Details:   "Missing 1-SSOT fixtures in tests/migration/" + folder,
 		}
 	}
 
@@ -86,8 +86,8 @@ func CheckRuleGoldenStatus(rootDir string, ruleNum int) RuleCorpusStatus {
 		RuleCode:  code,
 		Category:  "Correctness",
 		IsAdopted: false,
-		Path:      filepath.Join("testdata", "src", folder),
-		Details:   "Legacy unit-level testdata fixture (pending adoption)",
+		Path:      filepath.Join("tests", "correctness", folder),
+		Details:   "Missing 1-SSOT fixtures in tests/correctness/" + folder,
 	}
 }
 

@@ -7,9 +7,9 @@ Dokumentasi historis dari dua insiden divergensi arsitektur nyata di Argus, meng
 ## 1. Kasus 1: ARGUS-A01 (Mati Total di Mode Standalone)
 
 ### Gejala Insiden:
-Pada pengujian rule via `go test ./rules/a01_sql_concat/...`, seluruh test fixture di `testdata/src/a01/a01.go` lulus 100%. Namun saat pengguna menjalankan binary CLI standalone:
+Pada pengujian rule via `go test ./rules/a01_sql_concat/...`, seluruh test fixture di `tests/correctness/a01/positive/` lulus 100%. Namun saat pengguna menjalankan binary CLI standalone:
 ```bash
-argus check --dirs ./testdata/src/a01
+argus check --dirs ./tests/correctness/a01/positive
 ```
 Hasil scan melaporkan **0 issues (PASS)** padahal berkas tersebut memuat pelanggaran SQL concatenation terang-terangan!
 
@@ -54,4 +54,4 @@ Perbedaan paradigma pemindaian antara kode Go (rekursif) dan migrasi SQL (shallo
 
 1. **Strict Zero-Duplication:** Dilarang keras menulis ulang ekspresi reguler (regex) di `runner/scan_go.go` atau `runner/scan_migrations.go` untuk menduplikasi logika yang sudah ada di paket rule `rules/aXX/`.
 2. **Re-use Exported Engine:** Setiap paket rule wajib mengekspor fungsi evaluasi yang menerima `*analysis.Pass` (yang boleh `nil`) atau signature input murni (`ast.Node`, `content string`).
-3. **Automated Parity Test:** Setiap rule baru wajib memverifikasi bahwa pengujian terhadap `testdata/src/aXX/aXX.go` menghasilkan deteksi yang identik baik pada mode analysistest maupun mode runner standalone.
+3. **Automated Parity Test:** Setiap rule baru wajib memverifikasi bahwa pengujian terhadap fixture 1-SSOT (`tests/correctness/aXX/` atau `tests/migration/aXX/`) menghasilkan deteksi yang identik baik pada mode analysistest maupun mode runner standalone.

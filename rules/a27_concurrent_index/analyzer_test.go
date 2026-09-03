@@ -71,15 +71,15 @@ CREATE INDEX idx_users_legacy ON users (legacy_id);
 	}
 }
 
-func TestScanMigrationDir_TestData(t *testing.T) {
-	testDir := "../../tests/migration/a27/positive/migrations"
-	issues, err := ScanMigrationDir(testDir)
+func TestScanMigrationDir_Corpus(t *testing.T) {
+	migDir := "../../tests/migration/a27/positive/migrations"
+	issues, err := ScanMigrationDir(migDir)
 	if err != nil {
-		t.Fatalf("failed to scan testdata: %v", err)
+		t.Fatalf("failed to scan migrations: %v", err)
 	}
 
 	if len(issues) != 1 {
-		t.Fatalf("expected exactly 1 issue from testdata, got %d: %v", len(issues), issues)
+		t.Fatalf("expected exactly 1 issue from corpus, got %d: %v", len(issues), issues)
 	}
 
 	if !strings.Contains(issues[0].Filename, "001_unsafe_plain.up.sql") {

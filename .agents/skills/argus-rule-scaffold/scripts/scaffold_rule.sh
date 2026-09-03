@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Argus Rule Scaffolding Generator (Powered by assets/ templates)
+# Argus Rule Scaffolding Generator (1-SSOT Golden Corpus Standard)
 # Usage: ./scaffold_rule.sh <RULE_NUM> <RULE_NAME> <CANONICAL_IDENTIFIER> <go|sql>
 # Example: ./scaffold_rule.sh 31 missing_partition_key MISSING_PARTITION_KEY go
 
@@ -32,16 +32,23 @@ SHORT_ID="a${NUM_STR}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 RULES_DIR="${REPO_ROOT}/rules/${PKG_NAME}"
-TESTDATA_DIR="${REPO_ROOT}/testdata/src/${SHORT_ID}"
 WIKI_FILE="${REPO_ROOT}/wiki/${RULE_CODE}.md"
+
+if [ "${RULE_TYPE}" = "go" ]; then
+    CORPUS_DIR="${REPO_ROOT}/tests/correctness/${SHORT_ID}"
+    CAT_PATH="correctness"
+else
+    CORPUS_DIR="${REPO_ROOT}/tests/migration/${SHORT_ID}"
+    CAT_PATH="migration"
+fi
 
 echo "=== Scaffolding ${RULE_CODE} (${IDENTIFIER}) ==="
 echo "Package Directory: rules/${PKG_NAME}"
-echo "Testdata Directory: testdata/src/${SHORT_ID}"
+echo "Corpus Directory:  tests/${CAT_PATH}/${SHORT_ID}"
 echo "Wiki Documentation: wiki/${RULE_CODE}.md"
 
 mkdir -p "${RULES_DIR}"
-mkdir -p "${TESTDATA_DIR}"
+mkdir -p "${CORPUS_DIR}"
 
 render_template() {
     local src="$1"
@@ -51,6 +58,7 @@ render_template() {
         -e "s|{{RULE_CODE}}|${RULE_CODE}|g" \
         -e "s|{{IDENTIFIER}}|${IDENTIFIER}|g" \
         -e "s|{{SHORT_ID}}|${SHORT_ID}|g" \
+        -e "s|{{CAT_PATH}}|${CAT_PATH}|g" \
         -e "s|{{TITLE_CASE_NAME}}|${IDENTIFIER}|g" \
         -e "s|{{SEVERITY}}|HIGH|g" \
         -e "s|{{CATEGORY}}|Security & Data Integrity|g" \
@@ -67,11 +75,59 @@ else
     render_template "${ASSETS_DIR}/sql_walker.go.tmpl" "${RULES_DIR}/sql_walker.go"
 fi
 
-# 3. analyzer_test.go
+# 3. analyzer_test.go (1-SSOT wiring)
 render_template "${ASSETS_DIR}/analyzer_test.go.tmpl" "${RULES_DIR}/analyzer_test.go"
 
-# 4. testdata fixture
-render_template "${ASSETS_DIR}/testdata.go.tmpl" "${TESTDATA_DIR}/${SHORT_ID}.go"
+# 4. 1-SSOT Golden Corpus structure
+if [ "${RULE_TYPE}" = "go" ]; then
+    mkdir -p "${CORPUS_DIR}/positive" "${CORPUS_DIR}/negative" "${CORPUS_DIR}/adversarial"
+    cat <<EOF > "${CORPUS_DIR}/positive/positive.go"
+package positive
+
+import "context"
+
+func Cases(ctx context.Context) {
+	// P1: Direct violation // want \`\\[${RULE_CODE}\\] .*\`
+}
+EOF
+    cat <<EOF > "${CORPUS_DIR}/negative/negative.go"
+package negative
+
+import "context"
+
+func SafeCases(ctx context.Context) {
+	// N1: Compliant case (0 diagnostics)
+	// N5: Suppressed case
+	// argus:ignore ${RULE_CODE} verified intentional usage
+}
+EOF
+    cat <<EOF > "${CORPUS_DIR}/adversarial/adversarial.go"
+package adversarial
+
+import "context"
+
+func AdversarialCases(ctx context.Context) {
+	// A1 - A7 Stress test matrix
+}
+EOF
+else
+    mkdir -p "${CORPUS_DIR}/positive/migrations" "${CORPUS_DIR}/negative/migrations" "${CORPUS_DIR}/adversarial/migrations"
+    cat <<EOF > "${CORPUS_DIR}/positive/positive.go"
+package positive // want \`\\[${RULE_CODE}\\] .*\`
+
+func Dummy() {}
+EOF
+    cat <<EOF > "${CORPUS_DIR}/negative/negative.go"
+package negative
+
+func Dummy() {}
+EOF
+    cat <<EOF > "${CORPUS_DIR}/adversarial/adversarial.go"
+package adversarial
+
+func Dummy() {}
+EOF
+fi
 
 # 5. wiki documentation (if not already existing)
 if [ ! -f "${WIKI_FILE}" ]; then
