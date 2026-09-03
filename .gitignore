@@ -18,7 +18,7 @@ profile.pprof
 
 # Local configuration overrides (keep .argus.yaml.example in git)
 /.argus.yaml
-!testdata/**/.argus.yaml
+!tests/**/.argus.yaml
 
 # Local format and AI hygiene scripts (untracked for public repo)
 .githooks/format-all.sh

@@ -16,7 +16,7 @@ if [ -x "${SCRIPT_DIR}/format-all.sh" ]; then
 fi
 
 echo "[Argus Hook] 1/4 Checking Go code formatting with gofmt..."
-UNFORMATTED=$(gofmt -l $(find . -name "*.go" -not -path "./vendor/*" -not -path "*/testdata/*") || true)
+UNFORMATTED=$(find . -name "*.go" -not -path "./vendor/*" -exec gofmt -l {} +)
 if [ -n "${UNFORMATTED}" ]; then
     echo "Error: Unformatted Go files found:"
     echo "${UNFORMATTED}"
@@ -38,7 +38,7 @@ fi
 
 if command -v gosec >/dev/null 2>&1; then
     echo "[Argus Hook] 4/4 Running gosec AST security audit..."
-    gosec -quiet -exclude-dir=testdata -exclude=G101,G104 ./... || {
+    gosec -quiet -exclude=G101,G104 ./... || {
         echo "Warning: gosec reported potential security findings."
     }
 else
