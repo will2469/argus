@@ -19,6 +19,7 @@ type Config struct {
 	ScanDirs      []string              `yaml:"scan_dirs"`      // Optional root-level alias
 	MigrationDirs []string              `yaml:"migration_dirs"` // Optional root-level alias
 	Rules         map[string]RuleConfig `yaml:"rules"`
+	ConfigFileDir string                `yaml:"-"`
 }
 
 // OptionsConfig defines global scanner options.
@@ -28,6 +29,7 @@ type OptionsConfig struct {
 	FailOn        string   `yaml:"fail_on"`        // "CRITICAL", "HIGH", "MEDIUM", "LOW"
 	ScanDirs      []string `yaml:"scan_dirs"`      // Directories/files to scan for Go code
 	MigrationDirs []string `yaml:"migration_dirs"` // Directories containing SQL migrations
+	AllowedRoots  []string `yaml:"allowed_roots"`  // Explicitly allowed filesystem roots for MCP/scan
 	Telemetry     *bool    `yaml:"telemetry"`      // Controls external issue reporting (default: true)
 	StrictMode    *bool    `yaml:"strict_mode"`    // Controls failure on parse errors (default: true)
 }
@@ -104,6 +106,29 @@ func (c *Config) IsStrictMode() bool {
 	return true
 }
 
+// GetAllowedRoots returns explicitly configured filesystem roots for MCP and scanning.
+// If relative roots are configured, they are anchored to ConfigFileDir (or "." if no config file).
+// Defaults to ConfigFileDir (or ".") if unconfigured.
+func (c *Config) GetAllowedRoots() []string {
+	baseDir := "."
+	if c != nil && c.ConfigFileDir != "" {
+		baseDir = c.ConfigFileDir
+	}
+
+	if c != nil && len(c.Options.AllowedRoots) > 0 {
+		var roots []string
+		for _, r := range c.Options.AllowedRoots {
+			if !filepath.IsAbs(r) {
+				roots = append(roots, filepath.Clean(filepath.Join(baseDir, r)))
+			} else {
+				roots = append(roots, filepath.Clean(r))
+			}
+		}
+		return roots
+	}
+	return []string{baseDir}
+}
+
 func formatRuleCode(i int) string {
 	if i < 10 {
 		return "ARGUS-A0" + string(rune('0'+i))
@@ -124,9 +149,11 @@ func LoadConfig(startDir string) (*Config, error) {
 	}
 
 	cfg := DefaultConfig()
+	cfg.ConfigFileDir = filepath.Dir(configPath)
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return DefaultConfig(), err
 	}
+	cfg.ConfigFileDir = filepath.Dir(configPath)
 	return cfg, nil
 }
 

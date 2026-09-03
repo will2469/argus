@@ -177,10 +177,7 @@ func (r *SanitizerRegistry) IsSanitizerCall(pass *analysis.Pass, call *ast.CallE
 			// Case A: Imported package call (e.g. trustedpkg.SanitizeLikePattern or mypkg.Sanitize)
 			if importPath, isImport := r.pkgImports[xId.Name]; isImport {
 				fullSymbol := importPath + "." + methodName
-				if r.configured[fullSymbol] {
-					return true
-				}
-				return false
+				return r.configured[fullSymbol]
 			}
 
 			// Case B: Local receiver or qualified type (e.g. VerifiedEscaper.SanitizeLikePattern)

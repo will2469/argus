@@ -14,6 +14,7 @@ import (
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/mcp"
 	"github.com/will2469/argus/shared/updater"
+	versionpkg "github.com/will2469/argus/shared/version"
 )
 
 var (
@@ -21,6 +22,18 @@ var (
 	commit  = "none"
 	date    = "unknown"
 )
+
+func init() {
+	if version != "dev" && version != "" {
+		versionpkg.Version = version
+	}
+	if commit != "none" && commit != "" {
+		versionpkg.Commit = commit
+	}
+	if date != "unknown" && date != "" {
+		versionpkg.Date = date
+	}
+}
 
 func main() {
 	if isStandaloneRun(os.Args[1:]) {
@@ -78,13 +91,13 @@ func runStandalone() {
 		arg := args[i]
 		switch {
 		case arg == "-v" || arg == "--version" || arg == "-version" || arg == "version":
-			fmt.Printf("argus %s (commit: %s, built: %s)\n", version, commit, date)
+			fmt.Printf("argus %s\n", versionpkg.FullInfo())
 			os.Exit(0)
 		case arg == "-h" || arg == "--help" || arg == "-help" || arg == "help":
 			printUsage()
 			os.Exit(0)
 		case arg == "-u" || arg == "--update" || arg == "-update" || arg == "update" || arg == "upgrade":
-			if err := updater.CheckAndApplyUpdate(version); err != nil {
+			if err := updater.CheckAndApplyUpdate(versionpkg.Get()); err != nil {
 				fmt.Fprintf(os.Stderr, "Error updating Argus: %v\n", err)
 				os.Exit(1)
 			}

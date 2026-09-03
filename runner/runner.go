@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 
@@ -16,6 +17,7 @@ type AuditConfig struct {
 	MigrationDirs []string
 	Config        *config.Config
 	Analyzers     []*analysis.Analyzer
+	Context       context.Context
 }
 
 // RunAuditWithConfig scans specified targets using provided configuration.
@@ -39,24 +41,39 @@ func RunAuditWithConfig(cfg AuditConfig) (*AuditResult, error) {
 	}
 
 	var goFiles []string
+	seenFiles := make(map[string]bool)
 	for _, dir := range scanDirs {
 		target := dir
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(rootDir, target)
 		}
+		var files []string
 		if strings.HasSuffix(target, ".go") {
-			goFiles = append(goFiles, target)
+			files = []string{target}
 		} else {
-			goFiles = append(goFiles, findFilesWithExt(target, ".go")...)
+			files = findFilesWithExt(target, ".go")
+		}
+		for _, f := range files {
+			if !seenFiles[f] {
+				seenFiles[f] = true
+				goFiles = append(goFiles, f)
+			}
 		}
 	}
 
 	for _, file := range goFiles {
+		if cfg.Context != nil && cfg.Context.Err() != nil {
+			return nil, cfg.Context.Err()
+		}
 		if strings.HasSuffix(file, "_test.go") {
 			continue
 		}
 		tracker.IncrementScannedFiles(1)
 		scanGoSourceFile(file, rootDir, tracker, appCfg)
+	}
+
+	if cfg.Context != nil && cfg.Context.Err() != nil {
+		return nil, cfg.Context.Err()
 	}
 
 	// 2. Scan migration SQL files with all migration rules (A11, A13, A15, A27, A28, A29, A30)

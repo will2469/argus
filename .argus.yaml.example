@@ -6,6 +6,8 @@ options:
   report_format: "markdown" # "text" | "json" | "markdown"
   report_file: "argus-report.md"
   fail_on: "HIGH"       # "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+  allowed_roots:        # Explicit filesystem roots for MCP & scanning (default: ["."])
+    - "."
   scan_dirs:
     - "."
   migration_dirs:
