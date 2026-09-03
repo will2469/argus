@@ -18,11 +18,20 @@ func IsRawContext(e ast.Expr, body *ast.BlockStmt) bool {
 		return isRawContextCall(call)
 	}
 
-	// 2. Local variable resolution
+	// 2. Local variable resolution with alias tracing
 	ident, ok := e.(*ast.Ident)
 	if !ok || body == nil {
 		return false
 	}
+
+	return resolveIdentIsRaw(ident.Name, body, make(map[string]bool))
+}
+
+func resolveIdentIsRaw(varName string, body *ast.BlockStmt, visited map[string]bool) bool {
+	if visited[varName] {
+		return false
+	}
+	visited[varName] = true
 
 	var rawSource bool
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -32,14 +41,29 @@ func IsRawContext(e ast.Expr, body *ast.BlockStmt) bool {
 		}
 		for i, lhs := range assign.Lhs {
 			id, ok := lhs.(*ast.Ident)
-			if ok && id.Name == ident.Name && i < len(assign.Rhs) {
-				rhs := assign.Rhs[i]
-				if call, ok := rhs.(*ast.CallExpr); ok {
-					if isRawContextCall(call) {
-						rawSource = true
-					} else if isBoundedContextCall(call) {
-						rawSource = false
-					}
+			if !ok || id.Name != varName {
+				continue
+			}
+
+			var rhs ast.Expr
+			if i < len(assign.Rhs) {
+				rhs = assign.Rhs[i]
+			} else if len(assign.Rhs) == 1 {
+				rhs = assign.Rhs[0]
+			}
+			if rhs == nil {
+				continue
+			}
+
+			if call, ok := rhs.(*ast.CallExpr); ok {
+				if isRawContextCall(call) {
+					rawSource = true
+				} else if isBoundedContextCall(call) {
+					rawSource = false
+				}
+			} else if aliasIdent, ok := rhs.(*ast.Ident); ok {
+				if resolveIdentIsRaw(aliasIdent.Name, body, visited) {
+					rawSource = true
 				}
 			}
 		}

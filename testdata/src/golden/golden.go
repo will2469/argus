@@ -92,14 +92,14 @@ func nPlusOne(ctx context.Context, pool *pgxpool.Pool, users []User) {
 
 func nPlusOneDeep(ctx context.Context, users []User) {
 	for _, user := range users { // want `\[ARGUS-A17\] N\+1 query pattern detected`
-		loadProfile(user.ID)
+		loadProfile(ctx, user.ID)
 	}
 }
 
-func loadProfile(id int) {
-	fetchProfile(id)
+func loadProfile(ctx context.Context, id int) {
+	fetchProfile(ctx, id)
 }
 
-func fetchProfile(id int) {
-	db.Query(context.Background(), "SELECT id, name FROM profiles WHERE id = $1", id)
+func fetchProfile(ctx context.Context, id int) {
+	db.Query(ctx, "SELECT id, name FROM profiles WHERE id = $1", id)
 }
