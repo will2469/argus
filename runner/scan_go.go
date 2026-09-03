@@ -19,6 +19,7 @@ import (
 	"github.com/will2469/argus/rules/a07_error_leak"
 	"github.com/will2469/argus/rules/a08_tx_io"
 	"github.com/will2469/argus/rules/a09_advisory_lock"
+	"github.com/will2469/argus/rules/a10_isolation_level"
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
@@ -209,7 +210,20 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 		})
 	}
 
-	// 11. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
+	// 11. ARGUS-A10: Critical Table Transaction Isolation Level
+	a10Issues := a10_isolation_level.InspectFile(pass, fset, node, dm, nil)
+	for _, issue := range a10Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "WEAK_ISOLATION_LEVEL",
+			Message:  issue.Message,
+			Category: "reliability",
+		})
+	}
+
+	// 12. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
 	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
 	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {

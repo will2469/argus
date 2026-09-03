@@ -2,6 +2,7 @@
 package a10_isolation_level
 
 import (
+	"go/ast"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
@@ -41,4 +42,30 @@ func HasPessimisticRowLock(sql string) bool {
 func HasAdvisoryLockCall(sql string) bool {
 	lower := strings.ToLower(sql)
 	return strings.Contains(lower, "pg_advisory_xact_lock") || strings.Contains(lower, "pg_try_advisory_xact_lock")
+}
+
+func isEnclosedInAdvisory(call *ast.CallExpr, body *ast.BlockStmt) bool {
+	var enclosed bool
+	ast.Inspect(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name := getCallTargetName(c.Fun)
+		if name == "WithAdvisoryLock" || strings.HasSuffix(name, ".WithAdvisoryLock") {
+			for _, arg := range c.Args {
+				if lit, ok := arg.(*ast.FuncLit); ok && lit.Body != nil {
+					ast.Inspect(lit.Body, func(in ast.Node) bool {
+						if in == call {
+							enclosed = true
+							return false
+						}
+						return true
+					})
+				}
+			}
+		}
+		return true
+	})
+	return enclosed
 }

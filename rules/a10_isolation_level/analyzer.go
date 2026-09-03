@@ -4,16 +4,19 @@ package a10_isolation_level
 
 import (
 	"go/ast"
+	"go/token"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/directives"
 )
 
-const RuleCode = "ARGUS-A10"
+const (
+	RuleCode        = "ARGUS-A10"
+	violationMsgFmt = "transaction writing to critical table without explicit Serializable/RepeatableRead isolation level or row lock; use pgx.TxOptions or SELECT ... FOR UPDATE"
+)
 
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A10.
 var Analyzer = &analysis.Analyzer{
@@ -26,35 +29,41 @@ var Analyzer = &analysis.Analyzer{
 	},
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
-	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
-	if !cfg.IsRuleEnabled(RuleCode) {
-		return nil, nil
+// Issue describes a detected violation of ARGUS-A10.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
+
+// InspectFile inspects an AST file for unsafe isolation level transactions on critical tables.
+// Can be called with pass == nil in standalone CLI runner mode.
+func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap, customTables []string) []Issue {
+	if file == nil {
+		return nil
+	}
+	if fset == nil && pass != nil {
+		fset = pass.Fset
 	}
 
-	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
-	customTables := cfg.GetStringSlice(RuleCode, "critical_tables", nil)
+	pos := fset.Position(file.Package)
+	if strings.HasSuffix(pos.Filename, "_test.go") {
+		return nil
+	}
 
-	for _, file := range pass.Files {
-		pos := pass.Fset.Position(file.Package)
-		if strings.HasSuffix(pos.Filename, "_test.go") {
+	var issues []Issue
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
 			continue
 		}
 
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-
-			inspectFunctionIsolation(pass, fn.Body, customTables, dm)
-		}
+		inspectFunctionIsolation(fset, fn.Body, customTables, dm, &issues)
 	}
 
-	return nil, nil
+	return issues
 }
 
-func inspectFunctionIsolation(pass *analysis.Pass, body *ast.BlockStmt, customTables []string, dm *directives.DirectiveMap) {
+func inspectFunctionIsolation(fset *token.FileSet, body *ast.BlockStmt, customTables []string, dm *directives.DirectiveMap, issues *[]Issue) {
 	// 1. Inspect WithTx helper calls
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -82,156 +91,35 @@ func inspectFunctionIsolation(pass *analysis.Pass, body *ast.BlockStmt, customTa
 			hasIso = HasStrongIsolation(call.Args[3], body)
 		}
 
-		if !hasIso && !dm.IsIgnored(pass.Fset, call.Pos(), RuleCode) {
-			pass.Reportf(call.Pos(), "[%s] transaction writing to critical table without explicit Serializable/RepeatableRead isolation level or row lock; use pgx.TxOptions or SELECT ... FOR UPDATE", RuleCode)
+		if !hasIso && (fset == nil || dm == nil || !dm.IsIgnored(fset, call.Pos(), RuleCode)) {
+			*issues = append(*issues, Issue{
+				Pos:     call.Pos(),
+				Message: violationMsgFmt,
+			})
 		}
 
 		return true
 	})
 
 	// 2. Inspect explicit transaction blocks (pool.Begin / pool.BeginTx)
-	inspectExplicitTxIsolation(pass, body, customTables, dm)
+	inspectExplicitTxIsolation(fset, body, customTables, dm, issues)
 }
 
-func inspectExplicitTxIsolation(pass *analysis.Pass, body *ast.BlockStmt, customTables []string, dm *directives.DirectiveMap) {
-	var inTx bool
-	var txVarName string
-	var beginPos ast.Node
-	var hasStrongIso bool
-	var hasWrite bool
-	var hasRowLock bool
-	var hasAdvisory bool
+func run(pass *analysis.Pass) (interface{}, error) {
+	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
+	if !cfg.IsRuleEnabled(RuleCode) {
+		return nil, nil
+	}
 
-	for _, stmt := range body.List {
-		if assign, ok := stmt.(*ast.AssignStmt); ok {
-			for i, rhs := range assign.Rhs {
-				if call, ok := rhs.(*ast.CallExpr); ok {
-					name := getCallTargetName(call.Fun)
-					if name == "Begin" || strings.HasSuffix(name, ".Begin") {
-						if i < len(assign.Lhs) {
-							if id, ok := assign.Lhs[i].(*ast.Ident); ok {
-								inTx = true
-								txVarName = id.Name
-								beginPos = call
-								hasStrongIso = false
-								hasWrite = false
-								hasRowLock = false
-								hasAdvisory = false
-							}
-						}
-					} else if name == "BeginTx" || strings.HasSuffix(name, ".BeginTx") {
-						if i < len(assign.Lhs) {
-							if id, ok := assign.Lhs[i].(*ast.Ident); ok {
-								inTx = true
-								txVarName = id.Name
-								beginPos = call
-								hasWrite = false
-								hasRowLock = false
-								hasAdvisory = false
-								if len(call.Args) >= 2 {
-									hasStrongIso = HasStrongIsolation(call.Args[1], body)
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
+	customTables := cfg.GetStringSlice(RuleCode, "critical_tables", nil)
 
-		if inTx {
-			if _, isDefer := stmt.(*ast.DeferStmt); isDefer {
-				continue
-			}
-
-			ast.Inspect(stmt, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
-					return true
-				}
-				query, found := callsite.ExtractQueryString(call)
-				if !found {
-					return true
-				}
-				if IsCriticalTableWrite(query, customTables) {
-					hasWrite = true
-				}
-				if HasPessimisticRowLock(query) {
-					hasRowLock = true
-				}
-				if HasAdvisoryLockCall(query) {
-					hasAdvisory = true
-				}
-				return true
-			})
-
-			if isTxEndStmt(stmt, txVarName) {
-				if hasWrite && !hasStrongIso && !hasRowLock && !hasAdvisory {
-					if beginPos != nil && !dm.IsIgnored(pass.Fset, beginPos.Pos(), RuleCode) {
-						pass.Reportf(beginPos.Pos(), "[%s] transaction writing to critical table without explicit Serializable/RepeatableRead isolation level or row lock; use pgx.TxOptions or SELECT ... FOR UPDATE", RuleCode)
-					}
-				}
-				inTx = false
-				txVarName = ""
-				beginPos = nil
-			}
+	for _, file := range pass.Files {
+		issues := InspectFile(pass, pass.Fset, file, dm, customTables)
+		for _, iss := range issues {
+			pass.Reportf(iss.Pos, "[%s] %s", RuleCode, iss.Message)
 		}
 	}
-}
 
-func analyzeClosureQueries(body *ast.BlockStmt, customTables []string) (hasWrite, hasRowLock, hasAdvisory bool) {
-	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
-			return true
-		}
-		query, found := callsite.ExtractQueryString(call)
-		if !found {
-			return true
-		}
-		if IsCriticalTableWrite(query, customTables) {
-			hasWrite = true
-		}
-		if HasPessimisticRowLock(query) {
-			hasRowLock = true
-		}
-		if HasAdvisoryLockCall(query) {
-			hasAdvisory = true
-		}
-		return true
-	})
-	return
-}
-
-func isEnclosedInAdvisory(call *ast.CallExpr, body *ast.BlockStmt) bool {
-	var enclosed bool
-	ast.Inspect(body, func(n ast.Node) bool {
-		c, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		name := getCallTargetName(c.Fun)
-		if name == "WithAdvisoryLock" || strings.HasSuffix(name, ".WithAdvisoryLock") {
-			for _, arg := range c.Args {
-				if lit, ok := arg.(*ast.FuncLit); ok && lit.Body != nil {
-					ast.Inspect(lit.Body, func(in ast.Node) bool {
-						if in == call {
-							enclosed = true
-							return false
-						}
-						return true
-					})
-				}
-			}
-		}
-		return true
-	})
-	return enclosed
+	return nil, nil
 }

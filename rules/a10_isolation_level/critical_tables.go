@@ -14,6 +14,10 @@ var defaultCriticalTables = map[string]bool{
 	"wallets":           true,
 	"ledger":            true,
 	"sequence_counters": true,
+	"saldo":             true,
+	"kuota":             true,
+	"nomor_urut":        true,
+	"rekening":          true,
 }
 
 // IsCriticalTable checks whether a table name is in the critical table set.
