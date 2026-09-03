@@ -4,27 +4,22 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 )
 
-// Schema represents JSON Schema definition for tool inputs.
-type Schema struct {
-	Type       string              `json:"type"`
-	Properties map[string]Property `json:"properties"`
-	Required   []string            `json:"required,omitempty"`
-}
-
-// Property defines a schema property attribute.
-type Property struct {
-	Type        string    `json:"type"`
-	Description string    `json:"description,omitempty"`
-	Enum        []string  `json:"enum,omitempty"`
-	Items       *Property `json:"items,omitempty"`
-}
-
-// ValidateSchema verifies that the raw JSON arguments strictly conform to
-// the declared tool input schema (required fields, property types, and no unexpected keys).
+// ValidateSchema verifies that the raw JSON arguments conform to the declared
+// Argus MCP Schema Subset (required fields, property types, enum constraints,
+// array element types, and no unexpected keys).
+//
+// Validation coverage:
+//   - Required field presence (non-null)
+//   - Strict property allowlist (unexpected keys rejected)
+//   - Type checking: string, boolean, number, integer, array, object
+//   - Integer semantics: must be a whole number (fractional values rejected)
+//   - Enum constraint: string values must match declared enum set
+//   - Array items: element type validated for all supported types
 func ValidateSchema(toolName string, schema Schema, rawArgs json.RawMessage) error {
 	// 1. Handle empty or null arguments
 	trimmed := bytes.TrimSpace(rawArgs)
@@ -66,53 +61,65 @@ func ValidateSchema(toolName string, schema Schema, rawArgs json.RawMessage) err
 		if !exists {
 			continue
 		}
-		trimmedVal := bytes.TrimSpace(val)
-		if bytes.Equal(trimmedVal, []byte("null")) {
-			continue // Non-required field with explicit null is allowed
-		}
-
-		switch prop.Type {
-		case "string":
-			var s string
-			if err := json.Unmarshal(trimmedVal, &s); err != nil {
-				return fmt.Errorf("property %q must be a string", key)
-			}
-			if len(prop.Enum) > 0 && !slices.Contains(prop.Enum, s) {
-				return fmt.Errorf("property %q must be one of [%s], got %q", key, strings.Join(prop.Enum, ", "), s)
-			}
-		case "boolean":
-			var b bool
-			if err := json.Unmarshal(trimmedVal, &b); err != nil {
-				return fmt.Errorf("property %q must be a boolean", key)
-			}
-		case "number", "integer":
-			var n float64
-			if err := json.Unmarshal(trimmedVal, &n); err != nil {
-				return fmt.Errorf("property %q must be a number", key)
-			}
-		case "array":
-			var arr []json.RawMessage
-			if err := json.Unmarshal(trimmedVal, &arr); err != nil {
-				return fmt.Errorf("property %q must be an array", key)
-			}
-			if prop.Items != nil {
-				for i, item := range arr {
-					trimmedItem := bytes.TrimSpace(item)
-					switch prop.Items.Type {
-					case "string":
-						var itemStr string
-						if err := json.Unmarshal(trimmedItem, &itemStr); err != nil {
-							return fmt.Errorf("element %d in %q must be a string", i, key)
-						}
-					}
-				}
-			}
-		case "object":
-			if len(trimmedVal) == 0 || trimmedVal[0] != '{' {
-				return fmt.Errorf("property %q must be an object", key)
-			}
+		if err := validateType(key, prop, bytes.TrimSpace(val)); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// validateType checks a single value against its declared Property type.
+// This is the shared validation core used by both top-level properties and array items.
+func validateType(name string, prop Property, trimmedVal []byte) error {
+	if bytes.Equal(trimmedVal, []byte("null")) {
+		return nil // Non-required field with explicit null is allowed
+	}
+
+	switch prop.Type {
+	case "string":
+		var s string
+		if err := json.Unmarshal(trimmedVal, &s); err != nil {
+			return fmt.Errorf("property %q must be a string", name)
+		}
+		if len(prop.Enum) > 0 && !slices.Contains(prop.Enum, s) {
+			return fmt.Errorf("property %q must be one of [%s], got %q", name, strings.Join(prop.Enum, ", "), s)
+		}
+	case "boolean":
+		var b bool
+		if err := json.Unmarshal(trimmedVal, &b); err != nil {
+			return fmt.Errorf("property %q must be a boolean", name)
+		}
+	case "number":
+		var n float64
+		if err := json.Unmarshal(trimmedVal, &n); err != nil {
+			return fmt.Errorf("property %q must be a number", name)
+		}
+	case "integer":
+		var n float64
+		if err := json.Unmarshal(trimmedVal, &n); err != nil {
+			return fmt.Errorf("property %q must be an integer", name)
+		}
+		if n != math.Floor(n) || math.IsInf(n, 0) || math.IsNaN(n) {
+			return fmt.Errorf("property %q must be an integer, got %v", name, n)
+		}
+	case "array":
+		var arr []json.RawMessage
+		if err := json.Unmarshal(trimmedVal, &arr); err != nil {
+			return fmt.Errorf("property %q must be an array", name)
+		}
+		if prop.Items != nil {
+			for i, item := range arr {
+				elemName := fmt.Sprintf("element %d in %q", i, name)
+				if err := validateType(elemName, *prop.Items, bytes.TrimSpace(item)); err != nil {
+					return err
+				}
+			}
+		}
+	case "object":
+		if len(trimmedVal) == 0 || trimmedVal[0] != '{' {
+			return fmt.Errorf("property %q must be an object", name)
+		}
+	}
 	return nil
 }

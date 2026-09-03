@@ -6,12 +6,6 @@ import (
 	"strings"
 )
 
-// PathAuthority enforces strict filesystem isolation boundaries against explicitly
-// allowed roots. It defends against both directory traversal ("../") and symlink escapes.
-type PathAuthority struct {
-	canonicalRoots []string
-}
-
 // NewPathAuthority initializes a PathAuthority with canonicalized root directories.
 // If roots is empty, it safely defaults to the current working directory (".").
 func NewPathAuthority(roots ...string) (*PathAuthority, error) {
@@ -50,6 +44,9 @@ func (pa *PathAuthority) CanonicalRoots() []string {
 
 // ValidatePath verifies that targetPath resolves strictly within at least one
 // of the allowed roots, fully evaluating symlinks and ancestor chains.
+//
+// Note: This is a point-in-time check subject to TOCTOU races. For atomic
+// containment guarantees, use SafeOpen or SafeStat instead.
 func (pa *PathAuthority) ValidatePath(targetPath string) (string, error) {
 	trimmed := strings.TrimSpace(targetPath)
 	if trimmed == "" {

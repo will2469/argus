@@ -13,8 +13,6 @@ import (
 	"github.com/will2469/argus/shared/mcp/security"
 )
 
-type checkMigrationTool struct{}
-
 // NewCheckMigrationTool initializes the argus_check_migration tool.
 func NewCheckMigrationTool() Tool {
 	return &checkMigrationTool{}

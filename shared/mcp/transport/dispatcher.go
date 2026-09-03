@@ -6,39 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 	"time"
 
 	mcperrors "github.com/will2469/argus/shared/mcp/errors"
 )
 
-const (
-	// DefaultMaxConcurrentCheap limits parallel lightweight requests (ping, rule lookup, tools/list).
-	DefaultMaxConcurrentCheap = 32
-	// DefaultMaxConcurrentExpensive limits heavy static analysis / migration parsers.
-	DefaultMaxConcurrentExpensive = 2
-	// DefaultShutdownTimeout is the maximum duration to wait for in-flight requests during server shutdown.
-	DefaultShutdownTimeout = 5 * time.Second
-)
-
-// ResourceCost classifies the concurrency cost of requests.
-type ResourceCost string
-
-const (
-	// CostCheap designates non-blocking, memory-light operations (ping, inspect rule, list tools).
-	CostCheap ResourceCost = "cheap"
-	// CostExpensive designates CPU and I/O intensive operations (full repo scan, migration parse).
-	CostExpensive ResourceCost = "expensive"
-)
-
-// HandlerFunc executes a validated JSON-RPC request and returns a response.
-type HandlerFunc func(context.Context, ParsedRequest) *mcperrors.JSONRPCResponse
-
-// SynchronizedWriter ensures JSON-RPC responses are written sequentially to stdout without interleaving.
-type SynchronizedWriter struct {
-	mu sync.Mutex
-	w  io.Writer
-}
 
 // NewSynchronizedWriter creates a thread-safe JSON-RPC response writer.
 func NewSynchronizedWriter(w io.Writer) *SynchronizedWriter {
@@ -66,19 +38,6 @@ func (sw *SynchronizedWriter) WriteResponse(resp mcperrors.JSONRPCResponse) erro
 	return err
 }
 
-// Dispatcher coordinates request concurrency, lifecycle isolation, cancellation, and graceful shutdown.
-// It partitions resources into Cheap and Expensive semaphore pools to prevent Head-of-Line blocking.
-type Dispatcher struct {
-	tracker      *RequestTracker
-	writer       *SynchronizedWriter
-	cheapSem     chan struct{}
-	expensiveSem chan struct{}
-	wg           sync.WaitGroup
-	rootCtx      context.Context
-	cancelAll    context.CancelFunc
-	errMu        sync.Mutex
-	lastErr      error
-}
 
 // NewDispatcher initializes a Dispatcher with dual semaphore pools and synchronized output.
 func NewDispatcher(w io.Writer, maxExpensive int, maxCheap int) *Dispatcher {
@@ -132,11 +91,8 @@ func (d *Dispatcher) Dispatch(req ParsedRequest, cost ResourceCost, handler Hand
 			sem = d.cheapSem
 		}
 
-		ctx, cancel := d.tracker.Begin(d.rootCtx, req.ID)
-		defer func() {
-			cancel()
-			d.tracker.End(req.ID)
-		}()
+		ctx, end := d.tracker.Begin(d.rootCtx, req.ID)
+		defer end()
 
 		// Acquire concurrency semaphore slot. If cancelled while queued, abort early!
 		select {
@@ -182,20 +138,44 @@ func (d *Dispatcher) ActiveRequests() int {
 	return d.tracker.ActiveCount()
 }
 
-// Shutdown gracefully waits for active requests to finish or cancels them if timeout expires.
-func (d *Dispatcher) Shutdown(timeout time.Duration) {
+// Shutdown performs a two-phase bounded shutdown of the dispatcher.
+//
+// Phase 1 (grace): Waits up to `timeout` for all in-flight handlers to complete naturally.
+// Phase 2 (kill):  If handlers remain after phase 1, cancels all contexts and waits up to
+//
+//	a bounded kill window for handlers to observe cancellation and exit.
+//
+// Returns nil on clean shutdown, or ErrShutdownTimeout if handlers failed to terminate
+// within the total deadline (timeout + kill window). The caller is never blocked indefinitely.
+func (d *Dispatcher) Shutdown(timeout time.Duration) error {
 	done := make(chan struct{})
 	go func() {
 		d.wg.Wait()
 		close(done)
 	}()
 
+	// Phase 1: Grace period — let handlers finish naturally.
 	select {
 	case <-done:
-		// Clean exit: all requests completed within timeout
+		return nil
 	case <-time.After(timeout):
-		// Timeout exceeded: abort remaining requests
-		d.cancelAll()
-		<-done
+	}
+
+	// Phase 2: Cancel all contexts and wait with a hard kill deadline.
+	d.cancelAll()
+
+	killWait := timeout / 2
+	if killWait < 2*time.Second {
+		killWait = 2 * time.Second
+	}
+	if killWait > 5*time.Second {
+		killWait = 5 * time.Second
+	}
+
+	select {
+	case <-done:
+		return nil
+	case <-time.After(killWait):
+		return ErrShutdownTimeout
 	}
 }

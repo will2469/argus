@@ -9,8 +9,6 @@ import (
 	mcperrors "github.com/will2469/argus/shared/mcp/errors"
 )
 
-const issueRepoSlug = "will2469/argus"
-
 // BuildPreview constructs the Phase 1 draft preview for user confirmation.
 func BuildPreview(id any, title, body, category, token string) *mcperrors.JSONRPCResponse {
 	var sb strings.Builder

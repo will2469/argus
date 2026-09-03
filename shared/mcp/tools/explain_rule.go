@@ -11,8 +11,6 @@ import (
 	"github.com/will2469/argus/shared/mcp/security"
 )
 
-type explainRuleTool struct{}
-
 // NewExplainRuleTool initializes the argus_explain_rule tool.
 func NewExplainRuleTool() Tool {
 	return &explainRuleTool{}

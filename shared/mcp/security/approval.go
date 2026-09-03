@@ -4,38 +4,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"sync"
 	"time"
 )
-
-const (
-	// DefaultApprovalTTL is the maximum validity duration for an approval token (10 minutes).
-	DefaultApprovalTTL = 10 * time.Minute
-	// MaxStoredApprovals limits the number of pending tokens to prevent memory exhaustion.
-	MaxStoredApprovals = 256
-)
-
-var (
-	// ErrTokenNotFound is returned when the approval token is absent or has already been consumed.
-	ErrTokenNotFound = errors.New("approval token not found or already consumed")
-	// ErrTokenExpired is returned when the approval token was presented after its TTL.
-	ErrTokenExpired = errors.New("approval token has expired; please request a new preview")
-	// ErrPayloadMismatch is returned when the payload hash at submission does not match the previewed payload.
-	ErrPayloadMismatch = errors.New("payload mutation detected: issue contents were altered after approval was requested")
-)
-
-type approvalEntry struct {
-	payloadHash [32]byte
-	expiresAt   time.Time
-}
-
-// ApprovalManager manages single-use, short-lived, payload-bound approval tokens for HITL operations.
-type ApprovalManager struct {
-	mu     sync.Mutex
-	tokens map[string]approvalEntry
-}
 
 // NewApprovalManager initializes an ApprovalManager.
 func NewApprovalManager() *ApprovalManager {
@@ -43,9 +14,6 @@ func NewApprovalManager() *ApprovalManager {
 		tokens: make(map[string]approvalEntry),
 	}
 }
-
-// DefaultApprovalManager provides a shared instance for tool operations.
-var DefaultApprovalManager = NewApprovalManager()
 
 // ComputeIssueHash creates a deterministic SHA-256 digest of the complete issue payload.
 func ComputeIssueHash(ruleCode, title, description, snippet, category string) [32]byte {

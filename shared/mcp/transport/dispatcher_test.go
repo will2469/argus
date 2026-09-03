@@ -3,6 +3,7 @@ package transport
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,7 +30,9 @@ func TestDispatcher_ShutdownGraceful(t *testing.T) {
 		})
 	}
 
-	disp.Shutdown(500 * time.Millisecond)
+	if err := disp.Shutdown(500 * time.Millisecond); err != nil {
+		t.Fatalf("expected clean shutdown, got: %v", err)
+	}
 
 	if completed.Load() != 5 {
 		t.Fatalf("expected all 5 tasks to complete during graceful shutdown, got %d", completed.Load())
@@ -39,7 +42,11 @@ func TestDispatcher_ShutdownGraceful(t *testing.T) {
 func TestDispatcher_WorkloadPartitioning(t *testing.T) {
 	var out bytes.Buffer
 	disp := NewDispatcher(&out, 1, 10) // 1 expensive, 10 cheap
-	defer disp.Shutdown(DefaultShutdownTimeout)
+	defer func() {
+		if err := disp.Shutdown(DefaultShutdownTimeout); err != nil {
+			t.Errorf("expected clean shutdown, got: %v", err)
+		}
+	}()
 
 	var expensiveRunning atomic.Bool
 	var cheapExecutedWhileExpensiveActive atomic.Bool
@@ -71,5 +78,33 @@ func TestDispatcher_WorkloadPartitioning(t *testing.T) {
 
 	if !cheapExecutedWhileExpensiveActive.Load() {
 		t.Fatal("cheap request was queued behind expensive request: partitioning invariant failed")
+	}
+}
+
+func TestDispatcher_ShutdownTimeout(t *testing.T) {
+	var out bytes.Buffer
+	disp := NewDispatcher(&out, 2, 10)
+
+	// Dispatch a handler that ignores context cancellation entirely.
+	disp.Dispatch(ParsedRequest{ID: "stuck"}, CostCheap, func(ctx context.Context, pr ParsedRequest) *mcperrors.JSONRPCResponse {
+		// Deliberately ignore ctx.Done() — simulates a misbehaving tool.
+		time.Sleep(30 * time.Second)
+		return &mcperrors.JSONRPCResponse{JSONRPC: "2.0", ID: pr.ID, Result: "never"}
+	})
+
+	time.Sleep(10 * time.Millisecond) // let goroutine start
+
+	start := time.Now()
+	err := disp.Shutdown(50 * time.Millisecond) // tiny grace period
+	elapsed := time.Since(start)
+
+	// Must return ErrShutdownTimeout, NOT block forever.
+	if !errors.Is(err, ErrShutdownTimeout) {
+		t.Fatalf("expected ErrShutdownTimeout, got: %v", err)
+	}
+
+	// Total wall-clock must be bounded: grace (50ms) + kill (2s) + some slack.
+	if elapsed > 5*time.Second {
+		t.Fatalf("shutdown took %v — should be bounded, not infinite", elapsed)
 	}
 }

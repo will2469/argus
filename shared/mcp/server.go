@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,8 +23,6 @@ import (
 func init() {
 	tools.RegisterTool(telemetry.NewReportIssueTool())
 }
-
-const protocolVersion = "2024-11-05"
 
 // ServerOption configures server runtime policies.
 type ServerOption func(*serverConfig)
@@ -40,9 +39,9 @@ func WithStrictLifecycle(strict bool) ServerOption {
 }
 
 type serverSession struct {
-	mu           sync.Mutex
-	initializing bool
-	initialized  bool
+	mu              sync.Mutex
+	state           lifecycleState
+	protocolVersion string
 }
 
 // Serve starts the MCP server reading from r and writing to w with optional configuration.
@@ -62,11 +61,18 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 	}
 
 	scanner := bufio.NewScanner(r)
-	// MCP messages can be large; allow up to 10MB per line.
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	// Transport framing invariant: messages are newline-delimited JSON.
+	// A single message exceeding MaxMessageSize is a transport-level violation that
+	// terminates the connection immediately. This is intentionally connection-fatal:
+	//   - No JSON-RPC error response is sent (framing itself is broken).
+	//   - No partial execution of the oversized request.
+	//   - No partial stdout from the oversized request.
+	// Callers can distinguish this via errors.Is(err, ErrOversizedMessage).
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxMessageSize)
 
 	dispatcher := NewDispatcher(w, DefaultMaxConcurrentExpensive, DefaultMaxConcurrentCheap)
-	defer dispatcher.Shutdown(DefaultShutdownTimeout)
+	var shutdownErr error
+	defer func() { shutdownErr = dispatcher.Shutdown(DefaultShutdownTimeout) }()
 
 	sess := &serverSession{}
 
@@ -91,42 +97,80 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 
 		if cfg.strictLifecycle {
 			sess.mu.Lock()
-			if req.Method == "initialize" {
-				if sess.initialized || sess.initializing {
+			switch sess.state {
+			case statePreInit:
+				if req.Method == "initialize" {
+					resp := handleRequest(context.Background(), *req)
+					if resp != nil && resp.Error != nil {
+						sess.mu.Unlock()
+						_ = dispatcher.WriteResponse(*resp)
+						continue
+					}
+					sess.state = stateInitializing
+					if resMap, ok := resp.Result.(map[string]any); ok {
+						if v, ok := resMap["protocolVersion"].(string); ok {
+							sess.protocolVersion = v
+						}
+					}
+					sess.mu.Unlock()
+					if resp != nil {
+						if err := dispatcher.WriteResponse(*resp); err != nil {
+							return fmt.Errorf("failed to write initialize response: %w", err)
+						}
+					}
+					continue
+				} else if req.Method != "ping" {
+					sess.mu.Unlock()
+					_ = dispatcher.WriteResponse(*ProtocolError(req.ID, CodeServerNotInitialized, "Server not initialized: 'initialize' must be called first"))
+					continue
+				}
+			case stateInitializing:
+				if req.Method == "initialize" {
+					sess.mu.Unlock()
+					_ = dispatcher.WriteResponse(*ProtocolError(req.ID, CodeInvalidRequest, "Server already initialized"))
+					continue
+				} else if req.Method != "ping" {
+					sess.mu.Unlock()
+					_ = dispatcher.WriteResponse(*ProtocolError(req.ID, CodeServerNotInitialized, "Server not initialized: awaiting 'notifications/initialized'"))
+					continue
+				}
+			case stateInitialized:
+				if req.Method == "initialize" {
 					sess.mu.Unlock()
 					_ = dispatcher.WriteResponse(*ProtocolError(req.ID, CodeInvalidRequest, "Server already initialized"))
 					continue
 				}
-				sess.initializing = true
-			} else if req.Method != "ping" && !sess.initialized && !sess.initializing {
-				sess.mu.Unlock()
-				_ = dispatcher.WriteResponse(*ProtocolError(req.ID, -32002, "Server not initialized: 'initialize' must be called first"))
-				continue
 			}
 			sess.mu.Unlock()
 		}
 
-		cost := determineRequestCost(*req)
+		cost := CostCheap
+		if req.Method == "tools/call" {
+			var params struct {
+				Name string `json:"name"`
+			}
+			if len(req.Params) == 0 || json.Unmarshal(req.Params, &params) != nil || params.Name == "" {
+				_ = dispatcher.WriteResponse(*InvalidParamsError(req.ID, "Invalid params: 'name' is required"))
+				continue
+			}
+			toolCost, ok := tools.DefaultRegistry.GetCost(params.Name)
+			if !ok {
+				_ = dispatcher.WriteResponse(*InvalidParamsError(req.ID, fmt.Sprintf("Unknown tool: %s", params.Name)))
+				continue
+			}
+			cost = toolCost
+		}
+
 		dispatcher.Dispatch(*req, cost, handleRequest)
 	}
 
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return fmt.Errorf("%w: limit is %d bytes", ErrOversizedMessage, MaxMessageSize)
+		}
 		return err
 	}
-	return dispatcher.Err()
-}
-
-func determineRequestCost(req ParsedRequest) ResourceCost {
-	if req.Method != "tools/call" {
-		return CostCheap
-	}
-	var params struct {
-		Name string `json:"name"`
-	}
-	if len(req.Params) > 0 && json.Unmarshal(req.Params, &params) == nil {
-		return tools.DefaultRegistry.GetCost(params.Name)
-	}
-	return CostCheap
+	return errors.Join(dispatcher.Err(), shutdownErr)
 }
 
 func handleNotification(req ParsedRequest, dispatcher *Dispatcher, sess *serverSession) {
@@ -140,8 +184,9 @@ func handleNotification(req ParsedRequest, dispatcher *Dispatcher, sess *serverS
 		}
 	case "notifications/initialized":
 		sess.mu.Lock()
-		sess.initialized = true
-		sess.initializing = false
+		if sess.state == stateInitializing {
+			sess.state = stateInitialized
+		}
 		sess.mu.Unlock()
 	}
 }
@@ -149,11 +194,19 @@ func handleNotification(req ParsedRequest, dispatcher *Dispatcher, sess *serverS
 func handleRequest(ctx context.Context, req ParsedRequest) *jsonrpcResponse {
 	switch req.Method {
 	case "initialize":
+		var params struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if len(req.Params) == 0 || json.Unmarshal(req.Params, &params) != nil || params.ProtocolVersion == "" {
+			return InvalidParamsError(req.ID, "Invalid params: 'protocolVersion' is required")
+		}
+
+		negotiated := NegotiateProtocolVersion(params.ProtocolVersion)
 		return &jsonrpcResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"protocolVersion": protocolVersion,
+				"protocolVersion": negotiated,
 				"capabilities":    map[string]any{"tools": map[string]any{}},
 				"serverInfo": map[string]any{
 					"name":    "argus",

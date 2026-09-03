@@ -13,8 +13,6 @@ import (
 	"github.com/will2469/argus/shared/mcp/security"
 )
 
-type scanTool struct{}
-
 // NewScanTool initializes the argus_scan tool.
 func NewScanTool() Tool {
 	return &scanTool{}

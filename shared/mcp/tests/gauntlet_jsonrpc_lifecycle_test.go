@@ -80,9 +80,10 @@ func TestGauntlet_JSONRPC(t *testing.T) {
 			expectedCode: -32600,
 		},
 		{
-			name:          "duplicate fields in json parsed cleanly",
-			payload:       `{"jsonrpc":"2.0","id":1,"method":"ping","method":"ping"}` + "\n",
-			expectSuccess: true,
+			name:         "duplicate fields in json rejected",
+			payload:      `{"jsonrpc":"2.0","id":1,"method":"ping","method":"ping"}` + "\n",
+			expectError:  true,
+			expectedCode: -32600,
 		},
 	}
 

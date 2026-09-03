@@ -12,8 +12,6 @@ import (
 	"github.com/will2469/argus/shared/mcp/tools"
 )
 
-type reportIssueTool struct{}
-
 // NewReportIssueTool initializes the argus_report_issue tool.
 func NewReportIssueTool() tools.Tool {
 	return &reportIssueTool{}
@@ -106,15 +104,7 @@ func HandleReportIssue(id any, args json.RawMessage) *mcperrors.JSONRPCResponse 
 		return mcperrors.ToolError(id, "🔒 Issue reporting is disabled by policy (telemetry: false / ARGUS_TELEMETRY=false). Outbound submission blocked.")
 	}
 
-	var input struct {
-		RuleCode      string `json:"rule_code"`
-		Title         string `json:"title"`
-		Description   string `json:"description"`
-		Snippet       string `json:"snippet"`
-		Category      string `json:"category"`
-		Confirm       bool   `json:"confirm"`
-		ApprovalToken string `json:"approval_token"`
-	}
+	var input ReportIssueInput
 	if err := json.Unmarshal(args, &input); err != nil {
 		return mcperrors.InvalidParamsError(id, "Invalid params")
 	}

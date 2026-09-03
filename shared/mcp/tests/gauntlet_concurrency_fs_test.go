@@ -68,7 +68,11 @@ func TestGauntlet_Concurrency(t *testing.T) {
 	t.Run("parallel_scan_semaphore_bounded", func(t *testing.T) {
 		var out bytes.Buffer
 		disp := mcp.NewDispatcher(&out, 2, 10)
-		defer disp.Shutdown(1 * time.Second)
+		defer func() {
+			if err := disp.Shutdown(1 * time.Second); err != nil {
+				t.Errorf("expected clean shutdown, got: %v", err)
+			}
+		}()
 
 		var concurrentCount int32
 		var maxObserved int32

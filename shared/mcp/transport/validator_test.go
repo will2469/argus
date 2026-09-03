@@ -172,6 +172,24 @@ func TestValidateJSONRPC_Rejections(t *testing.T) {
 			expectedCode: -32600,
 			expectedID:   float64(8),
 		},
+		{
+			name:         "duplicate method key rejected",
+			input:        `{"jsonrpc":"2.0","id":9,"method":"ping","method":"ping"}`,
+			expectedCode: -32600,
+			expectedID:   nil,
+		},
+		{
+			name:         "duplicate id key rejected",
+			input:        `{"jsonrpc":"2.0","id":10,"id":11,"method":"ping"}`,
+			expectedCode: -32600,
+			expectedID:   nil,
+		},
+		{
+			name:         "duplicate jsonrpc key rejected",
+			input:        `{"jsonrpc":"2.0","jsonrpc":"2.0","id":12,"method":"ping"}`,
+			expectedCode: -32600,
+			expectedID:   nil,
+		},
 	}
 
 	for _, tc := range tests {

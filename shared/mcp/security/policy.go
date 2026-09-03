@@ -2,12 +2,6 @@ package security
 
 import "fmt"
 
-const (
-	MaxMigrationSQLBytes  = 1024 * 1024 // 1MB
-	MaxReportTitleChars   = 250
-	MaxReportPayloadBytes = 512 * 1024 // 512KB
-	MaxScanDirsLimit      = 50
-)
 
 // ValidatePathConfinement ensures targetPath does not escape rootDir via
 // path traversal ("../"), symlink tricks, or external absolute paths.
