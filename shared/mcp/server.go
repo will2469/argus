@@ -83,7 +83,7 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 
 		if req.Meta != nil && req.Meta.ProtocolVersion != "" {
 			if !SupportedProtocolVersions[req.Meta.ProtocolVersion] {
-				_ = dispatcher.WriteResponse(*ProtocolError(req.ID, CodeInvalidParams,
+				_ = dispatcher.WriteResponse(*UnsupportedProtocolVersionError(req.ID,
 					"Unsupported protocol version in _meta"))
 				continue
 			}
@@ -182,14 +182,9 @@ func handleRequest(ctx context.Context, req ParsedRequest) *jsonrpcResponse {
 				"resultType":        "complete",
 				"protocolVersions":  []string{"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"},
 				"supportedVersions": []string{"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"},
-				"capabilities":      map[string]any{"tools": map[string]any{}},
+				"capabilities":      map[string]any{"tools": map[string]any{}, "extensions": map[string]any{}},
 				"serverInfo":        map[string]any{"name": "argus", "version": version.Get()},
-				"_meta": map[string]any{
-					"io.modelcontextprotocol/serverInfo": map[string]any{
-						"name":    "argus",
-						"version": version.Get(),
-					},
-				},
+				"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "argus", "version": version.Get()}},
 			},
 		}
 
@@ -206,7 +201,7 @@ func handleRequest(ctx context.Context, req ParsedRequest) *jsonrpcResponse {
 			ID:      req.ID,
 			Result: map[string]any{
 				"protocolVersion": NegotiateProtocolVersion(params.ProtocolVersion),
-				"capabilities":    map[string]any{"tools": map[string]any{}},
+				"capabilities":    map[string]any{"tools": map[string]any{}, "extensions": map[string]any{}},
 				"serverInfo":       map[string]any{"name": "argus", "version": version.Get()},
 			},
 		}
@@ -219,8 +214,12 @@ func handleRequest(ctx context.Context, req ParsedRequest) *jsonrpcResponse {
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"tools": tools.DefaultRegistry.ListDefs(),
-				"_meta": map[string]any{"ttlMs": 300000, "cacheScope": "workspace"},
+				"resultType": "complete",
+				"tools":      tools.DefaultRegistry.ListDefs(),
+				"_meta": map[string]any{
+					"ttlMs": 300000, "cacheScope": "private",
+					"io.modelcontextprotocol/serverInfo": map[string]any{"name": "argus", "version": version.Get()},
+				},
 			},
 		}
 

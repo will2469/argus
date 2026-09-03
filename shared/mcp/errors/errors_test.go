@@ -23,6 +23,18 @@ func TestErrorSemantics(t *testing.T) {
 	if parsed.Error != nil {
 		t.Fatal("tool success must have nil error envelope")
 	}
+	resSuccess := parsed.Result.(map[string]any)
+	if resSuccess["resultType"] != "complete" {
+		t.Fatalf("expected resultType=complete, got %v", resSuccess["resultType"])
+	}
+	metaSuccess, ok := resSuccess["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected _meta in tool success result, got %v", resSuccess)
+	}
+	sInfo, ok := metaSuccess["io.modelcontextprotocol/serverInfo"].(map[string]any)
+	if !ok || sInfo["name"] != "argus" {
+		t.Fatalf("expected serverInfo name=argus, got: %v", sInfo)
+	}
 
 	// Tool Error
 	toolErr := ToolError("req-2", "failed")
@@ -30,6 +42,9 @@ func TestErrorSemantics(t *testing.T) {
 	var parsedErr JSONRPCResponse
 	_ = json.Unmarshal(dataErr, &parsedErr)
 	resMap := parsedErr.Result.(map[string]any)
+	if resMap["resultType"] != "complete" {
+		t.Fatalf("expected resultType=complete, got %v", resMap["resultType"])
+	}
 	if isErr, _ := resMap["isError"].(bool); !isErr {
 		t.Fatal("tool error must have isError: true")
 	}

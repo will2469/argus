@@ -47,6 +47,13 @@ type approvalEntry struct {
 }
 
 // ApprovalManager manages single-use, short-lived, payload-bound approval tokens for HITL operations.
+//
+// ARCHITECTURAL NOTE (MCP 2026-07-28 / SEP-2322 Known Deviation):
+// Under standard stdio transport (ServeStdio), execution is confined to a single local OS process
+// per IDE session. Process-local memory tracking guarantees zero disk leakage and strict
+// single-use replay prevention without requiring distributed storage or external shared keys.
+// For future multi-instance remote HTTP transports behind load balancers, this flow is slated for
+// migration to full SEP-2322 MRTR using self-contained AEAD requestState tokens.
 type ApprovalManager struct {
 	mu     sync.Mutex
 	tokens map[string]approvalEntry

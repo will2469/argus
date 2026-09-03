@@ -30,8 +30,6 @@ var ErrOversizedMessage = errors.New("mcp: message exceeds maximum allowed size"
 // LatestProtocolVersion is the canonical protocol version offered by Argus.
 const LatestProtocolVersion = "2026-07-28"
 
-const protocolVersion = LatestProtocolVersion
-
 // SupportedProtocolVersions contains the set of MCP protocol versions supported by Argus.
 var SupportedProtocolVersions = map[string]bool{
 	"2024-11-05": true,

@@ -94,6 +94,15 @@ Client                                                  Server (Instance A / B)
 2. `requestState`: Token kriptografis/terenkripsi buram (*opaque blob*) yang menyimpan status eksekusi.
 3. Klien memanggil ulang `tools/call` dengan menyertakan `requestState` dan `inputResponses`. Instance server mana pun dapat melanjutkan eksekusi tanpa ketergantungan memori sesi lokal.
 
+### 3.1 Known Deviation: HITL pada Stdio vs Full MRTR (SEP-2322)
+Pada implementasi saat ini, tool `argus_report_issue` menerapkan alur *Human-in-the-Loop* (HITL) via `ApprovalManager` (`shared/mcp/security/approval.go`):
+- **Model Saat Ini (Stdio-Confined)**: Token `appr_<hex>` disimpan dalam map memori proses lokal dengan hash SHA-256 payload dan TTL. Model ini 100% aman dan deterministik untuk transport `stdio` (1 proses per sesi klien IDE) serta memberikan jaminan *single-use replay defense* yang ketat tanpa overhead kriptografi kunci simetris eksternal.
+- **Batasan Arsitektural**: Token tidak portabel lintas proses/instance server yang berbeda.
+- **Roadmap Migrasi Remote/HTTP**: Jika Argus di masa depan menambahkan transport Streamable HTTP multi-instance di balik load balancer, alur HITL ini wajib dimigrasikan ke spesifikasi penuh SEP-2322:
+  1. Return `resultType: "input_required"` alih-alih preview draft biasa.
+  2. Emit `requestState` berupa blob terenkripsi-mandiri (AEAD / AES-GCM dengan cluster secret key) yang memuat `payloadHash` dan `expiresAt`.
+  3. Menerima `inputResponses` saat retry `tools/call`.
+
 ---
 
 ## 4. Guardrail Implementasi Argus MCP
@@ -117,8 +126,12 @@ Saat mengembangkan atau memodifikasi modul `shared/mcp/`, patuhi aturan ketat be
   - `transport/validator.go`: Gerbang tunggal RFC JSON-RPC 2.0.
 
 ### 4. Per-Request Error Handling
-- Kegagalan versi protokol pada jalur stateless (`!SupportedProtocolVersions[req.Meta.ProtocolVersion]`) dibalas dengan error JSON-RPC per-request (`CodeInvalidParams` `-32602` / `CodeUnsupportedProtocolVersion` `-32022`).
+- Kegagalan versi protokol pada jalur stateless (`!SupportedProtocolVersions[req.Meta.ProtocolVersion]`) dibalas dengan error JSON-RPC per-request (`CodeUnsupportedProtocolVersion` `-32022`).
 - **JANGAN PERNAH** memutus koneksi stdio akibat kesalahan versi per-request; request berikutnya dalam stream yang sama tetap independen.
+
+### 5. Presedensi Kunci `_meta` & Permissive Fallback
+- **Kunci Utama Resmi (Canonical)**: `io.modelcontextprotocol/protocolVersion`. Seluruh test internal dan dokumentasi wajib menggunakan kunci ber-namespace ini sebagai standar utama.
+- **Permissive Fallback**: Kunci tanpa namespace `protocolVersion` tetap didukung oleh parser `transport/validator.go` murni sebagai fasilitas toleransi kompatibilitas mundur bagi klien/SDK draf awal.
 
 ---
 

@@ -63,6 +63,14 @@ func TestServerDiscover_StatelessPreInit(t *testing.T) {
 	if !ok || serverInfo["name"] != "argus" {
 		t.Fatalf("expected serverInfo name=argus, got: %v", serverInfo)
 	}
+
+	caps, ok := resMap["capabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected capabilities map, got: %T", resMap["capabilities"])
+	}
+	if _, ok := caps["extensions"]; !ok {
+		t.Fatal("expected extensions map in capabilities per MCP 2026-07-28")
+	}
 }
 
 func TestToolsList_StatelessWithMetaCaching(t *testing.T) {
@@ -86,6 +94,9 @@ func TestToolsList_StatelessWithMetaCaching(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected map result, got: %T", resp.Result)
 	}
+	if resMap["resultType"] != "complete" {
+		t.Fatalf("expected resultType=complete, got: %v", resMap["resultType"])
+	}
 
 	toolsList, ok := resMap["tools"].([]any)
 	if !ok || len(toolsList) != 4 {
@@ -96,18 +107,22 @@ func TestToolsList_StatelessWithMetaCaching(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected _meta caching metadata, got: %v", resMap["_meta"])
 	}
-	if meta["cacheScope"] != "workspace" {
-		t.Fatalf("expected cacheScope=workspace, got: %v", meta["cacheScope"])
+	if meta["cacheScope"] != "private" {
+		t.Fatalf("expected cacheScope=private, got: %v", meta["cacheScope"])
 	}
 	ttl, ok := meta["ttlMs"].(float64)
 	if !ok || ttl <= 0 {
 		t.Fatalf("expected positive ttlMs, got: %v", meta["ttlMs"])
 	}
+	sInfo, ok := meta["io.modelcontextprotocol/serverInfo"].(map[string]any)
+	if !ok || sInfo["name"] != "argus" {
+		t.Fatalf("expected serverInfo name=argus in tools/list _meta, got: %v", meta["io.modelcontextprotocol/serverInfo"])
+	}
 }
 
 func TestToolsCall_StatelessWithMeta(t *testing.T) {
-	// 3. Calling tools/call with 2026-07-28 _meta during statePreInit must execute statelessly
-	req := `{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"argus_explain_rule","arguments":{"rule_code":"A01"},"_meta":{"protocolVersion":"2026-07-28"}}}` + "\n"
+	// 3. Calling tools/call with official 2026-07-28 _meta during statePreInit must execute statelessly
+	req := `{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"argus_explain_rule","arguments":{"rule_code":"A01"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}` + "\n"
 	var out bytes.Buffer
 	err := mcp.Serve(strings.NewReader(req), &out, mcp.WithStrictLifecycle(true))
 	if err != nil {
@@ -126,15 +141,48 @@ func TestToolsCall_StatelessWithMeta(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected map result, got: %T", resp.Result)
 	}
+	if resMap["resultType"] != "complete" {
+		t.Fatalf("expected resultType=complete, got: %v", resMap["resultType"])
+	}
+	callMeta, ok := resMap["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected _meta in tools/call result, got: %v", resMap)
+	}
+	callSInfo, ok := callMeta["io.modelcontextprotocol/serverInfo"].(map[string]any)
+	if !ok || callSInfo["name"] != "argus" {
+		t.Fatalf("expected serverInfo name=argus in tools/call _meta, got: %v", callSInfo)
+	}
 	content, ok := resMap["content"].([]any)
 	if !ok || len(content) == 0 {
 		t.Fatalf("expected content in result, got: %v", resMap)
 	}
 }
 
+func TestToolsCall_PermissiveFallbackUnnamespacedMeta(t *testing.T) {
+	// 3b. Verifies permissive fallback: unnamespaced "protocolVersion" in _meta is supported for draft/early clients
+	req := `{"jsonrpc":"2.0","id":25,"method":"tools/call","params":{"name":"argus_explain_rule","arguments":{"rule_code":"A01"},"_meta":{"protocolVersion":"2026-07-28"}}}` + "\n"
+	var out bytes.Buffer
+	err := mcp.Serve(strings.NewReader(req), &out, mcp.WithStrictLifecycle(true))
+	if err != nil {
+		t.Fatalf("serve failed: %v", err)
+	}
+
+	var resp mcperrors.JSONRPCResponse
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v\nraw: %s", err, out.String())
+	}
+	if resp.Error != nil {
+		t.Fatalf("expected fallback tools/call to succeed, got error: %v", resp.Error)
+	}
+	resMap, ok := resp.Result.(map[string]any)
+	if !ok || resMap["resultType"] != "complete" {
+		t.Fatalf("expected resultType=complete, got: %v", resMap)
+	}
+}
+
 func TestUnsupportedProtocolVersionInMeta(t *testing.T) {
 	// 4. Declaring an unsupported protocol version in _meta must return -32022
-	req := `{"jsonrpc":"2.0","id":30,"method":"tools/list","params":{"_meta":{"protocolVersion":"2099-01-01"}}}` + "\n"
+	req := `{"jsonrpc":"2.0","id":30,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01"}}}` + "\n"
 	var out bytes.Buffer
 	_ = mcp.Serve(strings.NewReader(req), &out, mcp.WithStrictLifecycle(true))
 
@@ -151,8 +199,8 @@ func TestUnsupportedProtocolVersionInMeta(t *testing.T) {
 		t.Fatalf("expected map error, got: %T", resp.Error)
 	}
 	code := int(errMap["code"].(float64))
-	if code != mcp.CodeInvalidParams && code != mcp.CodeUnsupportedProtocolVersion {
-		t.Fatalf("expected error code %d (-32602) or %d (-32022), got: %d", mcp.CodeInvalidParams, mcp.CodeUnsupportedProtocolVersion, code)
+	if code != mcp.CodeUnsupportedProtocolVersion {
+		t.Fatalf("expected error code %d (-32022), got: %d", mcp.CodeUnsupportedProtocolVersion, code)
 	}
 }
 

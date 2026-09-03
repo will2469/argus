@@ -84,6 +84,9 @@ func ValidateJSONRPC(data []byte) (*ParsedRequest, *mcperrors.JSONRPCResponse) {
 				return nil, mcperrors.ProtocolError(idVal, mcperrors.CodeInvalidRequest, "Invalid Request: params must be structured (object or array)")
 			}
 			if trimmedParams[0] == '{' {
+				// We parse _meta with strict precedence:
+				// 1. Primary / Official Spec (MCP 2026-07-28): "io.modelcontextprotocol/protocolVersion"
+				// 2. Permissive Fallback: unnamespaced "protocolVersion" for compatibility with early/draft clients.
 				var withMeta struct {
 					Meta struct {
 						ProtocolVersion    string          `json:"io.modelcontextprotocol/protocolVersion"`

@@ -1,6 +1,10 @@
 package errors
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/will2469/argus/shared/version"
+)
 
 // ProtocolError builds a top-level JSON-RPC protocol error response.
 func ProtocolError(id any, code int, message string) *JSONRPCResponse {
@@ -37,13 +41,24 @@ func CancelledError(id any, message string) *JSONRPCResponse {
 	return ProtocolError(id, CodeCancelled, message)
 }
 
+func defaultServerInfoMeta() map[string]any {
+	return map[string]any{
+		"io.modelcontextprotocol/serverInfo": map[string]any{
+			"name":    "argus",
+			"version": version.Get(),
+		},
+	}
+}
+
 // ToolSuccess constructs a compliant MCP CallToolResult with isError: false.
 func ToolSuccess(id any, text string) *JSONRPCResponse {
 	return &JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
 		Result: map[string]any{
-			"content": []TextContent{{Type: "text", Text: text}},
+			"resultType": "complete",
+			"content":    []TextContent{{Type: "text", Text: text}},
+			"_meta":      defaultServerInfoMeta(),
 		},
 	}
 }
@@ -54,8 +69,10 @@ func ToolError(id any, text string) *JSONRPCResponse {
 		JSONRPC: "2.0",
 		ID:      id,
 		Result: map[string]any{
-			"content": []TextContent{{Type: "text", Text: text}},
-			"isError": true,
+			"resultType": "complete",
+			"content":    []TextContent{{Type: "text", Text: text}},
+			"isError":    true,
+			"_meta":      defaultServerInfoMeta(),
 		},
 	}
 }
