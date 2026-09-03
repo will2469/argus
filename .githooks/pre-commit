@@ -15,7 +15,7 @@ if [ -x "${SCRIPT_DIR}/format-all.sh" ]; then
     "${SCRIPT_DIR}/format-all.sh"
 fi
 
-echo "[Argus Hook] 1/4 Checking Go code formatting with gofmt..."
+echo "[Argus Hook] 1/5 Checking Go code formatting with gofmt..."
 UNFORMATTED=$(find . -name "*.go" -not -path "./vendor/*" -exec gofmt -l {} +)
 if [ -n "${UNFORMATTED}" ]; then
     echo "Error: Unformatted Go files found:"
@@ -24,25 +24,41 @@ if [ -n "${UNFORMATTED}" ]; then
     exit 1
 fi
 
-echo "[Argus Hook] 2/4 Running go vet ./..."
+echo "[Argus Hook] 2/5 Running go vet ./..."
 go vet ./...
 
 if command -v golangci-lint >/dev/null 2>&1; then
-    echo "[Argus Hook] 3/4 Running golangci-lint (golint)..."
+    echo "[Argus Hook] 3/5 Running golangci-lint (golint)..."
     golangci-lint run --timeout=3m ./... || {
         echo "Warning: golangci-lint reported issues."
     }
 else
-    echo "[Argus Hook] 3/4 Skipping golangci-lint (not installed in PATH)"
+    echo "[Argus Hook] 3/5 Skipping golangci-lint (not installed in PATH)"
 fi
 
 if command -v gosec >/dev/null 2>&1; then
-    echo "[Argus Hook] 4/4 Running gosec AST security audit..."
+    echo "[Argus Hook] 4/5 Running gosec AST security audit..."
     gosec -quiet -exclude=G101,G104 ./... || {
         echo "Warning: gosec reported potential security findings."
     }
 else
-    echo "[Argus Hook] 4/4 Skipping gosec (not installed in PATH)"
+    echo "[Argus Hook] 4/5 Skipping gosec (not installed in PATH)"
+fi
+
+if command -v uvx >/dev/null 2>&1; then
+    echo "[Argus Hook] 5/5 Running semgrep audit with uvx..."
+    uvx semgrep . --error || {
+        echo "Error: semgrep reported security or code hygiene findings. Run 'make semgrep' to inspect."
+        exit 1
+    }
+elif command -v semgrep >/dev/null 2>&1; then
+    echo "[Argus Hook] 5/5 Running semgrep audit..."
+    semgrep . --error || {
+        echo "Error: semgrep reported security or code hygiene findings. Run 'make semgrep' to inspect."
+        exit 1
+    }
+else
+    echo "[Argus Hook] 5/5 Skipping semgrep (neither uvx nor semgrep found in PATH)"
 fi
 
 echo "[Argus Hook] All standard Go pre-commit checks passed!"

@@ -68,8 +68,8 @@ func handleReportIssue(id any, args json.RawMessage) *jsonrpcResponse {
 	}
 
 	// Phase 2: Human approved. Submit the issue.
-	if ghPath, err := exec.LookPath("gh"); err == nil {
-		return submitViaGH(id, ghPath, issueTitle, issueBody, label)
+	if _, err := exec.LookPath("gh"); err == nil {
+		return submitViaGH(id, issueTitle, issueBody, label)
 	}
 	return submitViaURL(id, issueTitle, issueBody, label)
 }
@@ -92,7 +92,7 @@ func buildPreview(id any, title, body, category string) *jsonrpcResponse {
 	}
 }
 
-func submitViaGH(id any, ghPath, title, body, label string) *jsonrpcResponse {
+func submitViaGH(id any, title, body, label string) *jsonrpcResponse {
 	args := []string{"issue", "create",
 		"--repo", issueRepoSlug,
 		"--title", title,
@@ -100,7 +100,7 @@ func submitViaGH(id any, ghPath, title, body, label string) *jsonrpcResponse {
 		"--label", label,
 	}
 
-	cmd := exec.Command(ghPath, args...)
+	cmd := exec.Command("gh", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return submitViaURL(id, title, body, label)

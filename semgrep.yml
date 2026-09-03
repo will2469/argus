@@ -1,0 +1,27 @@
+# Semgrep Custom Configuration & Quality Rules for Argus
+# Repository: https://github.com/will2469/argus
+
+rules:
+  - id: argus-no-os-exit-in-library
+    message: "Avoid calling os.Exit outside CLI entrypoints (main.go, cmd/). Return errors instead to allow caller handling."
+    languages: [go]
+    severity: ERROR
+    pattern: os.Exit(...)
+    paths:
+      exclude:
+        - "main.go"
+        - "**/cmd/**"
+        - "**/*_test.go"
+        - "**/tests/**"
+
+  - id: argus-no-panic-in-library
+    message: "Avoid raw panic(...) in production library packages. Propagate errors gracefully up the call stack."
+    languages: [go]
+    severity: WARNING
+    pattern: panic(...)
+    paths:
+      exclude:
+        - "main.go"
+        - "**/cmd/**"
+        - "**/*_test.go"
+        - "**/tests/**"

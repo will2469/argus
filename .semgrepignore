@@ -1,0 +1,22 @@
+# Semgrep Ignore Patterns for Argus
+# Syntax follows .gitignore specification
+
+# AI agent skills, reference architecture docs, and prompt fixtures
+# (these contain intentional vulnerability patterns for demonstration)
+.agents/
+
+# Build outputs & artifacts
+bin/
+dist/
+*.tar.gz
+*.zip
+*.sha256
+
+# Coverage profiling outputs
+coverage.txt
+coverage.html
+
+# Test fixtures and unit tests containing intentional anti-patterns for Argus rule verification
+tests/
+*_test.go
+

@@ -51,20 +51,21 @@ func EvaluateDSN(dsn string, maxSafe int32) ConnsEvaluation {
 		}
 	}
 
-	parsed, err := strconv.Atoi(valStr)
-	if err != nil || parsed <= 0 {
+	parsed64, err := strconv.ParseInt(valStr, 10, 32)
+	if err != nil || parsed64 <= 0 {
 		return ConnsEvaluation{
 			Configured: true,
 			Valid:      false,
 			Message:    "pool_max_conns in DSN must be a positive integer greater than zero",
 		}
 	}
+	parsed := int32(parsed64)
 
-	if int32(parsed) > maxSafe {
+	if parsed > maxSafe {
 		return ConnsEvaluation{
 			Configured: true,
 			Valid:      false,
-			Value:      int32(parsed),
+			Value:      parsed,
 			Message:    "pool_max_conns (" + valStr + ") in DSN exceeds safe direct connection threshold (100); route through PgBouncer or reduce pool size",
 		}
 	}
@@ -72,7 +73,7 @@ func EvaluateDSN(dsn string, maxSafe int32) ConnsEvaluation {
 	return ConnsEvaluation{
 		Configured: true,
 		Valid:      true,
-		Value:      int32(parsed),
+		Value:      parsed,
 	}
 }
 
@@ -102,22 +103,22 @@ func EvaluateExpr(expr ast.Expr, maxSafe int32) ConnsEvaluation {
 		}
 	}
 
-	val, err := strconv.Atoi(lit.Value)
-	val *= multiplier
+	val64, err := strconv.ParseInt(lit.Value, 10, 32)
+	val := int32(val64) * int32(multiplier)
 	if err != nil || val <= 0 {
 		return ConnsEvaluation{
 			Configured: true,
 			Valid:      false,
-			Value:      int32(val),
+			Value:      val,
 			Message:    "MaxConns cannot be zero or negative; specify a valid positive connection limit",
 		}
 	}
 
-	if int32(val) > maxSafe {
+	if val > maxSafe {
 		return ConnsEvaluation{
 			Configured: true,
 			Valid:      false,
-			Value:      int32(val),
+			Value:      val,
 			Message:    "MaxConns (" + lit.Value + ") exceeds safe direct connection limit (100) per pod; route via PgBouncer or reduce pool bounds",
 		}
 	}
@@ -125,6 +126,6 @@ func EvaluateExpr(expr ast.Expr, maxSafe int32) ConnsEvaluation {
 	return ConnsEvaluation{
 		Configured: true,
 		Valid:      true,
-		Value:      int32(val),
+		Value:      val,
 	}
 }

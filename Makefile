@@ -1,6 +1,6 @@
 export GOWORK ?= off
 
-.PHONY: all test test-full test-race test-coverage lint build clean setup-hooks format
+.PHONY: all test test-full test-race test-coverage lint build clean setup-hooks format semgrep
 
 all: lint test build
 
@@ -33,6 +33,9 @@ lint:
 	@echo "Checking gofmt..."
 	@test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*'))" || (echo " Unformatted files found. Run gofmt -w ." && exit 1)
 	@echo " Code hygiene clean!"
+ 
+semgrep:
+	uvx semgrep .
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
