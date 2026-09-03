@@ -1,0 +1,1 @@
+GRANT ALL PRIVILEGES ON TABLE users TO app_user;

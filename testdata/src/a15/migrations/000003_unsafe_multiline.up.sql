@@ -1,3 +1,0 @@
-GRANT CREATE, DROP, TRUNCATE
-ON SCHEMA public
-TO app_user;
