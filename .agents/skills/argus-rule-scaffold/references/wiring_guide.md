@@ -55,11 +55,16 @@ Jika aturan memeriksa berkas migrasi SQL (`.sql`), tambahkan `"AXX"` ke daftar I
 func CalculateCheckedComponents(id string, querySites, migrationFiles, totalFiles int) int {
 	switch id {
 	case "A11", "A13", "A15", "A27", "A28", "A29", "A30", "AXX":
-		if migrationFiles > 0 {
-			return migrationFiles
+		return migrationFiles
+	case "A05", "A06", "A08", "A09", "A10", "A12", "A16", "A22", "A23", "A25":
+		return totalFiles
+	default:
+		if querySites > 0 {
+			return querySites
 		}
-		return 156
-    // ...
+		return totalFiles
+	}
+}
 ```
 
 ---
