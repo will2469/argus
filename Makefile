@@ -1,6 +1,6 @@
 export GOWORK ?= off
 
-.PHONY: all test test-race lint build clean setup-hooks
+.PHONY: all test test-full test-race test-coverage lint build clean setup-hooks format
 
 all: lint test build
 
@@ -9,11 +9,23 @@ setup-hooks:
 	chmod +x .githooks/*
 	@echo " Argus git hooks installed to .githooks"
 
+# Test Cepat: Ringan & instan untuk siklus iterasi harian
 test:
 	go test -v ./...
 
-test-race:
+# Test Menyeluruh: Lengkap dengan Go Race Detector
+test-full:
 	go test -race -v ./...
+
+test-race: test-full
+
+# Test Coverage: Menyeluruh dengan profiling kode produksi (rules, runner, shared, cmd)
+COVER_PKGS ?= github.com/will2469/argus/rules/...,github.com/will2469/argus/runner/...,github.com/will2469/argus/shared/...,github.com/will2469/argus/cmd/...
+test-coverage:
+	go test -race -coverpkg=$(COVER_PKGS) -coverprofile=coverage.txt -covermode=atomic ./...
+	@go tool cover -func=coverage.txt | tail -n 1
+	go tool cover -html=coverage.txt -o coverage.html
+	@echo " Coverage report generated at coverage.html"
 
 lint:
 	@echo "Running go vet..."
