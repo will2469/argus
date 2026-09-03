@@ -1,6 +1,6 @@
 export GOWORK ?= off
 
-.PHONY: all test test-full test-race test-coverage lint build clean setup-hooks format semgrep
+.PHONY: all test test-full test-race test-coverage lint build clean setup-hooks format semgrep vulncheck
 
 all: lint test build
 
@@ -36,6 +36,9 @@ lint:
  
 semgrep:
 	uvx semgrep .
+
+vulncheck:
+	govulncheck ./...
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
