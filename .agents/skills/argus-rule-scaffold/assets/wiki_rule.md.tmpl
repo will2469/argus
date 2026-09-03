@@ -1,0 +1,78 @@
+# {{RULE_CODE}}: {{TITLE_CASE_NAME}}
+
+> **Rule Code:** `{{RULE_CODE}}`
+> **Identifier:** `{{IDENTIFIER}}`
+> **Severity:** `{{SEVERITY}}`
+> **Category:** `{{CATEGORY}}`
+> **Target Standards:** CWE-XXX, OWASP ASVS v4.0.3/v5.0 §VX.X.X, PostgreSQL 18 Documentation
+
+---
+
+## 1. Overview & Core Invariant
+
+[Penjelasan ringkas 1-2 paragraf mengenai prinsip dasar aturan dan apa yang ditegakkannya]
+
+---
+
+## 2. Technical Grounding & PostgreSQL Engine Realities
+
+[Penjelasan mendalam: Extended Protocol v3, lock matrix, plan cache, TOAST, atau SSI]
+
+```mermaid
+flowchart TD
+    subgraph HAZARD ["Hazardous Pattern (VIOLATION)"]
+        H1["Unsafe Operation"] --> H2["Production Impact"]
+    end
+    subgraph SAFE ["Compliant Pattern ({{RULE_CODE}})"]
+        S1["Safe Parameterized Operation"] --> S2["Zero Hazard"]
+    end
+```
+
+---
+
+## 3. How Argus Detects Violations (Static Analysis Architecture)
+
+Argus menginspeksi AST Go (`go/ast`) atau SQL AST (`pg_query_go`) secara deterministik.
+
+---
+
+## 4. Compliant vs Hazardous Code Examples
+
+### ❌ Hazardous Example (Triggers {{RULE_CODE}})
+```go
+// Non-compliant code
+```
+
+### ✅ Compliant Example
+```go
+// Compliant code
+```
+
+---
+
+## 5. Mitigation & Remediation Guidelines
+
+[Langkah refactoring yang aman dan idiomatis]
+
+---
+
+## 6. Suppression Directives
+
+Supresi diperbolehkan dengan alasan valid minimal 2 kata:
+- Go: `// argus:ignore-{{SHORT_ID}} reason why this is safe`
+- SQL: `-- argus:ignore-{{SHORT_ID}} reason why this is safe`
+
+---
+
+## 7. Verification Commands
+
+```bash
+go test -v ./rules/{{PKG_NAME}}/...
+argus check --dirs ./...
+```
+
+---
+
+## 8. References & Standards
+- [PostgreSQL 18 Documentation](https://www.postgresql.org/docs/current/)
+- [CWE Reference](https://cwe.mitre.org/data/definitions/XXX.html)

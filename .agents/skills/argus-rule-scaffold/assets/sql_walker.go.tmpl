@@ -1,0 +1,31 @@
+package {{PKG_NAME}}
+
+import (
+	"github.com/will2469/argus/shared/directives"
+	"github.com/will2469/argus/shared/migration"
+	"github.com/will2469/argus/shared/sqlparser"
+)
+
+// CheckMigration evaluates a single migration file for {{RULE_CODE}} violations.
+// This function is the SSOT called by runner/scan_migrations.go AND analyzer.go run().
+func CheckMigration(filename, content string, dm *directives.DirectiveMap) []migration.Issue {
+	tree, err := sqlparser.Parse(content)
+	if err != nil {
+		return nil // Skip unparseable SQL statements
+	}
+
+	return InspectSQLStatements(filename, content, tree, dm)
+}
+
+// InspectSQLStatements inspects the parsed AST tree for violations.
+func InspectSQLStatements(filename, content string, tree any, dm *directives.DirectiveMap) []migration.Issue {
+	var issues []migration.Issue
+
+	// TODO: Inspect SQL statements using pg_query AST
+	_ = filename
+	_ = content
+	_ = tree
+	_ = dm
+
+	return issues
+}

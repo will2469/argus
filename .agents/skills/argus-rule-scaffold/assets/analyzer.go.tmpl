@@ -1,0 +1,49 @@
+// Package {{PKG_NAME}} implements the {{RULE_CODE}} analyzer enforcing {{IDENTIFIER}}.
+package {{PKG_NAME}}
+
+import (
+	"go/ast"
+	"strings"
+
+	"golang.org/x/tools/go/analysis"
+
+	"github.com/will2469/argus/shared/config"
+	"github.com/will2469/argus/shared/directives"
+)
+
+// RuleCode is the official identifier for {{RULE_CODE}}.
+const RuleCode = "{{RULE_CODE}}"
+
+// Analyzer defines the analysis.Analyzer for rule {{RULE_CODE}}.
+var Analyzer = &analysis.Analyzer{
+	Name: "{{SHORT_ID}}",
+	Doc:  "Enforce {{IDENTIFIER}} invariant and database hygiene",
+	Run:  run,
+	Requires: []*analysis.Analyzer{
+		directives.Analyzer,
+		config.Analyzer,
+	},
+}
+
+func run(pass *analysis.Pass) (interface{}, error) {
+	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
+	if !cfg.IsRuleEnabled(RuleCode) {
+		return nil, nil
+	}
+
+	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
+
+	for _, file := range pass.Files {
+		pos := pass.Fset.Position(file.Package)
+		if strings.HasSuffix(pos.Filename, "_test.go") {
+			continue
+		}
+
+		issues := InspectFile(pass, file, dm)
+		for _, issue := range issues {
+			pass.Reportf(issue.Pos, "[%s] %s", RuleCode, issue.Message)
+		}
+	}
+
+	return nil, nil
+}

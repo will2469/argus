@@ -1,0 +1,51 @@
+package {{PKG_NAME}}
+
+import (
+	"go/ast"
+	"go/token"
+
+	"golang.org/x/tools/go/analysis"
+
+	"github.com/will2469/argus/shared/directives"
+)
+
+// Issue represents a violation detected by the rule engine.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
+
+// InspectFile evaluates an AST file for {{RULE_CODE}} violations.
+// pass can be nil when called from standalone runner (runner/scan_go.go).
+func InspectFile(pass *analysis.Pass, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	var issues []Issue
+	var fset *token.FileSet
+	if pass != nil {
+		fset = pass.Fset
+	}
+
+	ast.Inspect(file, func(n ast.Node) bool {
+		if n == nil {
+			return true
+		}
+
+		// 1. Evaluate AST node criteria
+		if isTargetViolation(n) {
+			if dm != nil && fset != nil && dm.IsIgnored(fset, n.Pos(), RuleCode) {
+				return true
+			}
+			issues = append(issues, Issue{
+				Pos:     n.Pos(),
+				Message: "Violation description citing specific CWE or invariant (CWE-XXX)",
+			})
+		}
+		return true
+	})
+
+	return issues
+}
+
+func isTargetViolation(n ast.Node) bool {
+	// TODO: Implement deterministic AST matching logic
+	return false
+}

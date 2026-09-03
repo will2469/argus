@@ -1,0 +1,48 @@
+package {{PKG_NAME}}_test
+
+import (
+	"path/filepath"
+	"testing"
+
+	"golang.org/x/tools/go/analysis/analysistest"
+
+	"github.com/will2469/argus/rules/{{PKG_NAME}}"
+	"github.com/will2469/argus/runner"
+)
+
+// TestDualPathParity enforces that Path 1 (Analysis Driver) and Path 2 (Standalone CLI)
+// detect the exact same issues on the identical test fixture.
+func TestDualPathParity(t *testing.T) {
+	testdataDir, err := filepath.Abs("../../testdata")
+	if err != nil {
+		t.Fatalf("failed to resolve testdata path: %v", err)
+	}
+
+	// 1. Path 1: Official Analysis Driver (analysistest)
+	t.Run("Path1_AnalysisDriver", func(t *testing.T) {
+		analysistest.Run(t, testdataDir, {{PKG_NAME}}.Analyzer, "{{SHORT_ID}}")
+	})
+
+	// 2. Path 2: Standalone CLI Runner (runner.RunAuditWithConfig)
+	t.Run("Path2_StandaloneRunner", func(t *testing.T) {
+		fixtureDir := filepath.Join(testdataDir, "src", "{{SHORT_ID}}")
+		result, err := runner.RunAuditWithConfig(runner.AuditConfig{
+			RootDir:  fixtureDir,
+			ScanDirs: []string{fixtureDir},
+		})
+		if err != nil {
+			t.Fatalf("standalone runner failed: %v", err)
+		}
+
+		if len(result.Issues) == 0 {
+			t.Fatalf("PARITY DIVERGENCE: Standalone runner reported 0 issues for {{RULE_CODE}} on test fixture! (Possible A01 bug repeat)")
+		}
+
+		// Verify every reported issue belongs to the rule
+		for _, issue := range result.Issues {
+			if issue.Rule != "{{IDENTIFIER}}" && issue.Rule != "{{RULE_CODE}}" {
+				t.Errorf("unexpected issue reported by standalone runner: %s", issue.Rule)
+			}
+		}
+	})
+}
