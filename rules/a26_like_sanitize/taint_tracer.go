@@ -7,6 +7,14 @@ import (
 	"strings"
 )
 
+// VarState represents the sanitization state of a variable during dataflow analysis.
+type VarState int
+
+const (
+	StateUnsanitized VarState = iota
+	StateSanitized
+)
+
 // IsArgumentSanitized traces an AST expression to determine if it is properly sanitized against SQL wildcard injection.
 func IsArgumentSanitized(expr ast.Expr, body *ast.BlockStmt) bool {
 	if expr == nil {
@@ -58,39 +66,144 @@ func isBinaryConcatSanitized(bin *ast.BinaryExpr, body *ast.BlockStmt) bool {
 	return leftSafe && rightSafe
 }
 
+func isExprSanitizedWithEnv(expr ast.Expr, env map[string]VarState) bool {
+	if expr == nil {
+		return true
+	}
+	switch e := expr.(type) {
+	case *ast.BasicLit:
+		return true
+	case *ast.CallExpr:
+		return isSanitizerCall(e)
+	case *ast.BinaryExpr:
+		if e.Op == token.ADD {
+			return isExprSanitizedWithEnv(e.X, env) && isExprSanitizedWithEnv(e.Y, env)
+		}
+	case *ast.Ident:
+		return env[e.Name] == StateSanitized
+	}
+	return false
+}
+
+// evalBlock traces block statements linearly up to targetPos and returns the resulting environment state.
+// If targetPos is encountered inside the block or a nested statement, returns the state at targetPos.
+func evalBlock(block *ast.BlockStmt, targetPos token.Pos, env map[string]VarState) (map[string]VarState, bool) {
+	if block == nil {
+		return env, false
+	}
+
+	currentEnv := make(map[string]VarState)
+	for k, v := range env {
+		currentEnv[k] = v
+	}
+
+	for _, stmt := range block.List {
+		// If the target position is strictly before this statement starts, we stop
+		if targetPos != token.NoPos && targetPos < stmt.Pos() {
+			return currentEnv, true
+		}
+
+		// Check if target is INSIDE this statement
+		if targetPos != token.NoPos && targetPos >= stmt.Pos() && targetPos <= stmt.End() {
+			switch s := stmt.(type) {
+			case *ast.IfStmt:
+				return evalIf(s, targetPos, currentEnv)
+			case *ast.BlockStmt:
+				return evalBlock(s, targetPos, currentEnv)
+			case *ast.ExprStmt:
+				return currentEnv, true
+			default:
+				return currentEnv, true
+			}
+		}
+
+		// Statement executed completely before targetPos: update environment
+		switch s := stmt.(type) {
+		case *ast.AssignStmt:
+			for i, lhs := range s.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok {
+					if i < len(s.Rhs) {
+						if isExprSanitizedWithEnv(s.Rhs[i], currentEnv) {
+							currentEnv[id.Name] = StateSanitized
+						} else {
+							currentEnv[id.Name] = StateUnsanitized
+						}
+					}
+				}
+			}
+		case *ast.IfStmt:
+			currentEnv = evalIfJoin(s, currentEnv)
+		case *ast.BlockStmt:
+			currentEnv, _ = evalBlock(s, token.NoPos, currentEnv)
+		}
+	}
+
+	return currentEnv, false
+}
+
+func evalIf(s *ast.IfStmt, targetPos token.Pos, env map[string]VarState) (map[string]VarState, bool) {
+	if s.Init != nil && targetPos >= s.Init.Pos() && targetPos <= s.Init.End() {
+		return env, true
+	}
+	if targetPos >= s.Cond.Pos() && targetPos <= s.Cond.End() {
+		return env, true
+	}
+	if s.Body != nil && targetPos >= s.Body.Pos() && targetPos <= s.Body.End() {
+		return evalBlock(s.Body, targetPos, env)
+	}
+	if s.Else != nil && targetPos >= s.Else.Pos() && targetPos <= s.Else.End() {
+		switch el := s.Else.(type) {
+		case *ast.BlockStmt:
+			return evalBlock(el, targetPos, env)
+		case *ast.IfStmt:
+			return evalIf(el, targetPos, env)
+		}
+	}
+	return env, true
+}
+
+func evalIfJoin(s *ast.IfStmt, env map[string]VarState) map[string]VarState {
+	thenEnv, _ := evalBlock(s.Body, token.NoPos, env)
+
+	var elseEnv map[string]VarState
+	if s.Else != nil {
+		switch el := s.Else.(type) {
+		case *ast.BlockStmt:
+			elseEnv, _ = evalBlock(el, token.NoPos, env)
+		case *ast.IfStmt:
+			elseEnv = evalIfJoin(el, env)
+		default:
+			elseEnv = env
+		}
+	} else {
+		elseEnv = env
+	}
+
+	joined := make(map[string]VarState)
+	for k := range env {
+		if thenEnv[k] == StateSanitized && elseEnv[k] == StateSanitized {
+			joined[k] = StateSanitized
+		} else {
+			joined[k] = StateUnsanitized
+		}
+	}
+	for k := range thenEnv {
+		if thenEnv[k] == StateSanitized && elseEnv[k] == StateSanitized {
+			joined[k] = StateSanitized
+		} else {
+			joined[k] = StateUnsanitized
+		}
+	}
+
+	return joined
+}
+
 func isIdentSanitized(ident *ast.Ident, body *ast.BlockStmt) bool {
 	if ident == nil || body == nil {
 		return false
 	}
-
-	var isAssignedSafe bool
-	var foundAssignment bool
-
-	ast.Inspect(body, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok {
-			return true
-		}
-
-		for i, lhs := range assign.Lhs {
-			if id, ok := lhs.(*ast.Ident); ok && id.Name == ident.Name {
-				foundAssignment = true
-				if i < len(assign.Rhs) {
-					if IsArgumentSanitized(assign.Rhs[i], body) {
-						isAssignedSafe = true
-					}
-				}
-			}
-		}
-		return true
-	})
-
-	if foundAssignment {
-		return isAssignedSafe
-	}
-
-	// Function parameter or unresolved variable without prior sanitization
-	return false
+	envAtTarget, _ := evalBlock(body, ident.Pos(), nil)
+	return envAtTarget[ident.Name] == StateSanitized
 }
 
 func getCallMethodName(e ast.Expr) string {

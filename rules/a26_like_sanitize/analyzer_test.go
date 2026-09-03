@@ -2,6 +2,8 @@ package a26_like_sanitize
 
 import (
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"testing"
 
@@ -163,5 +165,73 @@ func TestIsArgumentSanitized_SemanticWhitelist(t *testing.T) {
 			t.Errorf("expected %s to be recognized as a valid sanitizer", name)
 		}
 	}
+}
+
+func TestFlowSensitiveDataflow(t *testing.T) {
+	src := `package main
+
+func fn(userInput string, trusted bool) {
+	// 1. Overwrite: should be UNSAFE
+	pattern1 := userInput
+	pattern1 = SanitizeLike(pattern1)
+	pattern1 = userInput
+	query(pattern1)
+
+	// 2. Conditional no else: should be UNSAFE
+	pattern2 := userInput
+	if trusted {
+		pattern2 = SanitizeLike(pattern2)
+	}
+	query(pattern2)
+
+	// 3. Conditional both branches: should be SAFE
+	pattern3 := userInput
+	if trusted {
+		pattern3 = SanitizeLike(pattern3)
+	} else {
+		pattern3 = FormatLikeContains(pattern3)
+	}
+	query(pattern3)
+
+	// 4. Assign after query: should be UNSAFE
+	pattern4 := userInput
+	query(pattern4)
+	pattern4 = SanitizeLike(pattern4)
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	fn := f.Decls[0].(*ast.FuncDecl)
+	expected := map[string]bool{
+		"pattern1": false,
+		"pattern2": false,
+		"pattern3": true,
+		"pattern4": false,
+	}
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		id, ok := call.Fun.(*ast.Ident)
+		if !ok || id.Name != "query" {
+			return true
+		}
+		argIdent := call.Args[0].(*ast.Ident)
+		wantSafe, tracked := expected[argIdent.Name]
+		if !tracked {
+			return true
+		}
+		gotSafe := isIdentSanitized(argIdent, fn.Body)
+		if gotSafe != wantSafe {
+			t.Errorf("variable %s: expected safe=%v, got safe=%v", argIdent.Name, wantSafe, gotSafe)
+		}
+		return true
+	})
 }
 

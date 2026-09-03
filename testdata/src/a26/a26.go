@@ -75,3 +75,46 @@ func UnsafeReplaceFooBar(ctx context.Context, db DB, keyword string) (any, error
 	return db.Query(ctx, query, safe) // want `\[ARGUS-A26\] unsanitized wildcard parameter bound to LIKE/ILIKE clause \(\$1\); risk of pattern language hijacking, PII exposure, and sequential scan DoS \(CWE-89, CWE-400\)`
 }
 
+// 9. Unsafe sequential overwrite: sanitized then reassigned to raw (Violation)
+func UnsafeSequentialOverwrite(ctx context.Context, db DB, keyword string) (any, error) {
+	pattern := keyword
+	pattern = SanitizeLike(pattern)
+	pattern = keyword
+	const query = "SELECT id, name FROM users WHERE name ILIKE $1"
+	return db.Query(ctx, query, pattern) // want `\[ARGUS-A26\] unsanitized wildcard parameter bound to LIKE/ILIKE clause \(\$1\); risk of pattern language hijacking, PII exposure, and sequential scan DoS \(CWE-89, CWE-400\)`
+}
+
+// 10. Unsafe conditional without else branch: only sanitized on one path (Violation)
+func UnsafeConditionalNoElse(ctx context.Context, db DB, keyword string, trusted bool) (any, error) {
+	pattern := keyword
+	if trusted {
+		pattern = SanitizeLike(pattern)
+	}
+	const query = "SELECT id, name FROM users WHERE name ILIKE $1"
+	return db.Query(ctx, query, pattern) // want `\[ARGUS-A26\] unsanitized wildcard parameter bound to LIKE/ILIKE clause \(\$1\); risk of pattern language hijacking, PII exposure, and sequential scan DoS \(CWE-89, CWE-400\)`
+}
+
+// 11. Safe conditional where all execution branches sanitize (Compliant)
+func SafeConditionalBothBranches(ctx context.Context, db DB, keyword string, trusted bool) (any, error) {
+	pattern := keyword
+	if trusted {
+		pattern = SanitizeLike(pattern)
+	} else {
+		pattern = FormatLikeContains(pattern)
+	}
+	const query = "SELECT id, name FROM users WHERE name ILIKE $1"
+	return db.Query(ctx, query, pattern)
+}
+
+// 12. Safe query executed inside sanitized conditional block (Compliant)
+func SafeQueryInsideBranch(ctx context.Context, db DB, keyword string, trusted bool) (any, error) {
+	pattern := keyword
+	if trusted {
+		pattern = SanitizeLike(pattern)
+		const query = "SELECT id, name FROM users WHERE name ILIKE $1"
+		return db.Query(ctx, query, pattern)
+	}
+	return nil, nil
+}
+
+
