@@ -10,6 +10,7 @@ import (
 	"github.com/will2469/argus/rules/a01_sql_concat"
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a17_nplusone"
+	"github.com/will2469/argus/rules/a26_like_sanitize"
 	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/directives"
 )
@@ -86,6 +87,19 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 			Rule:     "FORBIDDEN_QUERY_IN_LOOP",
 			Message:  issue.Message,
 			Category: "performance",
+		})
+	}
+
+	// 4. ARGUS-A26: Unsanitized LIKE/ILIKE wildcard input
+	a26Issues := a26_like_sanitize.InspectFile(nil, fset, node, dm)
+	for _, issue := range a26Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "LIKE_WILDCARD_INJECTION",
+			Message:  issue.Message,
+			Category: "security",
 		})
 	}
 }

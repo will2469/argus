@@ -2,6 +2,7 @@
 package a26_like_sanitize
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"strings"
@@ -15,6 +16,12 @@ import (
 
 // RuleCode is the official identifier for ARGUS-A26.
 const RuleCode = "ARGUS-A26"
+
+// Issue describes a detected violation of ARGUS-A26.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
 
 // Analyzer defines the analysis.Analyzer for ARGUS-A26.
 var Analyzer = &analysis.Analyzer{
@@ -42,13 +49,22 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			continue
 		}
 
-		inspectFile(pass, file, dm)
+		issues := InspectFile(pass, pass.Fset, file, dm)
+		for _, issue := range issues {
+			pass.Reportf(issue.Pos, "[%s] %s", RuleCode, issue.Message)
+		}
 	}
 
 	return nil, nil
 }
 
-func inspectFile(pass *analysis.Pass, file *ast.File, dm *directives.DirectiveMap) {
+// InspectFile inspects an AST file for unsanitized wildcard parameters bound to LIKE/ILIKE clauses.
+// Can be called with pass == nil in standalone CLI runner mode.
+func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	if file == nil {
+		return nil
+	}
+	var issues []Issue
 	var currentFuncBody *ast.BlockStmt
 
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -69,7 +85,7 @@ func inspectFile(pass *analysis.Pass, file *ast.File, dm *directives.DirectiveMa
 			return true
 		}
 
-		if dm != nil && (dm.IsIgnored(pass.Fset, call.Pos(), RuleCode) || dm.IsIgnored(pass.Fset, call.Pos(), RuleCode+".LIKE-WILDCARD")) {
+		if dm != nil && fset != nil && (dm.IsIgnored(fset, call.Pos(), RuleCode) || dm.IsIgnored(fset, call.Pos(), RuleCode+".LIKE-WILDCARD")) {
 			return true
 		}
 
@@ -87,23 +103,23 @@ func inspectFile(pass *analysis.Pass, file *ast.File, dm *directives.DirectiveMa
 			argPos := sqlArgIdx + paramIdx
 			if argPos < len(call.Args) {
 				argExpr := call.Args[argPos]
-				if dm != nil && (dm.IsIgnored(pass.Fset, argExpr.Pos(), RuleCode) || dm.IsIgnored(pass.Fset, argExpr.Pos(), RuleCode+".LIKE-WILDCARD")) {
+				if dm != nil && fset != nil && (dm.IsIgnored(fset, argExpr.Pos(), RuleCode) || dm.IsIgnored(fset, argExpr.Pos(), RuleCode+".LIKE-WILDCARD")) {
 					continue
 				}
 
 				if !IsArgumentSanitized(argExpr, currentFuncBody) {
-					pass.Reportf(
-						argExpr.Pos(),
-						"[%s] unsanitized wildcard parameter bound to LIKE/ILIKE clause ($%d); risk of pattern language hijacking, PII exposure, and sequential scan DoS (CWE-89, CWE-400)",
-						RuleCode,
-						paramIdx,
-					)
+					issues = append(issues, Issue{
+						Pos: argExpr.Pos(),
+						Message: fmt.Sprintf("unsanitized wildcard parameter bound to LIKE/ILIKE clause ($%d); risk of pattern language hijacking, PII exposure, and sequential scan DoS (CWE-89, CWE-400)", paramIdx),
+					})
 				}
 			}
 		}
 
 		return true
 	})
+
+	return issues
 }
 
 func findQueryAndIndex(call *ast.CallExpr) (string, int, bool) {

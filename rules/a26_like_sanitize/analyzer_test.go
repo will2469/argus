@@ -42,6 +42,41 @@ func TestFindLikeParamIndices(t *testing.T) {
 			sql:      "SELECT id FROM users WHERE id = $1",
 			expected: nil,
 		},
+		{
+			name:     "fallback fragment with concat function",
+			sql:      "WHERE name LIKE CONCAT('%', $1, '%')",
+			expected: []int{1},
+		},
+		{
+			name:     "fallback fragment with pipe concatenation",
+			sql:      "WHERE name LIKE '%' || $1 || '%'",
+			expected: []int{1},
+		},
+		{
+			name:     "nested lower function in like",
+			sql:      "WHERE name LIKE LOWER($1)",
+			expected: []int{1},
+		},
+		{
+			name:     "multiple clauses stops like pattern at AND",
+			sql:      "WHERE name LIKE $1 AND status = $2",
+			expected: []int{1},
+		},
+		{
+			name:     "enclosed parenthesis where clause",
+			sql:      "WHERE (name LIKE '%' || $1 || '%')",
+			expected: []int{1},
+		},
+		{
+			name:     "string literal containing AND inside pattern",
+			sql:      "WHERE name LIKE '% AND %' || $1",
+			expected: []int{1},
+		},
+		{
+			name:     "multiple like clauses with or",
+			sql:      "WHERE name ILIKE $1 OR email ILIKE $2",
+			expected: []int{1, 2},
+		},
 	}
 
 	for _, tt := range tests {
@@ -53,6 +88,49 @@ func TestFindLikeParamIndices(t *testing.T) {
 			for i := range got {
 				if got[i] != tt.expected[i] {
 					t.Errorf("FindLikeParamIndices()[%d] = %d, want %d", i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFindLikeParamIndicesRegex_ScannerDirect(t *testing.T) {
+	tests := []struct {
+		name     string
+		sql      string
+		expected []int
+	}{
+		{
+			name:     "concat function in regex fallback",
+			sql:      "WHERE name LIKE CONCAT('%', $1, '%')",
+			expected: []int{1},
+		},
+		{
+			name:     "pipe concatenation in regex fallback",
+			sql:      "WHERE name LIKE '%' || $1 || '%'",
+			expected: []int{1},
+		},
+		{
+			name:     "stops at boundary AND in regex fallback",
+			sql:      "WHERE name LIKE $1 AND id = $2",
+			expected: []int{1},
+		},
+		{
+			name:     "literal AND inside quotes does not stop scanner",
+			sql:      "WHERE name LIKE '% AND %' || $1",
+			expected: []int{1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findLikeParamIndicesRegex(tt.sql)
+			if len(got) != len(tt.expected) {
+				t.Fatalf("findLikeParamIndicesRegex() = %v, want %v", got, tt.expected)
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("findLikeParamIndicesRegex()[%d] = %d, want %d", i, got[i], tt.expected[i])
 				}
 			}
 		})
