@@ -35,12 +35,10 @@ func IsDBQueryCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 	// If types info is available, verify receiver type
 	if pass != nil && pass.TypesInfo != nil {
 		if selType, ok := pass.TypesInfo.Selections[sel]; ok {
-			recvType := selType.Recv().String()
-			return isDatabaseReceiverType(recvType)
+			return callsite.IsPgxOrSQLType(selType.Recv())
 		}
 		if tv, ok := pass.TypesInfo.Types[sel.X]; ok {
-			recvType := tv.Type.String()
-			return isDatabaseReceiverType(recvType)
+			return callsite.IsPgxOrSQLType(tv.Type)
 		}
 	}
 
@@ -118,18 +116,4 @@ func extractSimpleString(expr ast.Expr) (string, bool) {
 	return "", false
 }
 
-func isDatabaseReceiverType(recvType string) bool {
-	lower := strings.ToLower(recvType)
-	if strings.Contains(lower, "pgx") || strings.Contains(lower, "database/sql") {
-		return true
-	}
-	for _, part := range strings.FieldsFunc(lower, func(r rune) bool {
-		return r == '.' || r == '*' || r == '/' || r == '_'
-	}) {
-		switch part {
-		case "db", "pool", "tx", "conn", "querier", "database", "store", "repo", "repository":
-			return true
-		}
-	}
-	return false
-}
+

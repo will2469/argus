@@ -6,7 +6,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -147,21 +146,81 @@ func runCallsiteAnalyzer(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
-// IsPgxOrSQLType heuristically checks if a type or identifier matches database pools/conns.
+// Known standard and popular Go SQL driver / pool package paths.
+var knownDBPackagePaths = map[string]bool{
+	"database/sql":                    true,
+	"github.com/jackc/pgx/v5":         true,
+	"github.com/jackc/pgx/v5/pgxpool": true,
+	"github.com/jackc/pgx/v5/pgconn":  true,
+	"github.com/jackc/pgx/v4":         true,
+	"github.com/jackc/pgx/v4/pgxpool": true,
+	"github.com/jackc/pgx/v4/pgconn":  true,
+	"github.com/jmoiron/sqlx":         true,
+	"github.com/lib/pq":               true,
+}
+
+// IsPgxOrSQLType verifies if a Go type represents a legitimate database connection, pool, or transaction.
+// It inspects package path, exact type identity, and interface methods rather than naive substring matching.
 func IsPgxOrSQLType(t types.Type) bool {
 	if t == nil {
 		return false
 	}
-	s := t.String()
-	if len(s) == 0 {
-		return false
+
+	for {
+		if ptr, ok := t.(*types.Pointer); ok {
+			t = ptr.Elem()
+		} else {
+			break
+		}
 	}
-	return strings.Contains(s, "pgx") ||
-		strings.Contains(s, "database/sql") ||
-		strings.Contains(s, "pgxpool") ||
-		strings.Contains(s, "Pool") ||
-		strings.Contains(s, "Tx") ||
-		strings.Contains(s, "DB") ||
-		strings.Contains(s, "Conn") ||
-		strings.Contains(s, "Querier")
+
+	// 1. Exact package path and type name match for known database drivers
+	if named, ok := t.(*types.Named); ok {
+		obj := named.Obj()
+		if obj != nil {
+			pkg := obj.Pkg()
+			if pkg != nil && knownDBPackagePaths[pkg.Path()] {
+				switch obj.Name() {
+				case "DB", "Tx", "Conn", "Pool", "Batch", "Stmt", "Rows", "Row":
+					return true
+				}
+			}
+		}
+	}
+
+	// 2. Interface method set check for database querier contracts (e.g. DBTX, Querier)
+	if hasDBMethodSet(t) {
+		return true
+	}
+
+	return false
 }
+
+func hasDBMethodSet(t types.Type) bool {
+	var hasQuery, hasExec bool
+
+	checkFunc := func(fn *types.Func) {
+		name := fn.Name()
+		switch name {
+		case "Query", "QueryRow":
+			hasQuery = true
+		case "Exec", "ExecContext", "Begin", "BeginTx", "SendBatch":
+			hasExec = true
+		}
+	}
+
+	if named, ok := t.(*types.Named); ok {
+		for i := 0; i < named.NumMethods(); i++ {
+			checkFunc(named.Method(i))
+		}
+	}
+
+	if iface, ok := t.Underlying().(*types.Interface); ok {
+		for i := 0; i < iface.NumMethods(); i++ {
+			checkFunc(iface.Method(i))
+		}
+	}
+
+	return hasQuery && hasExec
+}
+

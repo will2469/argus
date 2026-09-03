@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"testing"
 )
 
@@ -116,3 +117,67 @@ func TestIsInsideLoop(t *testing.T) {
 		t.Errorf("expected IsInsideLoop to be false")
 	}
 }
+
+func TestIsPgxOrSQLType_SemanticPrecision(t *testing.T) {
+	src := `package testpkg
+
+type RedisPool struct{}
+func (RedisPool) Close() {}
+
+type HTTPConn struct{}
+func (HTTPConn) Close() {}
+
+type DebugDB struct{}
+func (DebugDB) Println(s string) {}
+
+type SearchEngine struct{}
+func (SearchEngine) Query(q string) string { return q }
+
+type DBTX interface {
+	Query(sql string, args ...any) (any, error)
+	Exec(sql string, args ...any) (any, error)
+}
+
+type MyQuerier struct{}
+func (MyQuerier) Query(sql string, args ...any) (any, error) { return nil, nil }
+func (MyQuerier) Exec(sql string, args ...any) (any, error) { return nil, nil }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	info := &types.Info{
+		Defs: make(map[*ast.Ident]types.Object),
+	}
+	conf := types.Config{
+		Error: func(err error) {},
+	}
+	pkg, err := conf.Check("testpkg", fset, []*ast.File{f}, info)
+	if err != nil {
+		t.Fatalf("check failed: %v", err)
+	}
+
+	expected := map[string]bool{
+		"RedisPool":    false,
+		"HTTPConn":     false,
+		"DebugDB":      false,
+		"SearchEngine": false,
+		"DBTX":         true,
+		"MyQuerier":    true,
+	}
+
+	scope := pkg.Scope()
+	for typeName, wantDB := range expected {
+		obj := scope.Lookup(typeName)
+		if obj == nil {
+			t.Fatalf("type %s not found in scope", typeName)
+		}
+		gotDB := IsPgxOrSQLType(obj.Type())
+		if gotDB != wantDB {
+			t.Errorf("IsPgxOrSQLType(%s) = %v, want %v", typeName, gotDB, wantDB)
+		}
+	}
+}
+
