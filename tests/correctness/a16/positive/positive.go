@@ -1,4 +1,4 @@
-package a16
+package positive
 
 import (
 	"context"
@@ -26,48 +26,38 @@ func (pgxpoolPkg) ParseConfig(dsn string) (*Config, error) {
 	return &Config{}, nil
 }
 
-func ResolveMaxConns() int32 {
-	return 20
+// P1: Obvious Violation — DSN without pool_max_conns.
+func P1_Obvious(ctx context.Context) {
+	_, _ = pgxpool.New(ctx, "postgres://user:pass@localhost:5432/db") // want `\[ARGUS-A16\] Missing explicit pool_max_conns in DSN`
 }
 
-func Cases(ctx context.Context) {
-	// 1. DSN without pool_max_conns
-	_, _ = pgxpool.New(ctx, "postgres://user:pass@localhost:5432/db") // want `\[ARGUS-A16\] Missing explicit pool_max_conns in DSN`
-
-	// 2. DSN with dangerous pool_max_conns (500)
+// P2: Indirect Violation — DSN with dangerous pool_max_conns exceeding threshold.
+func P2_Indirect(ctx context.Context) {
 	_, _ = pgxpool.New(ctx, "postgres://user:pass@localhost:5432/db?pool_max_conns=500") // want `\[ARGUS-A16\] pool_max_conns \(500\) in DSN exceeds safe direct connection threshold`
+}
 
-	// 3. DSN with zero pool_max_conns
-	_, _ = pgxpool.New(ctx, "postgres://user:pass@localhost:5432/db?pool_max_conns=0") // want `\[ARGUS-A16\] pool_max_conns in DSN must be a positive integer`
-
-	// 4. Safe DSN
-	_, _ = pgxpool.New(ctx, "postgres://user:pass@localhost:5432/db?pool_max_conns=20")
-
-	// 5. Config missing MaxConns
+// P3: Helper Violation — Config missing explicit MaxConns.
+func P3_Helper(ctx context.Context) {
 	cfgMissing, _ := pgxpool.ParseConfig("postgres://localhost/db")
 	_, _ = pgxpool.NewWithConfig(ctx, cfgMissing) // want `\[ARGUS-A16\] pgxpool\.Config missing explicit MaxConns`
+}
 
-	// 6. Dynamic assignment too large
+// P4: Nested Violation — dynamic assignment exceeding threshold.
+func P4_Nested(ctx context.Context) {
 	cfgGiant, _ := pgxpool.ParseConfig("postgres://localhost/db")
 	cfgGiant.MaxConns = 500
 	_, _ = pgxpool.NewWithConfig(ctx, cfgGiant) // want `\[ARGUS-A16\] MaxConns \(500\) exceeds safe direct connection limit`
+}
 
-	// 7. Dynamic assignment zero
+// P5: Alias Violation — dynamic assignment set to zero.
+func P5_Alias(ctx context.Context) {
 	cfgZero, _ := pgxpool.ParseConfig("postgres://localhost/db")
 	cfgZero.MaxConns = 0
 	_, _ = pgxpool.NewWithConfig(ctx, cfgZero) // want `\[ARGUS-A16\] MaxConns cannot be zero or negative`
+}
 
-	// 8. Safe dynamic assignment
-	cfgSafe, _ := pgxpool.ParseConfig("postgres://localhost/db")
-	cfgSafe.MaxConns = 20
-	_, _ = pgxpool.NewWithConfig(ctx, cfgSafe)
-
-	// 9. Safe via resolver function
-	cfgResolved, _ := pgxpool.ParseConfig("postgres://localhost/db")
-	cfgResolved.MaxConns = ResolveMaxConns()
-	_, _ = pgxpool.NewWithConfig(ctx, cfgResolved)
-
-	// 10. Ignored via canonical shortcode
+// P_Ignored: Suppressed violation via canonical shortcode directive.
+func P_Ignored(ctx context.Context) {
 	cfgIgnored, _ := pgxpool.ParseConfig("postgres://localhost/db")
 	// argus:ignore-a16 routed via pgbouncer transaction pooler
 	cfgIgnored.MaxConns = 500

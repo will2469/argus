@@ -82,6 +82,17 @@ func EvaluateExpr(expr ast.Expr, maxSafe int32) ConnsEvaluation {
 		maxSafe = DefaultMaxSafeConns
 	}
 
+	multiplier := 1
+	if unary, ok := expr.(*ast.UnaryExpr); ok {
+		switch unary.Op {
+		case token.SUB:
+			multiplier = -1
+			expr = unary.X
+		case token.ADD:
+			expr = unary.X
+		}
+	}
+
 	lit, ok := expr.(*ast.BasicLit)
 	if !ok || lit.Kind != token.INT {
 		// Variable, function call (e.g. ResolveMaxConns()), or ENV fallback is treated as configured.
@@ -92,6 +103,7 @@ func EvaluateExpr(expr ast.Expr, maxSafe int32) ConnsEvaluation {
 	}
 
 	val, err := strconv.Atoi(lit.Value)
+	val *= multiplier
 	if err != nil || val <= 0 {
 		return ConnsEvaluation{
 			Configured: true,

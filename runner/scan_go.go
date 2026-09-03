@@ -21,6 +21,7 @@ import (
 	"github.com/will2469/argus/rules/a10_isolation_level"
 	"github.com/will2469/argus/rules/a12_timeout_config"
 	"github.com/will2469/argus/rules/a14_select_star"
+	"github.com/will2469/argus/rules/a16_max_conns"
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
@@ -235,7 +236,20 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 		})
 	}
 
-	// 14. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
+	// 14. ARGUS-A16: Pool Max Connections Boundary
+	a16Issues := a16_max_conns.InspectFile(pass, fset, node, dm, 0)
+	for _, issue := range a16Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "UNBOUNDED_MAX_CONNS",
+			Message:  issue.Message,
+			Category: "reliability",
+		})
+	}
+
+	// 15. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
 	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
 	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {
