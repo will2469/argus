@@ -47,7 +47,8 @@ Struktur skill ini memisahkan instruksi menjadi 3 tier modular:
 ├── assets/                           # Templat kode standar
 │   ├── analyzer.go.tmpl              # Kerangka analyzer Go Analysis
 │   ├── ast_visitor.go.tmpl           # Engine visitor AST Go (SSOT)
-│   ├── sql_walker.go.tmpl            # Engine parser SQL AST (SSOT)
+│   ├── sql_walker.go.tmpl            # Engine parser SQL AST (SSOT - per file)
+│   ├── migration_dir_scanner.go.tmpl # Scanner migrasi rekursif multi-file/subfolder
 │   ├── analyzer_test.go.tmpl         # Test suite analysistest.Run
 │   ├── testdata.go.tmpl              # Fixture 4 skenario testdata
 │   └── wiki_rule.md.tmpl             # Templat dokumentasi 8-Pillars Matrix

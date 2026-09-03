@@ -85,3 +85,28 @@ func TestScanDirectory_Ignored(t *testing.T) {
 		}
 	}
 }
+
+func TestScanDirectory_RecursiveSubdirectories(t *testing.T) {
+	tempDir := t.TempDir()
+
+	serviceA := filepath.Join(tempDir, "service_a")
+	serviceB := filepath.Join(tempDir, "service_b")
+	_ = os.MkdirAll(serviceA, 0755)
+	_ = os.MkdirAll(serviceB, 0755)
+
+	// service_a has a compliant pair
+	_ = os.WriteFile(filepath.Join(serviceA, "001_users.up.sql"), []byte("CREATE TABLE users (id int);"), 0644)
+	_ = os.WriteFile(filepath.Join(serviceA, "001_users.down.sql"), []byte("DROP TABLE users;"), 0644)
+
+	// service_b has a missing down migration
+	_ = os.WriteFile(filepath.Join(serviceB, "001_invoices.up.sql"), []byte("CREATE TABLE invoices (id int);"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for recursive missing down migration in service_b, got %d: %v", len(issues), issues)
+	}
+	expectedFile := filepath.Join(serviceB, "001_invoices.up.sql")
+	if issues[0].Filename != expectedFile {
+		t.Errorf("expected issue on %s, got %s", expectedFile, issues[0].Filename)
+	}
+}

@@ -33,11 +33,11 @@ func FindLikeParamIndices(sql string) []int {
 	upperTrimmed := strings.ToUpper(trimmed)
 	var wrappers []string
 	if strings.HasPrefix(upperTrimmed, "WHERE") {
-		wrappers = append(wrappers, "SELECT * FROM __argus_dummy__ "+trimmed)
+		wrappers = append(wrappers, "SELECT 1 FROM __argus_dummy__ "+trimmed)
 	} else if strings.HasPrefix(upperTrimmed, "AND") || strings.HasPrefix(upperTrimmed, "OR") {
-		wrappers = append(wrappers, "SELECT * FROM __argus_dummy__ WHERE 1=1 "+trimmed)
+		wrappers = append(wrappers, "SELECT 1 FROM __argus_dummy__ WHERE 1=1 "+trimmed)
 	} else {
-		wrappers = append(wrappers, "SELECT * FROM __argus_dummy__ WHERE "+trimmed)
+		wrappers = append(wrappers, "SELECT 1 FROM __argus_dummy__ WHERE "+trimmed)
 	}
 
 	for _, wrapped := range wrappers {

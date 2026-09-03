@@ -27,19 +27,8 @@ func scanMigrationDirectories(migrationDirs []string, rootDir string, tracker *M
 			targetDir = filepath.Join(rootDir, targetDir)
 		}
 
-		entries, err := os.ReadDir(targetDir)
-		if err != nil {
-			continue
-		}
-
-		var sqlFiles []string
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-				continue
-			}
-			sqlFiles = append(sqlFiles, filepath.Join(targetDir, entry.Name()))
-		}
-		tracker.IncrementScannedFiles(len(sqlFiles))
+		sqlFiles := findFilesWithExt(targetDir, ".sql")
+		tracker.IncrementMigrationFiles(len(sqlFiles))
 
 		dm := directives.NewDirectiveMap()
 

@@ -13,31 +13,34 @@ import (
 	"github.com/will2469/argus/shared/sqlparser"
 )
 
-// ScanMigrationDir scans all migration files in a directory and cross-references FKs with Indexes.
+// ScanMigrationDir scans all migration files in a directory and subdirectories and cross-references FKs with Indexes.
 func ScanMigrationDir(dir string, dm *directives.DirectiveMap, cfg *config.Config) []migration.Issue {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-
 	files := make(map[string]string)
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") {
-			continue
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
 		}
-		path := filepath.Join(dir, entry.Name())
+		if !strings.HasSuffix(info.Name(), ".up.sql") {
+			return nil
+		}
 		data, err := os.ReadFile(path)
 		if err == nil {
-			files[entry.Name()] = string(data)
+			files[path] = string(data)
 			if dm != nil {
-				fileDm := directives.ParseSQLDirectives(string(data), entry.Name())
-				for l := 1; l <= strings.Count(string(data), "\n")+1; l++ {
-					if fileDm.IsLineIgnored(entry.Name(), l, RuleCode) {
-						dm.AddDirective(entry.Name(), l, RuleCode, "sql directive")
+				fileDm := directives.ParseSQLDirectives(string(data), path)
+				lineCount := strings.Count(string(data), "\n") + 1
+				for l := 1; l <= lineCount; l++ {
+					if fileDm.IsLineIgnored(path, l, RuleCode) {
+						dm.AddDirective(path, l, RuleCode, "sql directive")
+						dm.AddDirective(info.Name(), l, RuleCode, "sql directive")
 					}
 				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil
 	}
 	return CheckMigrations(files, dm, cfg)
 }

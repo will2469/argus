@@ -89,13 +89,26 @@ for _, issue := range issues {
 
 ### Kasus B: Rule Memeriksa Migrasi SQL (`runner/scan_migrations.go`)
 
+**Invarian Mutlak (Anti-Shallow Scanning):** Seluruh pemindaian migrasi WAJIB rekursif menggunakan `findFilesWithExt(targetDir, ".sql")` atau `filepath.Walk`. DILARANG KERAS menggunakan `os.ReadDir()` yang melewatkan file `.sql` di subdirektori (pola monorepo multi-service).
+
+#### 1. Aturan Berbasis File Tunggal (`CheckMigration`):
 Panggil `CheckMigration` di dalam loop evaluasi berkas `.up.sql`:
 
 ```go
 import "github.com/will2469/argus/rules/aXX_<name>"
 
-// Di dalam loop sqlFiles pada scanMigrationDirectories:
+// Di dalam loop sqlFiles (hasil findFilesWithExt) pada scanMigrationDirectories:
 for _, issue := range aXX_<name>.CheckMigration(file, content, fileDm) {
+    addMigrationIssue(issue, "ARGUS-AXX", rootDir, tracker)
+}
+```
+
+#### 2. Aturan Berbasis Direktori / Multi-File (`ScanMigrationDir`):
+Untuk aturan yang memerlukan analisis silang multi-file (seperti A13 down-migration pairing atau A29 foreign-key cross reference), gunakan template `assets/migration_dir_scanner.go.tmpl` dan panggil fungsi direktori:
+
+```go
+// Di dalam scanMigrationDirectories:
+for _, issue := range aXX_<name>.ScanMigrationDir(targetDir, dm, cfg) {
     addMigrationIssue(issue, "ARGUS-AXX", rootDir, tracker)
 }
 ```

@@ -145,3 +145,27 @@ func TestScanMigrationDir_TestData(t *testing.T) {
 		t.Fatalf("expected exactly 1 issue from testdata, got %d: %v", len(issues), issues)
 	}
 }
+
+func TestScanMigrationDir_RecursiveSubdirectories(t *testing.T) {
+	tempDir := t.TempDir()
+
+	subDir := filepath.Join(tempDir, "services", "orders")
+	_ = os.MkdirAll(subDir, 0755)
+
+	sql := `
+CREATE TABLE customers (
+    id UUID PRIMARY KEY
+);
+CREATE TABLE orders (
+    id UUID PRIMARY KEY,
+    customer_id UUID REFERENCES customers(id)
+);
+`
+	_ = os.WriteFile(filepath.Join(subDir, "001_orders.up.sql"), []byte(sql), 0644)
+
+	cfg := config.DefaultConfig()
+	issues := ScanMigrationDir(tempDir, nil, cfg)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue from recursive migration scan, got %d: %v", len(issues), issues)
+	}
+}

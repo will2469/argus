@@ -61,7 +61,8 @@ Struktur modular skill ini menyediakan helper siap pakai:
 │   ├── safe_predicate_extractor.go   # Walker konjungtif aman (memperbaiki bug A24)
 │   ├── column_storage_detector.go    # Detektor mode TOAST & generated column (A32)
 │   ├── null_test_evaluator.go        # Pembeda aman IS NULL vs IS NOT NULL
-│   └── clause_getter_helpers.go      # Getter WhereClause, SortClause, LockingClause
+│   ├── clause_getter_helpers.go      # Getter WhereClause, SortClause, LockingClause
+│   └── fragment_ast_normalizer.go    # Parser normalisasi kueri fragment (WHERE/AND)
 └── references/                       # Manual teknis mendalam
     ├── boolexpr_conjunctive_trap.md  # Analisis matematis & post-mortem bug A24
     ├── column_def_storage_modes.md   # Bedah field ColumnDef TOAST & Generated

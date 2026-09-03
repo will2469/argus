@@ -142,13 +142,19 @@ func runStandalone() {
 			}
 			targetPath := arg
 			if !filepath.IsAbs(targetPath) {
-				targetPath = filepath.Join(rootDir, arg)
+				if _, err := os.Stat(targetPath); err == nil {
+					if abs, err := filepath.Abs(targetPath); err == nil {
+						targetPath = abs
+					}
+				} else {
+					targetPath = filepath.Join(rootDir, arg)
+				}
 			}
 			if _, err := os.Stat(targetPath); err != nil {
 				fmt.Fprintf(os.Stderr, "argus: unknown command or path \"%s\"\n\nRun 'argus --help' for usage.\n", arg)
 				os.Exit(1)
 			}
-			scanDirs = append(scanDirs, arg)
+			scanDirs = append(scanDirs, targetPath)
 		default:
 			fmt.Fprintf(os.Stderr, "argus: unknown flag \"%s\"\n\nRun 'argus --help' for usage.\n", arg)
 			os.Exit(1)
@@ -252,7 +258,15 @@ func printUsage() {
 func appendDirs(target *[]string, val string) {
 	for _, d := range strings.Split(val, ",") {
 		if trimmed := strings.TrimSpace(d); trimmed != "" {
-			*target = append(*target, trimmed)
+			resolved := trimmed
+			if !filepath.IsAbs(resolved) {
+				if _, err := os.Stat(resolved); err == nil {
+					if abs, err := filepath.Abs(resolved); err == nil {
+						resolved = abs
+					}
+				}
+			}
+			*target = append(*target, resolved)
 		}
 	}
 }

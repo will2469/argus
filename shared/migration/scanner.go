@@ -12,26 +12,28 @@ import (
 // FileCheckerFunc defines the function signature for per-file migration scanners.
 type FileCheckerFunc func(filename, content string, dm *directives.DirectiveMap) []Issue
 
-// ScanDirectory walks all .up.sql files in the given directory and aggregates issues reported by the checker.
+// ScanDirectory walks all .up.sql files in the given directory and its subdirectories,
+// aggregating issues reported by the checker.
 func ScanDirectory(dir string, checker FileCheckerFunc) ([]Issue, error) {
-	entries, err := os.ReadDir(dir)
+	var allIssues []Issue
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(info.Name(), ".up.sql") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		dm := directives.ParseSQLDirectives(string(data), path)
+		issues := checker(path, string(data), dm)
+		allIssues = append(allIssues, issues...)
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	var allIssues []Issue
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") {
-			continue
-		}
-		filePath := filepath.Join(dir, entry.Name())
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return nil, err
-		}
-		dm := directives.ParseSQLDirectives(string(data), filePath)
-		issues := checker(filePath, string(data), dm)
-		allIssues = append(allIssues, issues...)
 	}
 
 	return allIssues, nil
