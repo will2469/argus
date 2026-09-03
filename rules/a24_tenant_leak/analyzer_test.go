@@ -1,6 +1,9 @@
 package a24_tenant_leak
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"testing"
 
@@ -118,3 +121,73 @@ func TestCheckTenantQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestIsRLSActiveAt_DominanceAnalysis(t *testing.T) {
+	src := `package testpkg
+
+func casePrecedingQuery() {
+	db.Query(ctx, "SELECT * FROM users")
+	db.Exec(ctx, "SET LOCAL app.tenant_id = $1", "123")
+}
+
+func caseSubsequentQuery() {
+	db.Exec(ctx, "SET LOCAL app.tenant_id = $1", "123")
+	db.Query(ctx, "SELECT * FROM users")
+}
+
+func caseConditionalRLS(isSpecial bool) {
+	if isSpecial {
+		db.Exec(ctx, "SET LOCAL app.tenant_id = $1", "123")
+	}
+	db.Query(ctx, "SELECT * FROM users")
+}
+
+func caseInsideBranch(isSpecial bool) {
+	if isSpecial {
+		db.Exec(ctx, "SET LOCAL app.tenant_id = $1", "123")
+		db.Query(ctx, "SELECT * FROM users")
+	}
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	for _, decl := range f.Decls {
+		fn := decl.(*ast.FuncDecl)
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Query" {
+				return true
+			}
+
+			active := IsRLSActiveAt(fn.Body, call.Pos(), "tenant_id")
+			switch fn.Name.Name {
+			case "casePrecedingQuery":
+				if active {
+					t.Errorf("casePrecedingQuery: expected RLS inactive before setup")
+				}
+			case "caseSubsequentQuery":
+				if !active {
+					t.Errorf("caseSubsequentQuery: expected RLS active after setup")
+				}
+			case "caseConditionalRLS":
+				if active {
+					t.Errorf("caseConditionalRLS: expected RLS inactive after branch without else")
+				}
+			case "caseInsideBranch":
+				if !active {
+					t.Errorf("caseInsideBranch: expected RLS active inside branch after setup")
+				}
+			}
+			return true
+		})
+	}
+}
+

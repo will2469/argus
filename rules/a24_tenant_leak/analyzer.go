@@ -76,8 +76,6 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			continue
 		}
 
-		hasRLS := HasRLSSessionSetup(fn, tc.TenantColumn)
-
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -89,7 +87,7 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 				return true
 			}
 
-			if hasRLS {
+			if IsRLSActiveAt(fn.Body, call.Pos(), tc.TenantColumn) {
 				return true
 			}
 

@@ -109,4 +109,36 @@ func SafeJoinBothTablesIsolated(ctx context.Context, db DB, tenantID string) (an
 	return db.Query(ctx, query, tenantID)
 }
 
+// 17. Unsafe query executing BEFORE RLS setup occurs in the same function (Violation)
+func UnsafeQueryBeforeRLS(ctx context.Context, db DB, tenantID string) (any, error) {
+	res, err := db.Query(ctx, "SELECT id, email, name FROM users") // want `\[ARGUS-A24\] query on multi-tenant table 'users' missing 'tenant_id' predicate; risk of cross-tenant data breach \(CWE-284, OWASP API1:2023 BOLA\)`
+	if err != nil {
+		return nil, err
+	}
+	_, _ = db.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID)
+	return res, nil
+}
+
+// 18. Unsafe query executing following conditional RLS setup without else branch (Violation)
+func UnsafeConditionalRLS(ctx context.Context, db DB, tenantID string, isSpecial bool) (any, error) {
+	if isSpecial {
+		if _, err := db.Exec(ctx, "SET LOCAL app.tenant_id = $1", tenantID); err != nil {
+			return nil, err
+		}
+	}
+	return db.Query(ctx, "SELECT id, email, name FROM users") // want `\[ARGUS-A24\] query on multi-tenant table 'users' missing 'tenant_id' predicate; risk of cross-tenant data breach \(CWE-284, OWASP API1:2023 BOLA\)`
+}
+
+// 19. Safe query inside conditional block where RLS setup dominates (Compliant)
+func SafeQueryInsideRLSBranch(ctx context.Context, db DB, tenantID string, isSpecial bool) (any, error) {
+	if isSpecial {
+		if _, err := db.Exec(ctx, "SET LOCAL app.tenant_id = $1", tenantID); err != nil {
+			return nil, err
+		}
+		return db.Query(ctx, "SELECT id, email, name FROM users")
+	}
+	return nil, nil
+}
+
+
 
