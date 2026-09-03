@@ -14,11 +14,8 @@ fi
 RULE_NUM="$1"
 RULE_NAME="$2"
 
-if [ "$RULE_NUM" -lt 10 ]; then
-    NUM_STR="0$RULE_NUM"
-else
-    NUM_STR="$RULE_NUM"
-fi
+CLEAN_NUM=$((10#$RULE_NUM))
+NUM_STR=$(printf "%02d" "$CLEAN_NUM")
 
 RULE_CODE="ARGUS-A${NUM_STR}"
 PKG_NAME="a${NUM_STR}_${RULE_NAME}"
@@ -34,13 +31,13 @@ make -C "${REPO_ROOT}" build
 
 echo "=== 3. Testing Path 2: Standalone CLI Runner ==="
 FIXTURE_DIR="${REPO_ROOT}/testdata/src/${SHORT_ID}"
-STANDALONE_OUTPUT="$("${REPO_ROOT}/bin/argus" check --dirs "${FIXTURE_DIR}" --no-report 2>&1 || true)"
+STANDALONE_OUTPUT="$("${REPO_ROOT}/bin/argus" check --dirs="${FIXTURE_DIR}" --no-report 2>&1 || true)"
 
 echo "Standalone Output Summary:"
 echo "${STANDALONE_OUTPUT}"
 
 echo "=== 4. Parity Assertion ==="
-if echo "${STANDALONE_OUTPUT}" | grep -qi "FAILED"; then
+if echo "${STANDALONE_OUTPUT}" | grep -qiE "(${RULE_CODE}|violations)"; then
     echo "✅ Parity Check PASSED: Standalone runner successfully detected violations for ${RULE_CODE} in test fixture!"
 else
     echo "❌ PARITY FAILURE: Standalone runner reported 0 violations for ${RULE_CODE} on testdata/src/${SHORT_ID}!"

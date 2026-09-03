@@ -15,8 +15,12 @@ func PropagateBuilderCall(t *TaintTracker, call *ast.CallExpr) {
 	}
 	if len(call.Args) > 0 && t.IsTaintedExpr(call.Args[0]) {
 		if ident, ok := sel.X.(*ast.Ident); ok {
-			if obj := t.pass.TypesInfo.Uses[ident]; obj != nil {
-				t.tainted[obj] = struct{}{}
+			if t.pass != nil && t.pass.TypesInfo != nil {
+				if obj := t.pass.TypesInfo.Uses[ident]; obj != nil {
+					t.tainted[obj] = struct{}{}
+				}
+			} else {
+				t.markTaintedName(ident.Name)
 			}
 		}
 	}

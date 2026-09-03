@@ -11,53 +11,133 @@ import (
 )
 
 type TaintTracker struct {
-	pass    *analysis.Pass
-	tainted map[types.Object]struct{}
-	sources map[types.Object]struct{}
+	pass       *analysis.Pass
+	files      []*ast.File
+	currentFn  *ast.FuncDecl
+	tainted    map[types.Object]struct{}
+	sources    map[types.Object]struct{}
+	astTainted map[*ast.FuncDecl]map[string]struct{}
+	astSources map[*ast.FuncDecl]map[string]struct{}
 }
 
-func NewTaintTracker(pass *analysis.Pass) *TaintTracker {
+func NewTaintTracker(pass *analysis.Pass, files ...*ast.File) *TaintTracker {
+	var fList []*ast.File
+	if pass != nil {
+		fList = pass.Files
+	} else {
+		fList = files
+	}
 	return &TaintTracker{
-		pass:    pass,
-		tainted: make(map[types.Object]struct{}),
-		sources: make(map[types.Object]struct{}),
+		pass:       pass,
+		files:      fList,
+		tainted:    make(map[types.Object]struct{}),
+		sources:    make(map[types.Object]struct{}),
+		astTainted: make(map[*ast.FuncDecl]map[string]struct{}),
+		astSources: make(map[*ast.FuncDecl]map[string]struct{}),
+	}
+}
+
+// SetCurrentFunc sets the active function context for AST-based taint analysis.
+func (t *TaintTracker) SetCurrentFunc(fn *ast.FuncDecl) {
+	t.currentFn = fn
+}
+
+func (t *TaintTracker) markTaintedName(name string) {
+	if t.currentFn == nil {
+		return
+	}
+	if t.astTainted[t.currentFn] == nil {
+		t.astTainted[t.currentFn] = make(map[string]struct{})
+	}
+	t.astTainted[t.currentFn][name] = struct{}{}
+}
+
+func (t *TaintTracker) deleteTaintedName(name string) {
+	if t.currentFn != nil && t.astTainted[t.currentFn] != nil {
+		delete(t.astTainted[t.currentFn], name)
 	}
 }
 
 func (t *TaintTracker) Analyze() {
-	for _, file := range t.pass.Files {
-		// Phase 1: Mark taint sources (function params like id, query, req DTOs)
+	for _, file := range t.files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if ok && fn.Type.Params != nil {
+			if !ok || fn.Body == nil {
+				continue
+			}
+			t.currentFn = fn
+
+			// Phase 1: Mark taint sources (function params like id, query, req DTOs)
+			if fn.Type.Params != nil {
 				t.markSources(fn)
 			}
-		}
 
-		// Phase 2: Propagate taint through assignments and builder calls
-		ast.Inspect(file, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.AssignStmt:
-				t.propagateAssign(x)
-			case *ast.ExprStmt:
-				if call, ok := x.X.(*ast.CallExpr); ok {
-					PropagateBuilderCall(t, call)
+			// Phase 2: Propagate taint through assignments and builder calls
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.AssignStmt:
+					t.propagateAssign(x)
+				case *ast.ExprStmt:
+					if call, ok := x.X.(*ast.CallExpr); ok {
+						PropagateBuilderCall(t, call)
+					}
 				}
-			}
-			return true
-		})
+				return true
+			})
+		}
 	}
+	t.currentFn = nil
 }
 
 func (t *TaintTracker) markSources(fn *ast.FuncDecl) {
 	for _, field := range fn.Type.Params.List {
 		for _, name := range field.Names {
-			obj := t.pass.TypesInfo.Defs[name]
-			if obj != nil && isTaintSource(name.Name, obj.Type()) {
-				t.sources[obj] = struct{}{}
-				t.tainted[obj] = struct{}{}
+			if t.pass != nil && t.pass.TypesInfo != nil {
+				obj := t.pass.TypesInfo.Defs[name]
+				if obj != nil && isTaintSource(name.Name, obj.Type()) {
+					t.sources[obj] = struct{}{}
+					t.tainted[obj] = struct{}{}
+				}
+			} else {
+				typeStr := astExprToString(field.Type)
+				if isTaintSourceAST(name.Name, typeStr) {
+					if t.astSources[fn] == nil {
+						t.astSources[fn] = make(map[string]struct{})
+					}
+					t.astSources[fn][name.Name] = struct{}{}
+					t.markTaintedName(name.Name)
+				}
 			}
 		}
+	}
+}
+
+func isTaintSourceAST(name string, typeStr string) bool {
+	switch strings.ToLower(name) {
+	case "id", "nik", "email", "userid", "user_id", "param", "params", "query", "q",
+		"search", "filter", "sort", "order", "orderby", "order_by", "table", "column", "rawsql", "sql":
+		return true
+	}
+	if typeStr != "" {
+		if strings.HasSuffix(typeStr, "Request") || strings.HasSuffix(typeStr, "DTO") ||
+			strings.HasSuffix(typeStr, "Input") || strings.HasSuffix(typeStr, "Params") ||
+			strings.HasSuffix(typeStr, "Filter") || strings.Contains(typeStr, "http.Request") {
+			return true
+		}
+	}
+	return false
+}
+
+func astExprToString(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.StarExpr:
+		return "*" + astExprToString(x.X)
+	case *ast.SelectorExpr:
+		return astExprToString(x.X) + "." + x.Sel.Name
+	default:
+		return ""
 	}
 }
 
@@ -91,15 +171,23 @@ func (t *TaintTracker) propagateAssign(stmt *ast.AssignStmt) {
 		if !ok {
 			continue
 		}
-		obj := t.pass.TypesInfo.Defs[ident]
-		if obj == nil {
-			obj = t.pass.TypesInfo.Uses[ident]
-		}
-		if obj != nil {
+		if t.pass != nil && t.pass.TypesInfo != nil {
+			obj := t.pass.TypesInfo.Defs[ident]
+			if obj == nil {
+				obj = t.pass.TypesInfo.Uses[ident]
+			}
+			if obj != nil {
+				if tainted {
+					t.tainted[obj] = struct{}{}
+				} else if stmt.Tok == token.ASSIGN {
+					delete(t.tainted, obj)
+				}
+			}
+		} else if t.currentFn != nil {
 			if tainted {
-				t.tainted[obj] = struct{}{}
+				t.markTaintedName(ident.Name)
 			} else if stmt.Tok == token.ASSIGN {
-				delete(t.tainted, obj)
+				t.deleteTaintedName(ident.Name)
 			}
 		}
 	}
@@ -130,12 +218,25 @@ func (t *TaintTracker) IsTaintedExpr(e ast.Expr) bool {
 			return t.IsTaintedExpr(x.X) || t.IsTaintedExpr(x.Y)
 		}
 	case *ast.Ident:
-		if obj := t.pass.TypesInfo.Uses[x]; obj != nil {
-			if _, ok := t.tainted[obj]; ok {
-				return true
+		if t.pass != nil && t.pass.TypesInfo != nil {
+			if obj := t.pass.TypesInfo.Uses[x]; obj != nil {
+				if _, ok := t.tainted[obj]; ok {
+					return true
+				}
+				if _, ok := t.sources[obj]; ok {
+					return true
+				}
 			}
-			if _, ok := t.sources[obj]; ok {
-				return true
+		} else if t.currentFn != nil {
+			if taintedVars, ok := t.astTainted[t.currentFn]; ok {
+				if _, ok := taintedVars[x.Name]; ok {
+					return true
+				}
+			}
+			if sourceVars, ok := t.astSources[t.currentFn]; ok {
+				if _, ok := sourceVars[x.Name]; ok {
+					return true
+				}
 			}
 		}
 	case *ast.SelectorExpr:

@@ -70,7 +70,9 @@ func runStandalone() {
 		migrationDirs []string
 	)
 
-	for _, arg := range os.Args[1:] {
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch {
 		case arg == "-v" || arg == "--version" || arg == "-version" || arg == "version":
 			fmt.Printf("argus %s (commit: %s, built: %s)\n", version, commit, date)
@@ -102,35 +104,30 @@ func runStandalone() {
 			outputFile = strings.TrimPrefix(arg, "--output=")
 		case strings.HasPrefix(arg, "-output="):
 			outputFile = strings.TrimPrefix(arg, "-output=")
+		case arg == "--output" || arg == "-output":
+			if i+1 < len(args) {
+				i++
+				outputFile = args[i]
+			}
 		case strings.HasSuffix(arg, ".md"):
 			outputFile = arg
 		case strings.HasPrefix(arg, "--dirs="):
-			dirs := strings.Split(strings.TrimPrefix(arg, "--dirs="), ",")
-			for _, d := range dirs {
-				if trimmed := strings.TrimSpace(d); trimmed != "" {
-					scanDirs = append(scanDirs, trimmed)
-				}
-			}
+			appendDirs(&scanDirs, strings.TrimPrefix(arg, "--dirs="))
 		case strings.HasPrefix(arg, "-dirs="):
-			dirs := strings.Split(strings.TrimPrefix(arg, "-dirs="), ",")
-			for _, d := range dirs {
-				if trimmed := strings.TrimSpace(d); trimmed != "" {
-					scanDirs = append(scanDirs, trimmed)
-				}
+			appendDirs(&scanDirs, strings.TrimPrefix(arg, "-dirs="))
+		case arg == "--dirs" || arg == "-dirs":
+			if i+1 < len(args) {
+				i++
+				appendDirs(&scanDirs, args[i])
 			}
 		case strings.HasPrefix(arg, "--migrations="):
-			dirs := strings.Split(strings.TrimPrefix(arg, "--migrations="), ",")
-			for _, d := range dirs {
-				if trimmed := strings.TrimSpace(d); trimmed != "" {
-					migrationDirs = append(migrationDirs, trimmed)
-				}
-			}
+			appendDirs(&migrationDirs, strings.TrimPrefix(arg, "--migrations="))
 		case strings.HasPrefix(arg, "-migrations="):
-			dirs := strings.Split(strings.TrimPrefix(arg, "-migrations="), ",")
-			for _, d := range dirs {
-				if trimmed := strings.TrimSpace(d); trimmed != "" {
-					migrationDirs = append(migrationDirs, trimmed)
-				}
+			appendDirs(&migrationDirs, strings.TrimPrefix(arg, "-migrations="))
+		case arg == "--migrations" || arg == "-migrations":
+			if i+1 < len(args) {
+				i++
+				appendDirs(&migrationDirs, args[i])
 			}
 		case !strings.HasPrefix(arg, "-"):
 			if arg == "audit" || arg == "report" || arg == "check" || arg == "scan" {
@@ -250,4 +247,12 @@ func printUsage() {
 	fmt.Println("  -u, --update            Alias for 'argus update'")
 	fmt.Println("  -v, --version           Show version information and exit")
 	fmt.Println("  -h, --help              Show this help message")
+}
+
+func appendDirs(target *[]string, val string) {
+	for _, d := range strings.Split(val, ",") {
+		if trimmed := strings.TrimSpace(d); trimmed != "" {
+			*target = append(*target, trimmed)
+		}
+	}
 }

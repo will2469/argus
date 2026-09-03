@@ -5,17 +5,13 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
-	"regexp"
 	"strings"
 
+	"github.com/will2469/argus/rules/a01_sql_concat"
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/directives"
-)
-
-var (
-	sqlUnsafeConcatRegex = regexp.MustCompile(`(?i)(?:["` + "`" + `]\s*(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b[^"` + "`" + `]*["` + "`" + `]\s*\+\s*(?:req\.|input\.|params\.|r\.URL|c\.Query|body\.))`)
 )
 
 func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
@@ -32,7 +28,7 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 
 	dm := directives.ParseGoDirectives(node, fset)
 
-	// 1. Inspect AST for queries and string literals (A01, A14)
+	// 1. Inspect AST for queries and string literals (A14)
 	ast.Inspect(node, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
@@ -61,26 +57,25 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 						})
 					}
 				}
-				// ARGUS-A01: Unsafe dynamic SQL concatenation
-				if sqlUnsafeConcatRegex.MatchString(val) {
-					if !dm.IsIgnored(fset, x.Pos(), "ARGUS-A01") {
-						pos := fset.Position(x.Pos())
-						tracker.AddIssue(Issue{
-							File:     relPath,
-							Line:     pos.Line,
-							Rule:     "UNSAFE_SQL_CONCATENATION",
-							Message:  "Unsafe dynamic SQL string concatenation of request/input detected. All query inputs must use parameterized placeholders ($1, $2).",
-							Snippet:  strings.TrimSpace(val),
-							Category: "security",
-						})
-					}
-				}
 			}
 		}
 		return true
 	})
 
-	// 2. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
+	// 2. ARGUS-A01: SQL concatenation & unsafe formatting
+	a01Issues := a01_sql_concat.InspectFile(nil, fset, node, dm)
+	for _, issue := range a01Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "UNSAFE_SQL_CONCATENATION",
+			Message:  issue.Message,
+			Category: "security",
+		})
+	}
+
+	// 3. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
 	detector := a17_nplusone.NewHelperQueryDetector(nil, node)
 	loopIssues := a17_nplusone.WalkLoops(nil, fset, node, dm, detector)
 	for _, issue := range loopIssues {

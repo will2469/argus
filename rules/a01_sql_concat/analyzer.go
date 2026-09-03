@@ -26,19 +26,37 @@ var Analyzer = &analysis.Analyzer{
 	},
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
-	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
-	if !cfg.IsRuleEnabled(RuleCode) {
-		return nil, nil
+// Issue describes a detected violation of ARGUS-A01.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
+
+// InspectFile inspects an AST file for dynamic SQL concatenation or formatting.
+// It can be called with pass == nil in standalone CLI runner mode.
+func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	tracker := NewTaintTracker(pass, file)
+	tracker.Analyze()
+	return InspectFileWithTracker(pass, fset, file, dm, tracker)
+}
+
+// InspectFileWithTracker inspects an AST file using a pre-initialized TaintTracker.
+func InspectFileWithTracker(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap, tracker *TaintTracker) []Issue {
+	var issues []Issue
+	if file == nil {
+		return nil
 	}
 
-	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		if tracker != nil {
+			tracker.SetCurrentFunc(fn)
+		}
 
-	tracker := NewTaintTracker(pass)
-	tracker.Analyze()
-
-	for _, file := range pass.Files {
-		ast.Inspect(file, func(n ast.Node) bool {
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -54,15 +72,42 @@ func run(pass *analysis.Pass) (interface{}, error) {
 				return true
 			}
 
-			if dm.IsIgnored(pass.Fset, sqlArg.Pos(), RuleCode) {
+			if dm != nil && fset != nil && dm.IsIgnored(fset, sqlArg.Pos(), RuleCode) {
 				return true
 			}
 
 			if isUnsafeSQL(sqlArg, tracker) {
-				pass.Reportf(sqlArg.Pos(), "[%s] unsafe SQL concatenation or formatting; use parameterized placeholders ($1, $2, ...) or SanitizeIdentifier", RuleCode)
+				issues = append(issues, Issue{
+					Pos:     sqlArg.Pos(),
+					Message: "unsafe SQL concatenation or formatting; use parameterized placeholders ($1, $2, ...) or SanitizeIdentifier",
+				})
 			}
 			return true
 		})
+	}
+	if tracker != nil {
+		tracker.SetCurrentFunc(nil)
+	}
+
+	return issues
+}
+
+func run(pass *analysis.Pass) (interface{}, error) {
+	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
+	if !cfg.IsRuleEnabled(RuleCode) {
+		return nil, nil
+	}
+
+	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
+
+	tracker := NewTaintTracker(pass, pass.Files...)
+	tracker.Analyze()
+
+	for _, file := range pass.Files {
+		issues := InspectFileWithTracker(pass, pass.Fset, file, dm, tracker)
+		for _, issue := range issues {
+			pass.Reportf(issue.Pos, "[%s] %s", RuleCode, issue.Message)
+		}
 	}
 
 	return nil, nil
@@ -107,10 +152,10 @@ func isUnsafeSQL(e ast.Expr, tracker *TaintTracker) bool {
 			return true
 		}
 		if IsBuilderString(x) {
-			return tracker.IsTaintedExpr(x)
+			return tracker != nil && tracker.IsTaintedExpr(x)
 		}
 	case *ast.Ident:
-		return tracker.IsTaintedExpr(x)
+		return tracker != nil && tracker.IsTaintedExpr(x)
 	}
 
 	return false
