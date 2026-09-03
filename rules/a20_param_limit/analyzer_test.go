@@ -8,12 +8,15 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatalf("failed to resolve testdata path: %v", err)
+		t.Fatalf("failed to resolve rootDir: %v", err)
 	}
 
-	analysistest.Run(t, testdata, Analyzer, "a20")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/correctness/a20/positive",
+		"./tests/correctness/a20/negative",
+	)
 }
 
 func TestGetRemediationHelp(t *testing.T) {

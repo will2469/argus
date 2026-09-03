@@ -26,6 +26,7 @@ import (
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/rules/a18_rows_err"
 	"github.com/will2469/argus/rules/a19_unbounded_limit"
+	"github.com/will2469/argus/rules/a20_param_limit"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
 	"github.com/will2469/argus/shared/callsite"
@@ -290,6 +291,18 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 			Rule:     "UNBOUNDED_HIGH_CARDINALITY_QUERY",
 			Message:  fmt.Sprintf(format, args...),
 			Category: "performance",
+		})
+	})
+
+	// 18. ARGUS-A20: Wire Protocol Parameter Limit (65,535)
+	a20_param_limit.InspectFile(node, fset, dm, func(pos token.Pos, format string, args ...any) {
+		p := fset.Position(pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     p.Line,
+			Rule:     "UNBOUNDED_BATCH_PARAMS",
+			Message:  fmt.Sprintf(format, args...),
+			Category: "reliability",
 		})
 	})
 
