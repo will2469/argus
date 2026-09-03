@@ -10,6 +10,7 @@ import (
 	"github.com/will2469/argus/rules/a01_sql_concat"
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a17_nplusone"
+	"github.com/will2469/argus/rules/a24_tenant_leak"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
 	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/directives"
@@ -98,6 +99,19 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 			File:     relPath,
 			Line:     pos.Line,
 			Rule:     "LIKE_WILDCARD_INJECTION",
+			Message:  issue.Message,
+			Category: "security",
+		})
+	}
+
+	// 5. ARGUS-A24: Multi-tenant table isolation leak (anti-BOLA)
+	a24Issues := a24_tenant_leak.InspectFile(nil, fset, node, dm, nil)
+	for _, issue := range a24Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "TENANT_ISOLATION_LEAK",
 			Message:  issue.Message,
 			Category: "security",
 		})

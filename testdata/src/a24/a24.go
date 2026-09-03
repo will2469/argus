@@ -72,3 +72,10 @@ func IgnoredShortcode(ctx context.Context, db DB) (any, error) {
 	// argus:ignore-a24 telemetry aggregation
 	return db.Query(ctx, query)
 }
+
+// 11. Unsafe SELECT with disjunctive OR tenant predicate (Violation)
+func UnsafeSelectDisjunctiveOR(ctx context.Context, db DB, id, tenantID string) (any, error) {
+	const query = "SELECT id, email, name FROM users WHERE id = $1 OR tenant_id = $2"
+	return db.Query(ctx, query, id, tenantID) // want `\[ARGUS-A24\] query on multi-tenant table 'users' missing 'tenant_id' predicate; risk of cross-tenant data breach \(CWE-284, OWASP API1:2023 BOLA\)`
+}
+

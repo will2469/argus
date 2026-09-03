@@ -54,6 +54,26 @@ func TestCheckTenantQuery(t *testing.T) {
 			sql:       "SELECT id, name FROM lookup_data WHERE active = true",
 			violating: false,
 		},
+		{
+			sql:       "SELECT id, name FROM users WHERE id = $1 OR tenant_id = $2",
+			violating: true,
+		},
+		{
+			sql:       "SELECT id, name FROM users WHERE (id = $1 OR status = 'A') AND tenant_id = $2",
+			violating: false,
+		},
+		{
+			sql:       "SELECT id, name FROM users WHERE (status = 'A' AND tenant_id = $1) OR (status = 'B' AND tenant_id = $1)",
+			violating: false,
+		},
+		{
+			sql:       "SELECT id, name FROM users WHERE NOT (tenant_id = $1)",
+			violating: true,
+		},
+		{
+			sql:       "SELECT id, name FROM users WHERE id = $1 AND (status = 'A' OR tenant_id = $2)",
+			violating: true,
+		},
 	}
 
 	for _, c := range cases {

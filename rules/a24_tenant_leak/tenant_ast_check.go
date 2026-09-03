@@ -152,46 +152,73 @@ func hasTenantColumnInNode(node *pg_query.Node, tc *TenantConfig) bool {
 		"organization_id":                true,
 	}
 
-	found := false
-	var walk func(n *pg_query.Node)
-	walk = func(n *pg_query.Node) {
-		if n == nil || found {
-			return
-		}
+	return inspectConjunctiveTenantNode(node, targetCols)
+}
 
-		if col := n.GetColumnRef(); col != nil {
-			for _, field := range col.Fields {
-				if s := field.GetString_(); s != nil {
-					if targetCols[strings.ToLower(s.Sval)] {
-						found = true
-						return
-					}
+func inspectConjunctiveTenantNode(node *pg_query.Node, targetCols map[string]bool) bool {
+	if node == nil {
+		return false
+	}
+
+	// 1. BoolExpr: AND requires ANY branch, OR requires ALL branches, NOT is inverted (unsafe)
+	if bexpr := node.GetBoolExpr(); bexpr != nil {
+		switch bexpr.Boolop {
+		case pg_query.BoolExprType_AND_EXPR:
+			for _, arg := range bexpr.Args {
+				if inspectConjunctiveTenantNode(arg, targetCols) {
+					return true
 				}
 			}
-		}
+			return false
 
-		if expr := n.GetAExpr(); expr != nil {
-			walk(expr.Lexpr)
-			walk(expr.Rexpr)
-		}
-
-		if bexpr := n.GetBoolExpr(); bexpr != nil {
-			for _, arg := range bexpr.Args {
-				walk(arg)
+		case pg_query.BoolExprType_OR_EXPR:
+			if len(bexpr.Args) == 0 {
+				return false
 			}
-		}
+			for _, arg := range bexpr.Args {
+				if !inspectConjunctiveTenantNode(arg, targetCols) {
+					return false
+				}
+			}
+			return true
 
-		if nullTest := n.GetNullTest(); nullTest != nil {
-			walk(nullTest.Arg)
-		}
-
-		if sub := n.GetSubLink(); sub != nil {
-			walk(sub.Testexpr)
+		case pg_query.BoolExprType_NOT_EXPR:
+			return false
 		}
 	}
 
-	walk(node)
-	return found
+	// 2. Direct binary comparison expression: e.g. tenant_id = $1, tenant_id IN (...)
+	if aexpr := node.GetAExpr(); aexpr != nil {
+		return containsTenantColumn(aexpr.Lexpr, targetCols) || containsTenantColumn(aexpr.Rexpr, targetCols)
+	}
+
+	// 3. SubLink comparison: e.g. tenant_id IN (SELECT ...)
+	if sub := node.GetSubLink(); sub != nil {
+		return containsTenantColumn(sub.Testexpr, targetCols)
+	}
+
+	// 4. Null test: e.g. tenant_id IS NOT NULL
+	if nullTest := node.GetNullTest(); nullTest != nil {
+		return containsTenantColumn(nullTest.Arg, targetCols)
+	}
+
+	return false
+}
+
+func containsTenantColumn(node *pg_query.Node, targetCols map[string]bool) bool {
+	if node == nil {
+		return false
+	}
+	if col := node.GetColumnRef(); col != nil {
+		for _, field := range col.Fields {
+			if s := field.GetString_(); s != nil {
+				if targetCols[strings.ToLower(s.Sval)] {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func checkRegexFallback(sql string, tc *TenantConfig) (bool, string) {
