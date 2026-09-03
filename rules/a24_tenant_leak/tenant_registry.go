@@ -18,9 +18,6 @@ func LoadTenantConfig(cfg *config.Config) *TenantConfig {
 	tenantCol := "tenant_id"
 	defaultTables := []string{
 		"tenant_data",
-		"users",
-		"accounts",
-		"organizations",
 	}
 
 	if cfg != nil {

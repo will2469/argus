@@ -141,3 +141,34 @@ func columnBindsTableTenant(node *pg_query.Node, t TableRef, totalTenantTables i
 	return qual == t.Alias || qual == t.Name
 }
 
+// containsTenantColumn recursively searches a pg_query AST node for any ColumnRef matching targetCols.
+func containsTenantColumn(node *pg_query.Node, targetCols map[string]bool) bool {
+	if node == nil {
+		return false
+	}
+	if col := node.GetColumnRef(); col != nil && len(col.Fields) > 0 {
+		lastField := col.Fields[len(col.Fields)-1]
+		if colStr := lastField.GetString_(); colStr != nil && targetCols[strings.ToLower(colStr.Sval)] {
+			return true
+		}
+	}
+	if bexpr := node.GetBoolExpr(); bexpr != nil {
+		for _, arg := range bexpr.Args {
+			if containsTenantColumn(arg, targetCols) {
+				return true
+			}
+		}
+	}
+	if aexpr := node.GetAExpr(); aexpr != nil {
+		return containsTenantColumn(aexpr.Lexpr, targetCols) || containsTenantColumn(aexpr.Rexpr, targetCols)
+	}
+	if ntest := node.GetNullTest(); ntest != nil {
+		return containsTenantColumn(ntest.Arg, targetCols)
+	}
+	if sublink := node.GetSubLink(); sublink != nil {
+		return containsTenantColumn(sublink.Testexpr, targetCols)
+	}
+	return false
+}
+
+

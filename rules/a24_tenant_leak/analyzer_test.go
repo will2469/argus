@@ -122,6 +122,31 @@ func TestCheckTenantQuery(t *testing.T) {
 	}
 }
 
+func TestCheckTenantQuery_AutoDetectTenantQuery(t *testing.T) {
+	tc := &TenantConfig{
+		TenantColumn: "tenant_id",
+		TenantTables: map[string]bool{
+			"tenant_data": true,
+		},
+	}
+
+	// 1. Non-tenant query on unconfigured table SHOULD PASS
+	if violating, _ := CheckTenantQuery("SELECT id, name FROM users WHERE id = $1", tc); violating {
+		t.Errorf("expected non-tenant query on users to pass, got violating=true")
+	}
+
+	// 2. Query explicitly touching tenant_id with invalid predicate SHOULD FAIL
+	if violating, _ := CheckTenantQuery("SELECT id FROM users WHERE tenant_id IS NOT NULL", tc); !violating {
+		t.Errorf("expected invalid tenant predicate on users to fail, got violating=false")
+	}
+
+	// 3. Query explicitly touching tenant_id with valid predicate SHOULD PASS
+	if violating, _ := CheckTenantQuery("SELECT id FROM users WHERE tenant_id = $1", tc); violating {
+		t.Errorf("expected valid tenant predicate on users to pass, got violating=true")
+	}
+}
+
+
 func TestIsRLSActiveAt_DominanceAnalysis(t *testing.T) {
 	src := `package testpkg
 

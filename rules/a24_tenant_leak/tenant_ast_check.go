@@ -64,8 +64,9 @@ func checkSelect(sel *pg_query.SelectStmt, tc *TenantConfig) (bool, string) {
 
 	allTableRefs := extractTableRefsFromNodes(sel.FromClause)
 	var tenantTables []TableRef
+	hasTenantPredicate := containsTenantColumn(sel.WhereClause, targetCols)
 	for _, tr := range allTableRefs {
-		if tc.IsTenantTable(tr.Name) {
+		if tc.IsTenantTable(tr.Name) || (hasTenantPredicate && len(allTableRefs) == 1) {
 			tenantTables = append(tenantTables, tr)
 		}
 	}
@@ -108,14 +109,14 @@ func checkUpdate(upd *pg_query.UpdateStmt, tc *TenantConfig) (bool, string) {
 	}
 
 	table := strings.ToLower(upd.Relation.Relname)
-	if tc.IsTenantTable(table) {
 		targetCols := map[string]bool{
 			strings.ToLower(tc.TenantColumn): true,
 			"tenant_id":                      true,
 			"org_id":                         true,
 			"organization_id":                true,
 		}
-		tr := TableRef{Name: table, Alias: table}
+		if tc.IsTenantTable(table) || containsTenantColumn(upd.WhereClause, targetCols) {
+			tr := TableRef{Name: table, Alias: table}
 		if !nodeEnforcesTableTenant(upd.WhereClause, tr, 1, targetCols) {
 			return true, fmt.Sprintf("UPDATE on multi-tenant table '%s' missing '%s' predicate; risk of cross-tenant data mutation (CWE-284, OWASP API1:2023 BOLA)", table, tc.TenantColumn)
 		}
@@ -130,13 +131,13 @@ func checkDelete(del *pg_query.DeleteStmt, tc *TenantConfig) (bool, string) {
 	}
 
 	table := strings.ToLower(del.Relation.Relname)
-	if tc.IsTenantTable(table) {
-		targetCols := map[string]bool{
-			strings.ToLower(tc.TenantColumn): true,
-			"tenant_id":                      true,
-			"org_id":                         true,
-			"organization_id":                true,
-		}
+	targetCols := map[string]bool{
+		strings.ToLower(tc.TenantColumn): true,
+		"tenant_id":                      true,
+		"org_id":                         true,
+		"organization_id":                true,
+	}
+	if tc.IsTenantTable(table) || containsTenantColumn(del.WhereClause, targetCols) {
 		tr := TableRef{Name: table, Alias: table}
 		if !nodeEnforcesTableTenant(del.WhereClause, tr, 1, targetCols) {
 			return true, fmt.Sprintf("DELETE on multi-tenant table '%s' missing '%s' predicate; risk of cross-tenant data deletion (CWE-284, OWASP API1:2023 BOLA)", table, tc.TenantColumn)
