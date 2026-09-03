@@ -10,12 +10,15 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatalf("failed to resolve testdata path: %v", err)
+		t.Fatalf("failed to resolve rootDir: %v", err)
 	}
 
-	analysistest.Run(t, testdata, Analyzer, "a28")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/migration/a28/positive",
+		"./tests/migration/a28/negative",
+	)
 }
 
 func TestCheckMigration_NotValidCompliant(t *testing.T) {
@@ -89,13 +92,12 @@ FOREIGN KEY (legacy_id) REFERENCES legacy_users(id);
 }
 
 func TestScanMigrationDir_TestData(t *testing.T) {
-	testDir := "../../testdata/src/a28/migrations"
+	testDir := "../../tests/migration/a28/positive/migrations"
 	issues, err := ScanMigrationDir(testDir)
 	if err != nil {
 		t.Fatalf("failed to scan testdata: %v", err)
 	}
 
-	// 000001 (safe), 000002 (safe), 000005 (ignored) -> only 000003 and 000004 should fail
 	if len(issues) != 2 {
 		t.Fatalf("expected exactly 2 issues from testdata, got %d: %v", len(issues), issues)
 	}
