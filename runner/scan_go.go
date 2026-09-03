@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -24,6 +25,7 @@ import (
 	"github.com/will2469/argus/rules/a16_max_conns"
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/rules/a18_rows_err"
+	"github.com/will2469/argus/rules/a19_unbounded_limit"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
 	"github.com/will2469/argus/shared/callsite"
@@ -276,6 +278,20 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 			Category: "reliability",
 		})
 	}
+
+	// 17. ARGUS-A19: Unbounded Query on High-Cardinality Table
+	tableMap := a19_unbounded_limit.GetHighCardinalityTables(nil)
+	keyColumnMap := a19_unbounded_limit.GetKeyColumns(nil)
+	a19_unbounded_limit.InspectFile(node, fset, dm, tableMap, keyColumnMap, func(pos token.Pos, format string, args ...any) {
+		p := fset.Position(pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     p.Line,
+			Rule:     "UNBOUNDED_HIGH_CARDINALITY_QUERY",
+			Message:  fmt.Sprintf(format, args...),
+			Category: "performance",
+		})
+	})
 
 	// 4. ARGUS-A26: Unsanitized LIKE/ILIKE wildcard input
 	a26Issues := a26_like_sanitize.InspectFile(pass, fset, node, dm)
