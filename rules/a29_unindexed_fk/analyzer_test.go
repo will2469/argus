@@ -13,12 +13,15 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatalf("failed to resolve testdata path: %v", err)
+		t.Fatalf("failed to resolve rootDir: %v", err)
 	}
 
-	analysistest.Run(t, testdata, Analyzer, "a29")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/migration/a29/positive",
+		"./tests/migration/a29/negative",
+	)
 }
 
 func TestCheckMigrations_IndexedFKCompliant(t *testing.T) {
@@ -119,7 +122,7 @@ CREATE TABLE orders (
 }
 
 func TestScanMigrationDir_TestData(t *testing.T) {
-	testDir := "../../testdata/src/a29/migrations"
+	testDir := "../../tests/migration/a29/positive/migrations"
 	dm := directives.NewDirectiveMap()
 	cfg := config.DefaultConfig()
 
