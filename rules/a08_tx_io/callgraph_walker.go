@@ -2,7 +2,9 @@
 package a08_tx_io
 
 import (
+	"fmt"
 	"go/ast"
+	"go/token"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -10,12 +12,16 @@ import (
 )
 
 // CheckTxNode inspects a node inside a transaction body, directly or by walking helper function definitions.
-func CheckTxNode(pass *analysis.Pass, n ast.Node, funcDecls map[string]*ast.FuncDecl, visited map[string]bool, dm *directives.DirectiveMap) {
+func CheckTxNode(pass *analysis.Pass, fset *token.FileSet, n ast.Node, funcDecls map[string]*ast.FuncDecl, visited map[string]bool, dm *directives.DirectiveMap, issues *[]Issue) {
 	// 1. Direct blocking I/O on node
 	if op := CheckBlockingIO(n, pass); op != "" {
-		if !dm.IsIgnored(pass.Fset, n.Pos(), RuleCode) {
-			pass.Reportf(n.Pos(), "[%s] blocking external I/O (%s) detected inside database transaction; holding open transactions causes connection pool starvation and lock cascade", RuleCode, op)
+		if fset != nil && dm != nil && dm.IsIgnored(fset, n.Pos(), RuleCode) {
+			return
 		}
+		*issues = append(*issues, Issue{
+			Pos:     n.Pos(),
+			Message: fmt.Sprintf("blocking external I/O (%s) detected inside database transaction; holding open transactions causes connection pool starvation and lock cascade", op),
+		})
 		return
 	}
 
@@ -44,9 +50,15 @@ func CheckTxNode(pass *analysis.Pass, n ast.Node, funcDecls map[string]*ast.Func
 			return true
 		}
 		if op := CheckBlockingIO(innerNode, pass); op != "" {
-			if !dm.IsIgnored(pass.Fset, call.Pos(), RuleCode) && !dm.IsIgnored(pass.Fset, innerNode.Pos(), RuleCode) {
-				pass.Reportf(call.Pos(), "[%s] blocking external I/O (%s) detected inside database transaction; holding open transactions causes connection pool starvation and lock cascade", RuleCode, op)
+			if fset != nil && dm != nil {
+				if dm.IsIgnored(fset, call.Pos(), RuleCode) || dm.IsIgnored(fset, innerNode.Pos(), RuleCode) {
+					return true
+				}
 			}
+			*issues = append(*issues, Issue{
+				Pos:     call.Pos(),
+				Message: fmt.Sprintf("blocking external I/O (%s) detected inside database transaction; holding open transactions causes connection pool starvation and lock cascade", op),
+			})
 		}
 		return true
 	})

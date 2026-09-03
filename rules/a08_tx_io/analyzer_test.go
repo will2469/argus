@@ -11,11 +11,14 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	analysistest.Run(t, testdata, Analyzer, "a08")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/correctness/a08/positive",
+		"./tests/correctness/a08/negative",
+	)
 }
 
 func TestCheckBlockingIO(t *testing.T) {

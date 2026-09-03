@@ -29,16 +29,18 @@ func InspectExplicitTxRanges(body *ast.BlockStmt, onStmtInTx func(stmt ast.Stmt)
 	var txVarName string
 
 	for _, stmt := range body.List {
-		// Detect tx, err := pool.Begin(...) or pool.BeginTx(...)
-		if assign, ok := stmt.(*ast.AssignStmt); ok {
-			for i, rhs := range assign.Rhs {
-				if call, ok := rhs.(*ast.CallExpr); ok {
-					name := getCallMethodName(call.Fun)
-					if name == "Begin" || name == "BeginTx" {
-						if i < len(assign.Lhs) {
-							if id, ok := assign.Lhs[i].(*ast.Ident); ok {
-								inTx = true
-								txVarName = id.Name
+		if !inTx {
+			// Detect tx, err := pool.Begin(...) or pool.BeginTx(...)
+			if assign, ok := stmt.(*ast.AssignStmt); ok {
+				for i, rhs := range assign.Rhs {
+					if call, ok := rhs.(*ast.CallExpr); ok {
+						name := getCallMethodName(call.Fun)
+						if name == "Begin" || name == "BeginTx" {
+							if i < len(assign.Lhs) {
+								if id, ok := assign.Lhs[i].(*ast.Ident); ok {
+									inTx = true
+									txVarName = id.Name
+								}
 							}
 						}
 					}
@@ -47,21 +49,20 @@ func InspectExplicitTxRanges(body *ast.BlockStmt, onStmtInTx func(stmt ast.Stmt)
 			continue
 		}
 
-		if inTx {
-			// Defer statements (like defer tx.Rollback(ctx)) do not terminate the active transaction block now
-			if _, isDefer := stmt.(*ast.DeferStmt); isDefer {
-				continue
-			}
-
-			// Check if statement ends transaction: tx.Commit() or non-deferred tx.Rollback()
-			if isTxEndStmt(stmt, txVarName) {
-				inTx = false
-				txVarName = ""
-				continue
-			}
-
-			onStmtInTx(stmt)
+		// While in transaction:
+		// Defer statements (like defer tx.Rollback(ctx)) do not terminate the active transaction block now
+		if _, isDefer := stmt.(*ast.DeferStmt); isDefer {
+			continue
 		}
+
+		// Check if statement ends transaction: tx.Commit() or non-deferred tx.Rollback()
+		if isTxEndStmt(stmt, txVarName) {
+			inTx = false
+			txVarName = ""
+			continue
+		}
+
+		onStmtInTx(stmt)
 	}
 }
 
