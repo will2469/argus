@@ -73,6 +73,31 @@ func P5_Alias(ctx context.Context, db DB, ids []int) {
 	}
 }
 
+func hydrateUser(ctx context.Context, db DB, id int) (string, error) {
+	_ = db.QueryRow(ctx, "SELECT name FROM users WHERE id = $1", id)
+	return "", nil
+}
+
+type UserRepo struct{}
+
+func (UserRepo) Get(ctx context.Context, db DB, id int) {
+	_ = db.QueryRow(ctx, "SELECT 1 WHERE id = $1", id)
+}
+
+// P6: Semantic Helper Violation — Function executing DB query called inside loop without lexical prefix (hydrateUser).
+func P6_SemanticHelper(ctx context.Context, db DB, ids []int) {
+	for _, id := range ids { // want `\[ARGUS-A17\] N\+1 query pattern detected: helper function "hydrateUser" executes database query inside loop; use batching or set-based query instead`
+		_, _ = hydrateUser(ctx, db, id)
+	}
+}
+
+// P7: Receiver Method Helper Violation — Receiver method executing DB query called inside loop.
+func P7_ReceiverMethodHelper(ctx context.Context, db DB, repo UserRepo, ids []int) {
+	for _, id := range ids { // want `\[ARGUS-A17\] N\+1 query pattern detected: helper function "\(UserRepo\).Get" executes database query inside loop; use batching or set-based query instead`
+		repo.Get(ctx, db, id)
+	}
+}
+
 // P_Ignored: Suppressed violation using canonical shortcode.
 func P_Ignored(ctx context.Context, db DB, ids []int) {
 	// argus:ignore-a17 keyset pagination batch processor
@@ -80,3 +105,4 @@ func P_Ignored(ctx context.Context, db DB, ids []int) {
 		_ = db.QueryRow(ctx, "SELECT * FROM users WHERE id = $1", id)
 	}
 }
+

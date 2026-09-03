@@ -6,38 +6,48 @@ The **Argus 1-SSOT Golden Corpus** is the testing methodology and architectural 
 
 ---
 
-## 1. The Core Philosophy
+## 1. The Core Philosophy & The 4-Layer Quality Pyramid
 
 Testing static analysis tools is fundamentally harder than testing standard application logic. A typical unit test asserts `f(x) == y`. However, static analyzers operate on abstract syntax trees (AST) across arbitrary developer expressions, dialects, and architectural wrappers. 
 
-Argus divides analyzer verification into **two distinct pillars**:
+> [!IMPORTANT]
+> **"100% Adoption" ≠ "100% Correctness"**
+>
+> An adoption test (such as checking file existence) only verifies **Structural Presence Gate**—that fixture files exist on disk. It does NOT prove semantic soundness, resilience against logic inversion, or resistance to subtle evasion techniques.
+>
+> To deliver true compiler-grade guarantees with zero false alarms and zero silent escapes, Argus organizes validation into the **4-Layer Continuous Quality Pyramid**:
 
-```mermaid
-flowchart TD
-    subgraph INVARIANTS ["Core Analyzer Guarantees"]
-        direction TB
-        Trust["Developer Trust (Zero Noise)"]
-        Resilience["Evasion Defense (Zero Blindspots)"]
-    end
-
-    subgraph QUESTIONS ["The Two Foundational Questions"]
-        direction TB
-        Q1["1. Can obviously safe, idiomatic code survive?"]
-        Q2["2. Can subtly disguised bad code evade?"]
-    end
-
-    subgraph SOLUTIONS ["1-SSOT Golden Corpus Harness"]
-        direction TB
-        Neg["Negative Matrix (N1–N5)<br/>Whitelist compiler idioms, sanitizers, consts"]
-        Adv["Adversarial Matrix (A1–A7 / M1–M7)<br/>Closures, wrappers, branching, AST evasion"]
-    end
-
-    Trust --> Q1 --> Neg
-    Resilience --> Q2 --> Adv
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    THE 4-LAYER COMPILER-GRADE QUALITY GATES                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Layer 1: Golden Corpus Adoption (Structural Presence Gate)                 │
+│  ├─► Verifies 1-SSOT directory structure, fixtures, and runner tests exist  │
+│  └─► Gate: TestGoldenCorpus_AdoptionMatrix (Status: 100% File Presence)     │
+│                                                                             │
+│  Layer 2: Golden Corpus Correctness (Semantic Execution Gate)               │
+│  ├─► Positive Gate: P1–P5+ trigger exact diagnostics on expected lines      │
+│  ├─► Negative Gate: N1–N5+ produce zero false positives on idioms/consts    │
+│  ├─► Adversarial Gate: A1–A7 / M1–M7 anti-obfuscation vectors caught        │
+│  └─► Dual-Path Parity Gate: Analysis Driver (go vet) == Standalone CLI      │
+│                                                                             │
+│  Layer 3: Mutation & Evasion Testing (Resilience Gate)                      │
+│  ├─► Operator Inversion: AND ↔ OR, = ↔ !=, NOT, IS NOT NULL                 │
+│  ├─► Identity & Scope Evasion: Method collision, unverified receivers       │
+│  ├─► Lexical Spoofing: Fake SQL comments (-- tenant_id = 1), string quotes │
+│  ├─► Fail-Closed AST Invariant: Unparseable queries rejected, not bypassed  │
+│  └─► Target: Mutation Kill Rate = 100% (Zero Surviving Mutants)             │
+│                                                                             │
+│  Layer 4: Cross-Rule Regression & Interaction Matrix (Isolation Gate)       │
+│  ├─► Multi-checker concurrent execution (all 30 rules active concurrently)  │
+│  ├─► Shared infrastructure isolation (Zero cache poisoning in sqlparser)    │
+│  ├─► Directive scoping isolation (// argus:ignore-a24 does not mute a26)    │
+│  └─► Whole-Program Golden Corpus (tests/golden/golden.go)                   │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Zero False-Positive Target:** If a linter emits warnings on valid, standard idioms (such as `COUNT(*)` in dynamic query checks or `pgx.CollectRows` in cursor checks), developers lose trust and disable the tool with `--no-verify`. Compliant code **must survive with zero diagnostics**.
-2. **Zero False-Negative Target (Adversarial Defense):** Unsafe queries rarely appear as naive string concatenations in enterprise codebases. They hide inside helper functions, closures, conditional branches, repository wrappers, or aliased types. Analyzers must be resilient against structural obfuscation.
+1. **Zero False-Positive Target (Layer 2):** If a linter emits warnings on valid, standard idioms (such as `COUNT(*)`, `pgx.CollectRows`, or verified prefix constants), developers lose trust and disable the tool with `--no-verify`. Compliant code **must survive with zero diagnostics**.
+2. **Zero False-Negative Target (Layer 2 & 3):** Unsafe queries rarely appear as naive string concatenations in enterprise codebases. They hide inside helper functions, closures, conditional branches, repository wrappers, or aliased types. Analyzers must be resilient against structural obfuscation and mutation evasion.
 
 ---
 
@@ -167,32 +177,46 @@ func TestDualPathParity(t *testing.T) {
 
 ---
 
-## 6. Adoption Matrix & Continuous Quality Gates
+## 6. The 4 Continuous Quality Gates
 
-All 30 Argus rules (A01 through A30) have achieved **100% adoption** under the 1-SSOT Golden Corpus architecture.
+Argus enforces continuous reliability through **four progressive quality gates**:
 
-The adoption status of the entire rule suite is continuously enforced by [`tests/golden_corpus_status_test.go`](https://github.com/will2469/argus/blob/main/tests/golden_corpus_status_test.go):
-
+### Gate 1: Structural Adoption Matrix (Presence Gate)
+Verifies that all rules maintain canonical 1-SSOT directory structures and fixtures:
 ```bash
-# Run the automated Golden Corpus Adoption Matrix test:
 go test -v -run TestGoldenCorpus_AdoptionMatrix ./tests
 ```
+- **Status:** 30 / 30 rules adopted (100.0%).
+- **Verification Scope:** File existence on disk (`positive.go`, `negative.go`, `adversarial.go`, `<rule>_corpus_test.go`).
 
-```text
-=== RUN   TestGoldenCorpus_AdoptionMatrix
-    --- PASS: TestGoldenCorpus_AdoptionMatrix (0.00s)
-    ========================================================================================
-    ARGUS 1-SSOT GOLDEN CORPUS ADOPTION MATRIX
-    ========================================================================================
-    ARGUS-A01 [Correctness] ADOPTED: 1 SSOT Golden Corpus (P1-P5, N1-N5, A1-A7, analysistest + runner)
-    ARGUS-A02 [Correctness] ADOPTED: 1 SSOT Golden Corpus (P1-P5, N1-N5, A1-A7, analysistest + runner)
-    ...
-    ARGUS-A30 [Migration  ] ADOPTED: 1 SSOT Golden Migration Corpus (positive, negative, adversarial + runner)
-    ========================================================================================
-    TOTAL RULES    : 30
-    ADOPTED RULES  : 30 (100.0%)
-    PENDING RULES  : 0 (0.0%)
-    ========================================================================================
+### Gate 2: Semantic Correctness & Dual-Path Parity (Execution Gate)
+Executes all rule test suites against the Go analysis driver (`analysistest`) and standalone runner (`runner.RunAuditWithConfig`):
+```bash
+go test -v ./tests/correctness/... ./tests/migration/...
 ```
+- **Positive Verification:** P1–P5+ violations trigger exact expected diagnostics at expected line positions.
+- **Negative Verification:** N1–N5+ safe idioms and compiler constants produce **0 false positives**.
+- **Adversarial Verification:** A1–A7 and M1–M7 obfuscated code patterns are caught.
+- **Dual-Path Parity:** Standalone CLI scanner produces 100% identical diagnostics as `analysistest`.
 
-Whenever new rules are introduced (**ARGUS-A31+**), they are automatically required to conform to the 1-SSOT Golden Corpus harness before passing CI.
+### Gate 3: Mutation & Evasion Resilience (Resilience Gate)
+Stress-tests rules against intentional mutation and syntax evasion:
+```bash
+go test -v -run "Mutation|Adversarial" ./...
+```
+- **Logic Inversion:** Conjunction tampering (`AND` ↔ `OR`, `=` ↔ `!=`, `NOT`, `IS NOT NULL`).
+- **Identity Integrity:** Receiver collisions (e.g. `(MemoryCache).Get` vs `(DBRepo).Get`) and fake sanitizer stubs (e.g. `evil.SanitizeLikePattern`).
+- **Lexical Spoofing:** Verifying that SQL comments (e.g. `-- tenant_id = 1`) or string literals cannot bypass AST rules.
+- **Fail-Closed Parser Invariant:** Unparseable queries on domain tables fail with explicit errors rather than falling back to weak heuristics.
+- **Target:** **100% Mutation Kill Rate** (zero surviving mutants).
+
+### Gate 4: Cross-Rule Regression & Interaction Matrix (Isolation Gate)
+Executes concurrent multi-checker audits across multi-rule files (`tests/golden/golden.go`):
+```bash
+go test ./... && go vet ./...
+```
+- **Concurrency & Cache Isolation:** Multi-threaded analysis with shared AST caching (`sqlparser.astCache`) without cache poisoning or race conditions.
+- **Zero Shadowing:** Multiple active rules on the same file evaluate independently without masking or suppression.
+- **Directive Scoping:** Inline suppression (e.g. `// argus:ignore-a24`) strictly isolates its effect without muting unrelated rules.
+
+Whenever new rules are introduced (**ARGUS-A31+**), they are required to pass all four quality gates before merging.

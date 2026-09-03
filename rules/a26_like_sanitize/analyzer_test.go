@@ -144,34 +144,80 @@ func TestFindLikeParamIndicesRegex_ScannerDirect(t *testing.T) {
 }
 
 func TestIsArgumentSanitized_SemanticWhitelist(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+
+import "strings"
+
+type Evil struct{}
+func (Evil) SanitizeLikePattern(s string) string { return s }
+
+func SanitizeLike(s string) string {
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
+}
+
+// argus:trusted-sanitizer custom assembly escape engine
+func FastSanitize(s string) string {
+	return s
+}
+`
+	file, err := parser.ParseFile(fset, "san.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	reg := NewSanitizerRegistry(nil, []*ast.File{file}, nil, nil)
+
 	// Call expression AST helpers
-	makeCall := func(name string) *ast.CallExpr {
+	makeIdentCall := func(name string) *ast.CallExpr {
+		return &ast.CallExpr{Fun: &ast.Ident{Name: name}}
+	}
+	makeSelCall := func(x, sel string) *ast.CallExpr {
 		return &ast.CallExpr{
-			Fun: &ast.Ident{Name: name},
+			Fun: &ast.SelectorExpr{
+				X:   &ast.Ident{Name: x},
+				Sel: &ast.Ident{Name: sel},
+			},
 		}
 	}
 
-	if isSanitizerCall(makeCall("ReplaceAll")) {
+	// 1. Unverified ReplaceAll is rejected
+	if reg.IsSanitizerCall(nil, makeIdentCall("ReplaceAll")) {
 		t.Errorf("ReplaceAll must NOT be considered a safe LIKE sanitizer")
 	}
-	if isSanitizerCall(makeCall("strings.ReplaceAll")) {
-		t.Errorf("strings.ReplaceAll must NOT be considered a safe LIKE sanitizer")
+
+	// 2. Fake evil.SanitizeLikePattern is REJECTED even if method name matches
+	if reg.IsSanitizerCall(nil, makeSelCall("evil", "SanitizeLikePattern")) {
+		t.Errorf("evil.SanitizeLikePattern must NOT be accepted without verified escaping")
 	}
 
-	validSanitizers := []string{
-		"SanitizeLike", "SanitizeLikePattern", "SanitizeLikeWildcards",
-		"FormatLikeContains", "FormatLikePrefix", "FormatLikeSuffix",
-		"EscapeLike", "EscapeLikePattern", "QuoteLike", "CleanLikePattern",
+	// 3. Statically verified local SanitizeLike is ACCEPTED
+	if !reg.IsSanitizerCall(nil, makeIdentCall("SanitizeLike")) {
+		t.Errorf("SanitizeLike must be accepted via AST escaping verification")
 	}
-	for _, name := range validSanitizers {
-		if !isSanitizerCall(makeCall(name)) {
-			t.Errorf("expected %s to be recognized as a valid sanitizer", name)
-		}
+
+	// 4. Annotated // argus:trusted-sanitizer is ACCEPTED
+	if !reg.IsSanitizerCall(nil, makeIdentCall("FastSanitize")) {
+		t.Errorf("FastSanitize must be accepted via trusted-sanitizer directive")
 	}
 }
 
 func TestFlowSensitiveDataflow(t *testing.T) {
 	src := `package main
+
+import "strings"
+
+func SanitizeLike(s string) string {
+	s = strings.ReplaceAll(s, "%", ` + "`\\%`" + `)
+	s = strings.ReplaceAll(s, "_", ` + "`\\_`" + `)
+	return s
+}
+
+func FormatLikeContains(s string) string {
+	return "%" + SanitizeLike(s) + "%"
+}
 
 func fn(userInput string, trusted bool) {
 	// 1. Overwrite: should be UNSAFE
@@ -208,7 +254,8 @@ func fn(userInput string, trusted bool) {
 		t.Fatalf("parse error: %v", err)
 	}
 
-	fn := f.Decls[0].(*ast.FuncDecl)
+	reg := NewSanitizerRegistry(nil, []*ast.File{f}, nil, nil)
+	fn := f.Decls[2].(*ast.FuncDecl)
 	expected := map[string]bool{
 		"pattern1": false,
 		"pattern2": false,
@@ -230,10 +277,46 @@ func fn(userInput string, trusted bool) {
 		if !tracked {
 			return true
 		}
-		gotSafe := isIdentSanitized(argIdent, fn.Body)
+		gotSafe := isIdentSanitized(argIdent, fn.Body, reg, nil)
 		if gotSafe != wantSafe {
 			t.Errorf("variable %s: expected safe=%v, got safe=%v", argIdent.Name, wantSafe, gotSafe)
 		}
 		return true
 	})
+}
+
+func TestPathologicalLiterals(t *testing.T) {
+	reg := NewSanitizerRegistry(nil, nil, nil, nil)
+
+	makeLit := func(v string) *ast.BasicLit {
+		return &ast.BasicLit{Kind: token.STRING, Value: `"` + v + `"`}
+	}
+
+	pathological := []string{
+		"%",
+		"%%",
+		"%%%",
+		"%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%",
+		"_%_",
+	}
+	for _, p := range pathological {
+		isPatho, _ := reg.IsPathologicalLiteral(makeLit(p))
+		if !isPatho {
+			t.Errorf("expected %q to be flagged as pathological literal", p)
+		}
+	}
+
+	safe := []string{
+		"PENDING_%",
+		"STATUS_%",
+		"ORDER-2024-%",
+		"user_name",
+		"PREFIX_%_SUFFIX",
+	}
+	for _, s := range safe {
+		isPatho, _ := reg.IsPathologicalLiteral(makeLit(s))
+		if isPatho {
+			t.Errorf("expected %q to be treated as safe selective literal", s)
+		}
+	}
 }

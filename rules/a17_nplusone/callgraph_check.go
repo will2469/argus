@@ -2,61 +2,136 @@ package a17_nplusone
 
 import (
 	"go/ast"
-	"strings"
+	"go/types"
 
 	"golang.org/x/tools/go/analysis"
 )
 
-// HelperQueryDetector caches and detects functions that execute database queries.
+// HelperQueryDetector caches and detects functions that execute database queries across a package.
 type HelperQueryDetector struct {
+	// Primary type-safe mappings
+	queryByObj map[types.Object]bool
+	declByObj  map[types.Object]*ast.FuncDecl
+	objToName  map[types.Object]string
+
+	// String fallback mappings (for nil pass.TypesInfo or unresolvable objects)
+	queryByStr map[string]bool
+	declByStr  map[string]*ast.FuncDecl
+
+	// Backward-compatible aliases for external tests
 	funcHasQuery map[string]bool
 	funcDecls    map[string]*ast.FuncDecl
 }
 
-// NewHelperQueryDetector builds a local call graph index for the current file.
-func NewHelperQueryDetector(pass *analysis.Pass, file *ast.File) *HelperQueryDetector {
+// NewHelperQueryDetector builds a package-wide or file-wide call graph index.
+func NewHelperQueryDetector(pass *analysis.Pass, files ...*ast.File) *HelperQueryDetector {
 	detector := &HelperQueryDetector{
-		funcHasQuery: make(map[string]bool),
-		funcDecls:    make(map[string]*ast.FuncDecl),
+		queryByObj: make(map[types.Object]bool),
+		declByObj:  make(map[types.Object]*ast.FuncDecl),
+		objToName:  make(map[types.Object]string),
+		queryByStr: make(map[string]bool),
+		declByStr:  make(map[string]*ast.FuncDecl),
+	}
+	detector.funcHasQuery = detector.queryByStr
+	detector.funcDecls = detector.declByStr
+
+	targetFiles := files
+	if len(targetFiles) == 0 && pass != nil {
+		targetFiles = pass.Files
 	}
 
-	// 1. Index all functions in the file
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name == nil || fn.Body == nil {
+	// 1. Index all function and method declarations
+	for _, file := range targetFiles {
+		if file == nil {
 			continue
 		}
-		key := getFuncKey(fn)
-		detector.funcDecls[key] = fn
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name == nil || fn.Body == nil {
+				continue
+			}
+
+			// Index by types.Object when available
+			if pass != nil && pass.TypesInfo != nil {
+				if obj := pass.TypesInfo.Defs[fn.Name]; obj != nil {
+					detector.declByObj[obj] = fn
+					detector.objToName[obj] = formatObjName(obj, fn)
+				}
+			}
+
+			// Index by string key fallback
+			strKey := getFuncDeclKey(fn)
+			if strKey != "" {
+				detector.declByStr[strKey] = fn
+			}
+		}
 	}
 
 	// 2. Mark functions that execute DB queries directly
-	for key, fn := range detector.funcDecls {
+	for obj, fn := range detector.declByObj {
 		if containsDirectDBQuery(pass, fn.Body) {
-			detector.funcHasQuery[key] = true
+			detector.queryByObj[obj] = true
+			if strKey := getFuncDeclKey(fn); strKey != "" {
+				detector.queryByStr[strKey] = true
+			}
+		}
+	}
+	for key, fn := range detector.declByStr {
+		if containsDirectDBQuery(pass, fn.Body) {
+			detector.queryByStr[key] = true
 		}
 	}
 
-	// 3. Fixed-point propagation: iteratively propagate query execution through the call graph
-	// until a fixed point is reached (no new helper functions marked across arbitrary call depth).
+	// 3. Fixed-point propagation: propagate query execution transitively
 	changed := true
 	for changed {
 		changed = false
-		for key, fn := range detector.funcDecls {
-			if detector.funcHasQuery[key] {
+
+		// Propagate via types.Object
+		if pass != nil && pass.TypesInfo != nil {
+			for obj, fn := range detector.declByObj {
+				if detector.queryByObj[obj] {
+					continue
+				}
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					if detector.queryByObj[obj] {
+						return false
+					}
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					if calledObj := resolveCallObj(pass.TypesInfo, call); calledObj != nil {
+						if detector.queryByObj[calledObj] {
+							detector.queryByObj[obj] = true
+							if strKey := getFuncDeclKey(fn); strKey != "" {
+								detector.queryByStr[strKey] = true
+							}
+							changed = true
+							return false
+						}
+					}
+					return true
+				})
+			}
+		}
+
+		// Propagate via string key fallback
+		for key, fn := range detector.declByStr {
+			if detector.queryByStr[key] {
 				continue
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if detector.funcHasQuery[key] {
+				if detector.queryByStr[key] {
 					return false
 				}
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
-				calledKey := getCallKey(call)
-				if detector.funcHasQuery[calledKey] {
-					detector.funcHasQuery[key] = true
+				calledKey := resolveCallStrKey(pass, call)
+				if calledKey != "" && detector.queryByStr[calledKey] {
+					detector.queryByStr[key] = true
 					changed = true
 					return false
 				}
@@ -74,23 +149,30 @@ func (d *HelperQueryDetector) CheckHelperCall(pass *analysis.Pass, call *ast.Cal
 		return false, ""
 	}
 
-	key := getCallKey(call)
-	if d.funcHasQuery[key] && isQueryHelperName(key) {
+	// 1. Primary: resolve types.Object
+	if pass != nil && pass.TypesInfo != nil {
+		if obj := resolveCallObj(pass.TypesInfo, call); obj != nil {
+			if d.queryByObj[obj] {
+				name := d.objToName[obj]
+				if name == "" {
+					name = obj.Name()
+				}
+				return true, name
+			}
+			// If obj is known to be declared in this package and has no query, do not fall back to string keys!
+			if _, declared := d.declByObj[obj]; declared {
+				return false, ""
+			}
+		}
+	}
+
+	// 2. Fallback: string key resolution
+	key := resolveCallStrKey(pass, call)
+	if key != "" && d.queryByStr[key] {
 		return true, key
 	}
 
 	return false, ""
-}
-
-func isQueryHelperName(name string) bool {
-	lower := strings.ToLower(name)
-	prefixes := []string{"get", "fetch", "find", "load", "read", "select", "lookup"}
-	for _, p := range prefixes {
-		if strings.HasPrefix(lower, p) {
-			return true
-		}
-	}
-	return strings.Contains(lower, "query")
 }
 
 func containsDirectDBQuery(pass *analysis.Pass, body *ast.BlockStmt) bool {
@@ -110,21 +192,4 @@ func containsDirectDBQuery(pass *analysis.Pass, body *ast.BlockStmt) bool {
 		return true
 	})
 	return hasQuery
-}
-
-func getFuncKey(fn *ast.FuncDecl) string {
-	if fn.Recv != nil && len(fn.Recv.List) > 0 {
-		return fn.Name.Name
-	}
-	return fn.Name.Name
-}
-
-func getCallKey(call *ast.CallExpr) string {
-	switch e := call.Fun.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.SelectorExpr:
-		return e.Sel.Name
-	}
-	return ""
 }

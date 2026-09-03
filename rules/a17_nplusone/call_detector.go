@@ -3,6 +3,7 @@ package a17_nplusone
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -32,33 +33,52 @@ func IsDBQueryCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 		return false
 	}
 
-	// If types info is available, verify receiver type
+	// 1. If types info is available, verify receiver type
 	if pass != nil && pass.TypesInfo != nil {
+		var recvType types.Type
 		if selType, ok := pass.TypesInfo.Selections[sel]; ok {
-			return callsite.IsPgxOrSQLType(selType.Recv())
+			recvType = selType.Recv()
+		} else if tv, ok := pass.TypesInfo.Types[sel.X]; ok {
+			recvType = tv.Type
 		}
-		if tv, ok := pass.TypesInfo.Types[sel.X]; ok {
-			return callsite.IsPgxOrSQLType(tv.Type)
+
+		if recvType != nil {
+			if callsite.IsPgxOrSQLType(recvType) {
+				return true
+			}
+			typeName := extractNamedTypeName(recvType)
+			if typeName != "" {
+				lowerType := strings.ToLower(typeName)
+				if isNonDatabaseReceiverName(lowerType) {
+					return false
+				}
+				if isDatabaseReceiverName(lowerType) {
+					return true
+				}
+			}
 		}
 	}
 
-	// Heuristic fallback if types info is unavailable:
+	// 2. Heuristic fallback: check receiver identifier or SQL query argument
 	recvName := ""
-	if id, ok := sel.X.(*ast.Ident); ok {
-		recvName = strings.ToLower(id.Name)
+	switch x := sel.X.(type) {
+	case *ast.Ident:
+		recvName = strings.ToLower(x.Name)
+	case *ast.SelectorExpr:
+		recvName = strings.ToLower(x.Sel.Name)
 	}
 
-	// 1. Explicit reject for known non-database receivers
+	// Explicit reject for known non-database receivers
 	if isNonDatabaseReceiverName(recvName) {
 		return false
 	}
 
-	// 2. Positive match: receiver name indicates database operations
+	// Positive match: receiver name indicates database operations
 	if isDatabaseReceiverName(recvName) {
 		return true
 	}
 
-	// 3. Positive match: one of the call arguments looks like a SQL query string
+	// Positive match: one of the call arguments looks like a SQL query string
 	if hasSQLQueryArgument(call) {
 		return true
 	}
@@ -66,12 +86,30 @@ func IsDBQueryCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 	return false
 }
 
+func extractNamedTypeName(t types.Type) string {
+	if t == nil {
+		return ""
+	}
+	for {
+		if ptr, ok := t.(*types.Pointer); ok {
+			t = ptr.Elem()
+		} else {
+			break
+		}
+	}
+	if named, ok := t.(*types.Named); ok {
+		return named.Obj().Name()
+	}
+	return ""
+}
+
 func isNonDatabaseReceiverName(name string) bool {
 	switch name {
 	case "cmd", "command", "os", "exec",
 		"search", "searchengine", "client", "httpclient", "http",
 		"metrics", "solr", "es", "engine", "req", "request", "url",
-		"log", "logger", "trace", "tracer", "cache", "redis", "memcache":
+		"log", "logger", "trace", "tracer", "cache", "redis", "memcache",
+		"memorycache":
 		return true
 	}
 	return false

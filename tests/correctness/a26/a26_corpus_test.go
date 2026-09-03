@@ -39,6 +39,8 @@ func TestA26_PositiveCorpus(t *testing.T) {
 		37: "P3_Helper",
 		46: "P4_Nested",
 		56: "P5_Alias",
+		77: "P6_FakeSanitizer",
+		83: "P7_PathologicalLiteral",
 	}
 
 	foundLines := make(map[int]bool)

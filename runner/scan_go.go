@@ -6,7 +6,9 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -72,6 +74,26 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 		return true
 	})
 
+	// Load package sibling files in the same directory for complete type checking and call graph propagation
+	pkgFiles := []*ast.File{node}
+	dir := filepath.Dir(filePath)
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			siblingPath := filepath.Join(dir, e.Name())
+			if siblingPath == filePath {
+				continue
+			}
+			if siblingNode, err := parser.ParseFile(fset, siblingPath, nil, 0); err == nil {
+				if siblingNode.Name.Name == node.Name.Name {
+					pkgFiles = append(pkgFiles, siblingNode)
+				}
+			}
+		}
+	}
+
 	// Construct lightweight analysis.Pass with type information for standalone mode
 	typesInfo := &types.Info{
 		Types:      make(map[ast.Expr]types.TypeAndValue),
@@ -82,10 +104,10 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 	conf := types.Config{
 		Error: func(err error) {}, // ignore unresolved external package errors
 	}
-	_, _ = conf.Check(node.Name.Name, fset, []*ast.File{node}, typesInfo)
+	_, _ = conf.Check(node.Name.Name, fset, pkgFiles, typesInfo)
 	pass := &analysis.Pass{
 		Fset:      fset,
-		Files:     []*ast.File{node},
+		Files:     pkgFiles,
 		TypesInfo: typesInfo,
 	}
 
@@ -259,7 +281,7 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 	}
 
 	// 15. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
-	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
+	detector := a17_nplusone.NewHelperQueryDetector(pass, pkgFiles...)
 	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {
 		pos := fset.Position(issue.Pos)

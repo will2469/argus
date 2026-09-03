@@ -81,10 +81,11 @@ flowchart TD
 
 ## 4. Detection Logic & Rule Anatomy
 
-1. **Relation Extraction:** Parses SQL statements using `pg_query_go` and inspects `SelectStmt.FromClause`, `UpdateStmt.Relation`, and `DeleteStmt.Relation`.
-2. **Multi-Tenant Table Matching:** Matches relations against `tenant_tables` declared in `.argus.yaml` (or fallback defaults).
-3. **WhereClause Inspection:** Traverses the expression AST to ensure `ColumnRef` matches `tenant_column` (e.g. `tenant_id` or `org_id`).
-4. **RLS Context Check:** Verifies if the enclosing function scope establishes transaction-level RLS context (`SET LOCAL app.tenant_id = $1`).
+1. **Relation Extraction & AST Authoritativeness:** Parses SQL statements using native PostgreSQL `pg_query_go` and inspects `SelectStmt.FromClause`, `UpdateStmt.Relation`, and `DeleteStmt.Relation`.
+2. **Zero-Regex Strictness:** Dual-engine regex fallback has been completely removed. If an unparseable query references a multi-tenant domain table, Argus flags an explicit verification error rather than falling back to a weaker lexical matcher that could allow silent boundary bypasses.
+3. **Multi-Tenant Table Matching:** Matches relations against `tenant_tables` declared in `.argus.yaml` (or fallback defaults).
+4. **WhereClause Inspection:** Traverses the expression AST to ensure `ColumnRef` matches `tenant_column` (e.g. `tenant_id` or `org_id`) in isolating operators (`=`, `IN`, `= ANY`), disallowing `IS NOT NULL`, `>`, `!=`, or disjunctive `OR` bypasses.
+5. **RLS Context Check:** Verifies if the enclosing function scope establishes transaction-level RLS context (`SET LOCAL app.tenant_id = $1`).
 
 ---
 

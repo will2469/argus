@@ -58,3 +58,15 @@ func N5_StaticConstant(ctx context.Context, db DB) (any, error) {
 	const query = "SELECT id FROM orders WHERE status LIKE $1"
 	return db.Query(ctx, query, "PENDING_%")
 }
+
+// argus:trusted-sanitizer custom assembly escape engine
+func CustomTrustedSanitizer(s string) string {
+	return s
+}
+
+// N6: Trusted Sanitizer Directive — Function annotated with argus:trusted-sanitizer directive.
+func N6_TrustedSanitizerDirective(ctx context.Context, db DB, keyword string) (any, error) {
+	safe := CustomTrustedSanitizer(keyword)
+	const query = "SELECT id, name FROM users WHERE name ILIKE $1"
+	return db.Query(ctx, query, safe)
+}

@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/analysis/analysistest"
@@ -215,5 +216,39 @@ func caseInsideBranch(isSpecial bool) {
 			}
 			return true
 		})
+	}
+}
+
+func TestCheckTenantQuery_UnparseableQueryStrictness(t *testing.T) {
+	tc := &TenantConfig{
+		TenantColumn: "tenant_id",
+		TenantTables: map[string]bool{
+			"users":  true,
+			"orders": true,
+		},
+	}
+
+	// 1. Unparseable syntax referencing a multi-tenant table MUST fail with AST verification error
+	unparseableTenantSQL := "SELECT * FROM users WHERE [broken syntax ???]"
+	violating, reason := CheckTenantQuery(unparseableTenantSQL, tc)
+	if !violating {
+		t.Errorf("expected unparseable query referencing multi-tenant table to be flagged as violation")
+	}
+	if !strings.Contains(reason, "SQL AST parsing failed") {
+		t.Errorf("expected reason to mention SQL AST parsing failed, got %q", reason)
+	}
+
+	// 2. Unparseable query with fake comment bypass MUST NOT pass
+	fakeCommentSQL := "SELECT * FROM users WHERE [unparseable] -- tenant_id = 1"
+	violating, _ = CheckTenantQuery(fakeCommentSQL, tc)
+	if !violating {
+		t.Errorf("expected fake comment on unparseable query to NOT bypass tenant check")
+	}
+
+	// 3. Unparseable query on non-tenant table should NOT be flagged
+	nonTenantSQL := "SELECT * FROM audit_events WHERE [broken syntax ???]"
+	violating, _ = CheckTenantQuery(nonTenantSQL, tc)
+	if violating {
+		t.Errorf("expected unparseable query on non-tenant table to pass")
 	}
 }

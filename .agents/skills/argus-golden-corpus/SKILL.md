@@ -23,6 +23,46 @@ metadata:
 
 ---
 
+## 0. The 4-Layer Quality Pyramid: Adoption vs Correctness
+
+> [!CRITICAL]
+> **"100% Adoption" ≠ "100% Correctness"**
+>
+> `TestGoldenCorpus_AdoptionMatrix` hanyalah **Structural Presence Gate** (membuktikan file fixture ada di disk). Keberadaan file di disk sama sekali belum membuktikan bahwa rule memiliki *semantic soundness* atau tahan terhadap teknik *evasion*.
+>
+> Seluruh pengembangan, evaluasi, dan audit aturan Argus WAJIB melalui **4-Layer Quality Pyramid**:
+>
+> ```
+> ┌─────────────────────────────────────────────────────────────────────────────┐
+> │                    THE 4-LAYER COMPILER-GRADE QUALITY GATES                 │
+> ├─────────────────────────────────────────────────────────────────────────────┤
+> │  Layer 1: Golden Corpus Adoption (Structural Presence Gate)                 │
+> │  ├─► Memverifikasi keberadaan struktur 1-SSOT (P/N/A fixtures & runner)     │
+> │  └─► Gate: TestGoldenCorpus_AdoptionMatrix (Status: 100% File Presence)     │
+> │                                                                             │
+> │  Layer 2: Golden Corpus Correctness (Semantic Execution Gate)               │
+> │  ├─► Positive Gate: P1–P5+ memicu diagnostik persis pada line target        │
+> │  ├─► Negative Gate: N1–N5+ nol false-positive pada compiler idioms & consts │
+> │  ├─► Adversarial Gate: A1–A7 / M1–M7 tertangkap (closures, wrappers, etc.)  │
+> │  └─► Dual-Path Parity Gate: Analysis Driver (go vet) == Standalone CLI      │
+> │                                                                             │
+> │  Layer 3: Mutation & Evasion Testing (Resilience Gate)                      │
+> │  ├─► Operator Inversion: AND ↔ OR, = ↔ !=, NOT, IS NOT NULL                 │
+> │  ├─► Identity & Scope Evasion: Method collision, unverified receivers       │
+> │  ├─► Lexical Spoofing: Komentar SQL palsu (-- tenant_id = 1), string quotes │
+> │  ├─► Fail-Closed AST Invariant: Query unparseable di-reject, bukan bypass   │
+> │  └─► Target: Mutation Kill Rate = 100% (Zero Surviving Mutants)             │
+> │                                                                             │
+> │  Layer 4: Cross-Rule Regression & Interaction Matrix (Isolation Gate)       │
+> │  ├─► Multi-checker concurrent execution (30 rules aktif bersamaan)          │
+> │  ├─► Shared infrastructure isolation (Zero cache poisoning di sqlparser)    │
+> │  ├─► Directive scoping isolation (// argus:ignore-a24 tidak membisukan a26) │
+> │  └─► Whole-Program Golden Corpus (tests/golden/golden.go)                   │
+> └─────────────────────────────────────────────────────────────────────────────┘
+> ```
+
+---
+
 ## 1. The 17-Pattern Corpus Taxonomy
 
 Setiap aturan yang mengadopsi Golden Corpus wajib mengimplementasikan matriks kanonikal 17-pola:
@@ -169,34 +209,39 @@ Saat menambahkan aturan baru ke Argus Checker:
    - Buat `<rule>_corpus_test.go` yang menguji `InspectFile`/`ScanMigrationDir`, direct assertions, dan `runner.RunAuditWithConfig`.
 4. **Step 4: Wiring SSOT Driver**
    - Tulis `rules/<rule>/analyzer_test.go` agar mengarah ke `./tests/<category>/<rule>/positive` dan `./tests/<category>/<rule>/negative`.
-5. **Step 5: Verifikasi Status Adopsi**
+5. **Step 5: Gate 1 — Verifikasi Status Adopsi (Structural Presence)**
    - Daftarkan rule pada `tests/golden_corpus_status_test.go`.
    - Jalankan `go test -v -run TestGoldenCorpus_AdoptionMatrix ./tests`.
    - Pastikan status rule terverifikasi `ADOPTED`.
-6. **Step 6: Zero Regression Quality Gate**
-   - Jalankan `make lint && make test-full` (100% Hijau, 0 race condition).
+6. **Step 6: Gate 2 — Verifikasi Correctness (Semantic Execution)**
+   - Jalankan `go test -v ./tests/<category>/<rule>/...` dan `go test -v ./rules/<rule>/...`.
+   - Pastikan P1-P5 tepat sasaran, N1-N5 nol false-positive, A1-A7 tertangkap 100%, dan dual-path parity terpenuhi.
+7. **Step 7: Gate 3 — Mutation & Evasion Resilience**
+   - Uji mutasi adversial (operator flip `AND` vs `OR`, komentar palsu, spoofing nama method pada struct asing).
+   - Pastikan mutasi tidak meloloskan pelanggaran (Mutation Kill Rate = 100%).
+8. **Step 8: Gate 4 — Cross-Rule Regression & Integration**
+   - Jalankan multi-checker dan repo-wide test: `go test ./... && go vet ./...`.
+   - Pastikan tidak ada rule shadowing atau cache poisoning.
 
 ---
 
-## 6. Automated Adoption Checker
+## 6. Continuous Quality Gates & Enforcement
 
-Untuk memantau integritas 1-SSOT seluruh 30 aturan Argus kapan saja:
+Pemantauan mutu Argus dijalankan secara berlapis:
 
-```bash
-go test -v -run TestGoldenCorpus_AdoptionMatrix ./tests
-```
-
-Status saat ini telah **100% ADOPTED**:
-```text
-=== RUN   TestGoldenCorpus_AdoptionMatrix
-=========================================================================================================
-RULE CODE    | CATEGORY     | STATUS     | SSOT PATH                        | DETAILS
----------------------------------------------------------------------------------------------------------
-ARGUS-A01    | Correctness  | ADOPTED    | tests/correctness/a01            | 1 SSOT Golden Corpus (P1-P5, N1-N5, A1-A7, analysistest + runner)
-ARGUS-A02    | Correctness  | ADOPTED    | tests/correctness/a02            | 1 SSOT Golden Corpus (P1-P5, N1-N5, A1-A7, analysistest + runner)
-...
-ARGUS-A29    | Migration    | ADOPTED    | tests/migration/a29              | 1 SSOT Golden Migration Corpus (positive, negative, adversarial + runner)
-ARGUS-A30    | Migration    | ADOPTED    | tests/migration/a30              | 1 SSOT Golden Migration Corpus (positive, negative, adversarial + runner)
-=========================================================================================================
-Golden Corpus Adoption Progress: 30 / 30 rules adopted (100.0%)
-```
+1. **Gate 1 (Adoption Matrix):** Memantau keberadaan fixture 1-SSOT seluruh 30 aturan Argus:
+   ```bash
+   go test -v -run TestGoldenCorpus_AdoptionMatrix ./tests
+   ```
+2. **Gate 2 (Correctness & Dual-Path Parity):** Memverifikasi eksekusi semantik seluruh aturan:
+   ```bash
+   go test ./tests/correctness/... ./tests/migration/...
+   ```
+3. **Gate 3 (Mutation Resilience):** Memverifikasi ketahanan terhadap upaya pengelabuan sintaks:
+   ```bash
+   go test -v -run "Mutation|Adversarial" ./...
+   ```
+4. **Gate 4 (Repository-Wide Multi-Checker):**
+   ```bash
+   go test ./... && go vet ./...
+   ```

@@ -1,10 +1,14 @@
 package a17_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/tools/go/analysis"
 
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/runner"
@@ -24,9 +28,26 @@ func parseAndInspect(t *testing.T, relPath string) ([]a17_nplusone.LoopIssue, *t
 		t.Fatalf("failed to parse %s: %v", absPath, err)
 	}
 
+	typesInfo := &types.Info{
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Defs:       make(map[*ast.Ident]types.Object),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+	}
+	conf := types.Config{
+		Error: func(err error) {},
+	}
+	pkg, _ := conf.Check(file.Name.Name, fset, []*ast.File{file}, typesInfo)
+	pass := &analysis.Pass{
+		Fset:      fset,
+		Files:     []*ast.File{file},
+		Pkg:       pkg,
+		TypesInfo: typesInfo,
+	}
+
 	dm := directives.ParseGoDirectives(file, fset)
-	detector := a17_nplusone.NewHelperQueryDetector(nil, file)
-	issues := a17_nplusone.WalkLoops(nil, fset, file, dm, detector)
+	detector := a17_nplusone.NewHelperQueryDetector(pass, file)
+	issues := a17_nplusone.WalkLoops(pass, fset, file, dm, detector)
 	return issues, fset
 }
 
@@ -40,6 +61,8 @@ func TestA17_PositiveCorpus(t *testing.T) {
 		55: "P3_Helper",
 		63: "P4_Nested",
 		71: "P5_Alias",
+		89: "P6_SemanticHelper",
+		96: "P7_ReceiverMethodHelper",
 	}
 
 	foundLines := make(map[int]bool)

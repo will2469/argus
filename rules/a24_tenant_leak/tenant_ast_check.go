@@ -17,20 +17,27 @@ func CheckTenantQuery(sql string, tc *TenantConfig) (isViolating bool, reason st
 	}
 
 	res, err := pg_query.Parse(trimmed)
-	if err == nil && res != nil {
-		for _, stmt := range res.Stmts {
-			if stmt == nil || stmt.Stmt == nil {
-				continue
-			}
-			if violating, msg := checkStmtNode(stmt.Stmt.Node, tc); violating {
-				return true, msg
+	if err != nil || res == nil {
+		// Strict AST determinism: never silently trust a weaker regex fallback on multi-tenant tables.
+		// If an unparseable query references any multi-tenant table, report an explicit verification failure.
+		for table := range tc.TenantTables {
+			tblRegex := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(table) + `\b`)
+			if tblRegex.MatchString(trimmed) {
+				return true, fmt.Sprintf("unable to verify tenant isolation for table '%s': SQL AST parsing failed (%v); static AST verification is required (CWE-284, OWASP API1:2023 BOLA)", table, err)
 			}
 		}
 		return false, ""
 	}
 
-	// Fallback regex analysis if pg_query parsing fails
-	return checkRegexFallback(trimmed, tc)
+	for _, stmt := range res.Stmts {
+		if stmt == nil || stmt.Stmt == nil {
+			continue
+		}
+		if violating, msg := checkStmtNode(stmt.Stmt.Node, tc); violating {
+			return true, msg
+		}
+	}
+	return false, ""
 }
 
 func checkStmtNode(node any, tc *TenantConfig) (bool, string) {
@@ -197,23 +204,4 @@ func nodeEnforcesTableTenant(node *pg_query.Node, t TableRef, totalTenantTables 
 
 	// NullTest (e.g. tenant_id IS NOT NULL) is strictly NON-ISOLATING (never true)
 	return false
-}
-
-func checkRegexFallback(sql string, tc *TenantConfig) (bool, string) {
-	col := tc.TenantColumn
-	if col == "" {
-		col = "tenant_id"
-	}
-
-	tenantPredRegex := regexp.MustCompile(`(?i)\b(?:[a-zA-Z0-9_]+\.)?(?:` + regexp.QuoteMeta(col) + `|tenant_id|org_id)\s*(?:=\s*[^=\s]|\bIN\s*\(|\b=\s*ANY\b)`)
-	for table := range tc.TenantTables {
-		tblRegex := regexp.MustCompile(`(?i)\b(?:FROM|UPDATE|INTO|JOIN)\s+(?:"?` + regexp.QuoteMeta(table) + `"?)`)
-		if tblRegex.MatchString(sql) {
-			if !tenantPredRegex.MatchString(sql) {
-				return true, fmt.Sprintf("query on multi-tenant table '%s' missing '%s' predicate (CWE-284, OWASP API1:2023 BOLA)", table, col)
-			}
-		}
-	}
-
-	return false, ""
 }

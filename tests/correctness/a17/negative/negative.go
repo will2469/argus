@@ -60,3 +60,23 @@ func N5_StaticComputation(ids []int) []int {
 	}
 	return results
 }
+
+type MemoryCache struct{}
+
+func (MemoryCache) Get(id int) string {
+	return "cached"
+}
+
+type DBRepo struct{}
+
+func (DBRepo) Get(ctx context.Context, db DB, id int) {
+	_ = db.QueryRow(ctx, "SELECT 1 WHERE id = $1", id)
+}
+
+// N6: Receiver Collision Safety — MemoryCache.Get called inside loop must NOT be flagged as N+1 even though DBRepo also has a Get method.
+func N6_ReceiverCollisionSafety(cache MemoryCache, ids []int) {
+	for _, id := range ids {
+		_ = cache.Get(id)
+	}
+}
+

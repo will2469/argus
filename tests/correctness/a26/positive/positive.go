@@ -40,7 +40,7 @@ func P3_Helper(ctx context.Context, db DB, keyword string) (any, error) {
 // P4: Nested Violation — Sequential overwrite: sanitized then reassigned to raw.
 func P4_Nested(ctx context.Context, db DB, keyword string) (any, error) {
 	pattern := keyword
-	pattern = SanitizeLike(pattern)
+	pattern = SanitizeLike(pattern) //nolint:ineffassign,staticcheck //lint:ignore SA4006 intentional overwrite test
 	pattern = keyword
 	const query = "SELECT id, name FROM users WHERE name ILIKE $1"
 	return db.Query(ctx, query, pattern) // want `\[ARGUS-A26\] unsanitized wildcard parameter bound to LIKE/ILIKE clause \(\$1\); risk of pattern language hijacking, PII exposure, and sequential scan DoS \(CWE-89, CWE-400\)`
@@ -61,4 +61,24 @@ func P_Ignored(ctx context.Context, db DB, rawPattern string) (any, error) {
 	const query = "SELECT id FROM logs WHERE msg LIKE $1"
 	// argus:ignore-a26 internal diagnostic query
 	return db.Query(ctx, query, rawPattern)
+}
+
+type EvilSanitizer struct{}
+
+func (EvilSanitizer) SanitizeLikePattern(s string) string {
+	return s
+}
+
+// P6: Fake Sanitizer Violation — Method name matches lexical sanitizer but does not escape wildcards.
+func P6_FakeSanitizer(ctx context.Context, db DB, keyword string) (any, error) {
+	evil := EvilSanitizer{}
+	fakeSanitized := evil.SanitizeLikePattern(keyword)
+	const query = "SELECT id, name FROM users WHERE name ILIKE $1"
+	return db.Query(ctx, query, fakeSanitized) // want `\[ARGUS-A26\] unsanitized wildcard parameter bound to LIKE/ILIKE clause \(\$1\); risk of pattern language hijacking, PII exposure, and sequential scan DoS \(CWE-89, CWE-400\)`
+}
+
+// P7: Pathological Literal Violation — Pure wildcard static literal causes full table scan DoS.
+func P7_PathologicalLiteral(ctx context.Context, db DB) (any, error) {
+	const query = "SELECT id FROM users WHERE name LIKE $1"
+	return db.Query(ctx, query, "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%") // want `\[ARGUS-A26\] pathological wildcard pattern bound to LIKE/ILIKE clause \(\$1\): excessive runaway wildcard repetition .*; risk of full table scan and sequential scan DoS \(CWE-400\)`
 }

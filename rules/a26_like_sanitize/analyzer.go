@@ -67,6 +67,21 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 	var issues []Issue
 	var currentFuncBody *ast.BlockStmt
 
+	var targetFiles []*ast.File
+	if pass != nil && len(pass.Files) > 0 {
+		targetFiles = pass.Files
+	} else {
+		targetFiles = []*ast.File{file}
+	}
+
+	var cfg *config.Config
+	if pass != nil && pass.ResultOf != nil {
+		if c, ok := pass.ResultOf[config.Analyzer].(*config.Config); ok {
+			cfg = c
+		}
+	}
+	registry := NewSanitizerRegistry(pass, targetFiles, cfg, dm)
+
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch fn := n.(type) {
 		case *ast.FuncDecl:
@@ -107,10 +122,16 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 					continue
 				}
 
-				if !IsArgumentSanitized(argExpr, currentFuncBody) {
+				if !IsArgumentSanitized(argExpr, currentFuncBody, registry, pass) {
+					var msg string
+					if isPatho, reason := registry.IsPathologicalLiteral(argExpr); isPatho {
+						msg = fmt.Sprintf("pathological wildcard pattern bound to LIKE/ILIKE clause ($%d): %s; risk of full table scan and sequential scan DoS (CWE-400)", paramIdx, reason)
+					} else {
+						msg = fmt.Sprintf("unsanitized wildcard parameter bound to LIKE/ILIKE clause ($%d); risk of pattern language hijacking, PII exposure, and sequential scan DoS (CWE-89, CWE-400)", paramIdx)
+					}
 					issues = append(issues, Issue{
 						Pos:     argExpr.Pos(),
-						Message: fmt.Sprintf("unsanitized wildcard parameter bound to LIKE/ILIKE clause ($%d); risk of pattern language hijacking, PII exposure, and sequential scan DoS (CWE-89, CWE-400)", paramIdx),
+						Message: msg,
 					})
 				}
 			}

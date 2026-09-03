@@ -3,6 +3,7 @@
 package a17_nplusone
 
 import (
+	"go/ast"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -33,13 +34,20 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
 
+	// Filter non-test package files for package-wide call graph analysis
+	var pkgFiles []*ast.File
 	for _, file := range pass.Files {
 		pos := pass.Fset.Position(file.Package)
-		if strings.HasSuffix(pos.Filename, "_test.go") {
-			continue
+		if !strings.HasSuffix(pos.Filename, "_test.go") {
+			pkgFiles = append(pkgFiles, file)
 		}
+	}
 
-		detector := NewHelperQueryDetector(pass, file)
+	// 1. Build package-wide helper query detector across all files in the package
+	detector := NewHelperQueryDetector(pass, pkgFiles...)
+
+	// 2. Walk loops in each file using the shared package detector
+	for _, file := range pkgFiles {
 		issues := WalkLoops(pass, pass.Fset, file, dm, detector)
 		for _, issue := range issues {
 			pass.Reportf(issue.Pos, "%s", issue.Message)

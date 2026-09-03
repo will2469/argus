@@ -106,6 +106,9 @@ func TestGoldenCorpus_AdoptionMatrix(t *testing.T) {
 	totalRules := 30
 
 	t.Log("=========================================================================================================")
+	t.Log("ARGUS 1-SSOT GOLDEN CORPUS — GATE 1: STRUCTURAL ADOPTION MATRIX")
+	t.Log("Note: Gate 1 verifies structural fixture presence on disk. Gate 2 (Semantic Correctness) is verified via tests/correctness & tests/migration.")
+	t.Log("=========================================================================================================")
 	t.Logf("%-12s | %-12s | %-10s | %-32s | %s", "RULE CODE", "CATEGORY", "STATUS", "SSOT PATH", "DETAILS")
 	t.Log("---------------------------------------------------------------------------------------------------------")
 
@@ -126,7 +129,7 @@ func TestGoldenCorpus_AdoptionMatrix(t *testing.T) {
 		)
 	}
 	t.Log("=========================================================================================================")
-	t.Logf("Golden Corpus Adoption Progress: %d / %d rules adopted (%.1f%%)",
+	t.Logf("Golden Corpus Adoption Progress (Gate 1): %d / %d rules adopted (%.1f%%)",
 		adoptedCount, totalRules, float64(adoptedCount)/float64(totalRules)*100)
 
 	// Assert that A01 is verified as adopted

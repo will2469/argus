@@ -85,32 +85,49 @@ flowchart TD
 ## 4. Detection Logic & Rule Anatomy
 
 1. **SQL AST Parser (`pg_query_go/v6`):** Identifies `LIKE`, `ILIKE`, `~~`, `~~*` expressions in `SELECT`, `UPDATE`, `DELETE`, and `JOIN` statements and extracts the 1-based parameter placeholder indices ($1, $2, ...).
-2. **Taint Tracer:** Verifies if the corresponding argument in the Go call expression originates from:
-   - Compile-time constant string literals (`*ast.BasicLit`).
-   - Official sanitizers: `hecate.SanitizeLikePattern`, `hecate.FormatLikeContains`, `hecate.FormatLikePrefix`, `hecate.FormatLikeSuffix`, `SanitizeLike`.
-   - `strings.ReplaceAll` chains.
-3. **Exemptions:** Suppressed via `// argus:ignore ARGUS-A26 <reason>`.
+2. **Semantic Sanitizer Registry (Multi-Layer Trust):**
+   - **AST Escaping Verification:** Analyzes local function bodies to statically verify that wildcard characters (`%` and `_`) are explicitly escaped via `strings.ReplaceAll` / `strings.Replace`.
+   - **Explicit Directive:** Functions annotated with `// argus:trusted-sanitizer <reason>` (at least 2 words reason) are marked as trusted sanitizers.
+   - **Configuration Whitelist:** Functions/methods configured in `.argus.yaml` under `rules.ARGUS-A26.sanitizers`.
+   - **Untrusted Method Rejection:** Calls to unknown or unverified receivers (e.g. `evil.SanitizeLikePattern(...)`) are strictly rejected regardless of method name.
+3. **Literal Duality (SQL Injection vs Pathological DoS):**
+   - **Selective Compile-Time Constants (Safe):** Prefix constants such as `"PENDING_%"` or `"ORDER-2024-%"` leverage PostgreSQL B-tree prefix indexes (`text_pattern_ops`) and are immune to dynamic pattern tampering.
+   - **Pathological Wildcard Literals (CWE-400 Violation):** Standalone pure wildcards (`"%"`, `"%%"`) and runaway wildcards (`"%%%%%..."`) force table-wide sequential scans and catastrophic pattern matching complexity.
+4. **Exemptions:** Suppressed via `// argus:ignore ARGUS-A26 <reason>`.
 
 ---
 
 ## 5. Code Examples Matrix
 
-### Non-Compliant (Unsanitized User Input in LIKE)
+### Non-Compliant (Unsanitized User Input & Pathological Literals)
 
 ```go
 // VIOLATION: Raw parameter concatenated directly with wildcards
 func SearchUsers(ctx context.Context, db DB, keyword string) ([]User, error) {
     pattern := "%" + keyword + "%"
     const query = "SELECT id, name FROM users WHERE name ILIKE $1"
-    return db.Query(ctx, query, pattern)
+    return db.Query(ctx, query, pattern) // [ARGUS-A26] unsanitized wildcard parameter
 }
 ```
 
 ```go
-// VIOLATION: Raw query parameter bound to SQL concat without sanitization
-func SearchAuditLogs(ctx context.Context, db DB, q string) ([]Log, error) {
-    const query = "SELECT id FROM logs WHERE message ILIKE '%' || $1 || '%'"
-    return db.Query(ctx, query, q)
+// VIOLATION: Fake sanitizer without verified AST wildcard escaping
+type EvilSanitizer struct{}
+func (EvilSanitizer) SanitizeLikePattern(s string) string { return s }
+
+func SearchEvil(ctx context.Context, db DB, keyword string) ([]User, error) {
+    evil := EvilSanitizer{}
+    pattern := evil.SanitizeLikePattern(keyword)
+    const query = "SELECT id, name FROM users WHERE name ILIKE $1"
+    return db.Query(ctx, query, pattern) // [ARGUS-A26] unsanitized wildcard parameter
+}
+```
+
+```go
+// VIOLATION: Pathological literal causing full table scan DoS
+func SearchAll(ctx context.Context, db DB) ([]User, error) {
+    const query = "SELECT id FROM users WHERE name LIKE $1"
+    return db.Query(ctx, query, "%") // [ARGUS-A26] pathological wildcard pattern (CWE-400)
 }
 ```
 
@@ -119,20 +136,34 @@ func SearchAuditLogs(ctx context.Context, db DB, q string) ([]Log, error) {
 ### Compliant (Sanitized User Input with ESCAPE)
 
 ```go
-// COMPLIANT: Sanitized using helper function
+// COMPLIANT: Verified sanitizer escaping both % and _
+func SanitizeLike(s string) string {
+    s = strings.ReplaceAll(s, `\`, `\\`)
+    s = strings.ReplaceAll(s, `%`, `\%`)
+    s = strings.ReplaceAll(s, `_`, `\_`)
+    return s
+}
+
 func SearchUsers(ctx context.Context, db DB, keyword string) ([]User, error) {
-    pattern := EscapeLikePattern(keyword)
+    pattern := "%" + SanitizeLike(keyword) + "%"
     const query = "SELECT id, name FROM users WHERE name ILIKE $1 ESCAPE '\\'"
     return db.Query(ctx, query, pattern)
 }
 ```
 
 ```go
-// COMPLIANT: Explicit sanitization before query binding
-func SearchAuditLogs(ctx context.Context, db DB, q string) ([]Log, error) {
-    safeQ := EscapeLikePattern(q)
-    const query = "SELECT id FROM logs WHERE message ILIKE '%' || $1 || '%' ESCAPE '\\'"
-    return db.Query(ctx, query, safeQ)
+// COMPLIANT: Selective compile-time prefix literal leveraging B-tree index
+func SearchPending(ctx context.Context, db DB) ([]Order, error) {
+    const query = "SELECT id FROM orders WHERE status LIKE $1"
+    return db.Query(ctx, query, "PENDING_%")
+}
+```
+
+```go
+// COMPLIANT: Trusted custom sanitizer directive
+// argus:trusted-sanitizer custom assembly SIMD escape engine
+func FastSanitize(s string) string {
+    return simdescape.Like(s)
 }
 ```
 
@@ -163,6 +194,20 @@ func SearchAuditLogs(ctx context.Context, db DB, q string) ([]Log, error) {
 rules:
   ARGUS-A26:
     enabled: true
+    sanitizers:
+      - "github.com/myorg/security.SanitizeLikePattern"
+      - "myapp/pkg/sanitize.Like"
+```
+
+### Inline Trusted Sanitizer Directive
+
+Annotate custom/assembly/third-party escaping routines:
+
+```go
+// argus:trusted-sanitizer verified custom SIMD wildcard escaper
+func NativeSanitize(s string) string {
+    ...
+}
 ```
 
 ### Inline Ignore Directives
