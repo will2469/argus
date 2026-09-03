@@ -109,7 +109,12 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 		Fset:      fset,
 		Files:     pkgFiles,
 		TypesInfo: typesInfo,
+		ResultOf: map[*analysis.Analyzer]any{
+			config.Analyzer:     appCfg,
+			directives.Analyzer: dm,
+		},
 	}
+
 
 	// 2. ARGUS-A01: SQL concatenation & unsafe formatting
 	a01Issues := a01_sql_concat.InspectFile(pass, fset, node, dm)

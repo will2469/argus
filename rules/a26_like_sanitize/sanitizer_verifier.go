@@ -167,3 +167,17 @@ func resolveCallObj(info *types.Info, call *ast.CallExpr) types.Object {
 	}
 	return nil
 }
+
+func extractTypeNameFromType(t types.Type) string {
+	if t == nil {
+		return ""
+	}
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	if named, ok := t.(*types.Named); ok {
+		return named.Obj().Name()
+	}
+	return ""
+}
+

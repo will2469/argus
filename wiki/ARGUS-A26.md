@@ -16,7 +16,7 @@
 
 ## 1. Executive Summary & Architectural Invariant
 
-User-derived input strings bound to SQL **`LIKE`** or **`ILIKE`** pattern matching clauses **must be explicitly sanitized to escape SQL wildcard characters (`\`, `%`, and `_`)** prior to pattern assembly (e.g. `hecate.FormatLikeContains(userInput)`).
+User-derived input strings bound to SQL **`LIKE`** or **`ILIKE`** pattern matching clauses **must be explicitly sanitized to escape SQL wildcard characters (`\`, `%`, and `_`)** prior to pattern assembly (e.g. `FormatLikeContains(userInput)`).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -50,7 +50,7 @@ User-derived input strings bound to SQL **`LIKE`** or **`ILIKE`** pattern matchi
 │  ├─► B-tree prefix index INVALIDATED -> Full Table Scan & CPU 100% DoS      │
 │  └─► PII EXPOSURE & DENIAL OF SERVICE (CWE-89, CWE-400)                     │
 │                                                                             │
-│  Case B: Sanitized via hecate.SanitizeLikePattern(input) (COMPLIANT):        │
+│  Case B: Sanitized via SanitizeLikePattern(input) (COMPLIANT):               │
 │  Attacker submits: "%"                                                      │
 │  ├─► SanitizeLikePattern transforms "%" into "\%"                           │
 │  ├─► Assembled Pattern: "%\%%" ESCAPE '\'                                   │
@@ -76,7 +76,7 @@ flowchart TD
     A["SQL Query Parameterized CallSite"] --> B{"Contains LIKE / ILIKE Clause in SQL AST?"}
     B -- "No" --> C["PASS (Compliant)"]
     B -- "Yes" --> D{"Is Bound Argument Constant or Sanitized?"}
-    D -- "Constant Literal or Sanitized via hecate" --> E["PASS (Compliant)"]
+    D -- "Constant Literal or Sanitized via Verified Sanitizer" --> E["PASS (Compliant)"]
     D -- "Raw Variable / Unsanitized Concat" --> F["FAIL: ARGUS-A26 Wildcard Injection Risk (CWE-89)"]
 ```
 

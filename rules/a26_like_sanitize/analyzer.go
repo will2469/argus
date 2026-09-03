@@ -61,6 +61,11 @@ func run(pass *analysis.Pass) (interface{}, error) {
 // InspectFile inspects an AST file for unsanitized wildcard parameters bound to LIKE/ILIKE clauses.
 // Can be called with pass == nil in standalone CLI runner mode.
 func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	return InspectFileWithConfig(pass, fset, file, dm, nil)
+}
+
+// InspectFileWithConfig inspects an AST file with an explicit config fallback.
+func InspectFileWithConfig(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap, explicitCfg *config.Config) []Issue {
 	if file == nil {
 		return nil
 	}
@@ -74,8 +79,8 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 		targetFiles = []*ast.File{file}
 	}
 
-	var cfg *config.Config
-	if pass != nil && pass.ResultOf != nil {
+	cfg := explicitCfg
+	if cfg == nil && pass != nil && pass.ResultOf != nil {
 		if c, ok := pass.ResultOf[config.Analyzer].(*config.Config); ok {
 			cfg = c
 		}

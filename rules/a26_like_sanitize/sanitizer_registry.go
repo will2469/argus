@@ -16,6 +16,7 @@ type SanitizerRegistry struct {
 	trustedObj   map[types.Object]bool
 	trustedNames map[string]bool
 	configured   map[string]bool
+	pkgImports   map[string]string // alias/name -> full import path
 }
 
 // NewSanitizerRegistry builds a registry from AST files, config, and directives.
@@ -24,14 +25,10 @@ func NewSanitizerRegistry(pass *analysis.Pass, files []*ast.File, cfg *config.Co
 		trustedObj:   make(map[types.Object]bool),
 		trustedNames: make(map[string]bool),
 		configured:   make(map[string]bool),
+		pkgImports:   make(map[string]string),
 	}
 
-	// 1. Built-in canonical packages and user-configured sanitizers
-	reg.configured["github.com/will2469/hecate.SanitizeLikePattern"] = true
-	reg.configured["github.com/will2469/hecate.FormatLikeContains"] = true
-	reg.configured["github.com/will2469/hecate.FormatLikePrefix"] = true
-	reg.configured["github.com/will2469/hecate.FormatLikeSuffix"] = true
-
+	// 1. User-configured sanitizers from .argus.yaml
 	if cfg != nil {
 		for _, s := range cfg.GetStringSlice(RuleCode, "sanitizers", nil) {
 			norm := strings.TrimSpace(s)
@@ -41,7 +38,31 @@ func NewSanitizerRegistry(pass *analysis.Pass, files []*ast.File, cfg *config.Co
 		}
 	}
 
-	// 2. Index local package functions across all provided files
+	// 2. Index imports across all provided files for unresolved standalone alias resolution
+	for _, file := range files {
+		if file == nil {
+			continue
+		}
+		for _, imp := range file.Imports {
+			if imp == nil || imp.Path == nil {
+				continue
+			}
+			importPath := strings.Trim(imp.Path.Value, `"`)
+			if imp.Name != nil && imp.Name.Name != "" {
+				if imp.Name.Name != "_" && imp.Name.Name != "." {
+					reg.pkgImports[imp.Name.Name] = importPath
+				}
+			} else {
+				parts := strings.Split(importPath, "/")
+				last := parts[len(parts)-1]
+				if last != "" {
+					reg.pkgImports[last] = importPath
+				}
+			}
+		}
+	}
+
+	// 3. Index local package functions across all provided files
 	var funcDecls []*ast.FuncDecl
 	for _, file := range files {
 		if file == nil {
@@ -54,14 +75,14 @@ func NewSanitizerRegistry(pass *analysis.Pass, files []*ast.File, cfg *config.Co
 		}
 	}
 
-	// 3. Mark functions with explicit // argus:trusted-sanitizer <reason> directive
+	// 4. Mark functions with explicit // argus:trusted-sanitizer <reason> directive
 	for _, fn := range funcDecls {
 		if hasTrustedSanitizerDirective(fn.Doc) {
 			reg.markTrustedFunc(pass, fn)
 		}
 	}
 
-	// 4. Statically verify function bodies for explicit wildcard replacements (%, _)
+	// 5. Statically verify function bodies for explicit wildcard replacements (%, _)
 	changed := true
 	for changed {
 		changed = false
@@ -83,12 +104,14 @@ func (r *SanitizerRegistry) markTrustedFunc(pass *analysis.Pass, fn *ast.FuncDec
 	if fn == nil || fn.Name == nil {
 		return
 	}
-	r.trustedNames[fn.Name.Name] = true
 	if fn.Recv != nil && len(fn.Recv.List) > 0 {
 		typeName := extractRecvTypeName(fn.Recv.List[0].Type)
 		if typeName != "" {
 			r.trustedNames[typeName+"."+fn.Name.Name] = true
 		}
+	} else {
+		// Only top-level package functions without receiver can be trusted by bare function name
+		r.trustedNames[fn.Name.Name] = true
 	}
 	if pass != nil && pass.TypesInfo != nil {
 		if obj := pass.TypesInfo.Defs[fn.Name]; obj != nil {
@@ -115,7 +138,7 @@ func (r *SanitizerRegistry) IsSanitizerCall(pass *analysis.Pass, call *ast.CallE
 		return false
 	}
 
-	// 1. Types-based resolution: exact package path and symbol
+	// 1. Types-based resolution: authoritative exact package path and symbol
 	if pass != nil && pass.TypesInfo != nil {
 		if obj := resolveCallObj(pass.TypesInfo, call); obj != nil {
 			if r.trustedObj[obj] {
@@ -126,28 +149,43 @@ func (r *SanitizerRegistry) IsSanitizerCall(pass *analysis.Pass, call *ast.CallE
 				if r.configured[fullPath] {
 					return true
 				}
+				if fn, ok := obj.(*types.Func); ok {
+					recv := fn.Type().(*types.Signature).Recv()
+					if recv != nil {
+						recvTypeName := extractTypeNameFromType(recv.Type())
+						if recvTypeName != "" && r.configured[pkg.Path()+"."+recvTypeName+"."+obj.Name()] {
+							return true
+						}
+					}
+				}
 			}
-			// If declared in this package and not trusted, reject immediately
-			if obj.Pkg() == pass.Pkg {
-				return false
-			}
+			// Strict AST Determinism: When type resolution succeeds, never fall through to lexical heuristics!
+			return false
 		}
 	}
 
-	// 2. Fallback resolution: inspect call selector / ident
+	// 2. Unresolved / standalone fallback: strictly scoped by imports and verified local decls
 	switch e := call.Fun.(type) {
 	case *ast.Ident:
-		if r.trustedNames[e.Name] || r.configured[e.Name] {
+		// Bare function call (e.g. SanitizeLike(input)) — only trusted if local verified function
+		if r.trustedNames[e.Name] {
 			return true
 		}
 	case *ast.SelectorExpr:
 		methodName := e.Sel.Name
 		if xId, ok := e.X.(*ast.Ident); ok {
-			qualified := xId.Name + "." + methodName
-			if r.trustedNames[qualified] || r.configured[qualified] {
-				return true
+			// Case A: Imported package call (e.g. trustedpkg.SanitizeLikePattern or mypkg.Sanitize)
+			if importPath, isImport := r.pkgImports[xId.Name]; isImport {
+				fullSymbol := importPath + "." + methodName
+				if r.configured[fullSymbol] {
+					return true
+				}
+				return false
 			}
-			if r.configured[methodName] {
+
+			// Case B: Local receiver or qualified type (e.g. VerifiedEscaper.SanitizeLikePattern)
+			qualified := xId.Name + "." + methodName
+			if r.trustedNames[qualified] {
 				return true
 			}
 		}

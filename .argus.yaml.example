@@ -102,6 +102,10 @@ rules:
     enabled: true
   ARGUS-A26:
     enabled: true
+    # Whitelisted fully-qualified package symbols authorized as LIKE wildcard sanitizers
+    sanitizers:
+      - "github.com/myorg/security.SanitizeLikePattern"
+      - "github.com/myorg/security.FormatLikeContains"
   ARGUS-A27:
     enabled: true
   ARGUS-A28:
