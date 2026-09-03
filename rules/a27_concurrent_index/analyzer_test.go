@@ -10,12 +10,15 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatalf("failed to resolve testdata path: %v", err)
+		t.Fatalf("failed to resolve rootDir: %v", err)
 	}
 
-	analysistest.Run(t, testdata, Analyzer, "a27")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/migration/a27/positive",
+		"./tests/migration/a27/negative",
+	)
 }
 
 func TestCheckMigration_ConcurrentCompliant(t *testing.T) {
@@ -69,19 +72,18 @@ CREATE INDEX idx_users_legacy ON users (legacy_id);
 }
 
 func TestScanMigrationDir_TestData(t *testing.T) {
-	testDir := "../../testdata/src/a27/migrations"
+	testDir := "../../tests/migration/a27/positive/migrations"
 	issues, err := ScanMigrationDir(testDir)
 	if err != nil {
 		t.Fatalf("failed to scan testdata: %v", err)
 	}
 
-	// 000001 (safe), 000002 (safe new table), 000004 (ignored) -> only 000003 should fail
 	if len(issues) != 1 {
 		t.Fatalf("expected exactly 1 issue from testdata, got %d: %v", len(issues), issues)
 	}
 
-	if !strings.Contains(issues[0].Filename, "000003_unsafe_plain.up.sql") {
-		t.Errorf("expected violation in 000003_unsafe_plain.up.sql, got %s", issues[0].Filename)
+	if !strings.Contains(issues[0].Filename, "001_unsafe_plain.up.sql") {
+		t.Errorf("expected violation in 001_unsafe_plain.up.sql, got %s", issues[0].Filename)
 	}
 }
 
