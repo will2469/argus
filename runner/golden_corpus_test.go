@@ -9,7 +9,7 @@ import (
 )
 
 func TestGoldenCorpus_AuditBehavior(t *testing.T) {
-	testdata, err := filepath.Abs("../testdata/src/golden")
+	testdata, err := filepath.Abs("../tests/golden")
 	if err != nil {
 		t.Fatalf("failed to resolve testdata golden path: %v", err)
 	}

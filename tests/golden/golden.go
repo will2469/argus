@@ -2,8 +2,9 @@ package golden
 
 import (
 	"context"
-	"golden/pgxpool"
 	"strings"
+
+	"github.com/will2469/argus/tests/golden/pgxpool"
 )
 
 var db *pgxpool.Pool
@@ -30,7 +31,7 @@ func SanitizeLikePattern(s string) string {
 
 // SHOULD PASS
 
-func safeQuery(ctx context.Context, pool *pgxpool.Pool, id int) {
+func SafeQuery(ctx context.Context, pool *pgxpool.Pool, id int) {
 	_, err := pool.Query(ctx,
 		`SELECT id, name FROM users WHERE id = $1`,
 		id,
@@ -40,7 +41,7 @@ func safeQuery(ctx context.Context, pool *pgxpool.Pool, id int) {
 
 // SHOULD PASS
 
-func search(ctx context.Context, pool *pgxpool.Pool, input string) {
+func Search(ctx context.Context, pool *pgxpool.Pool, input string) {
 	pattern := SanitizeLikePattern(input)
 
 	_, err := pool.Query(ctx,
@@ -52,7 +53,7 @@ func search(ctx context.Context, pool *pgxpool.Pool, input string) {
 
 // SHOULD FAIL
 
-func unsafeSearch(ctx context.Context, pool *pgxpool.Pool, input string) {
+func UnsafeSearch(ctx context.Context, pool *pgxpool.Pool, input string) {
 	_, err := pool.Query(ctx,
 		`SELECT id FROM users WHERE name LIKE $1`,
 		input,
@@ -62,7 +63,7 @@ func unsafeSearch(ctx context.Context, pool *pgxpool.Pool, input string) {
 
 // SHOULD FAIL
 
-func unsafeTenant(ctx context.Context, pool *pgxpool.Pool) {
+func UnsafeTenant(ctx context.Context, pool *pgxpool.Pool) {
 	_, err := pool.Query(ctx,
 		`SELECT id FROM users WHERE tenant_id IS NOT NULL`,
 	) // want `\[ARGUS-A24\] query on multi-tenant table 'users' missing 'tenant_id' predicate`
@@ -71,7 +72,7 @@ func unsafeTenant(ctx context.Context, pool *pgxpool.Pool) {
 
 // SHOULD NOT FLAG A17
 
-func unrelatedQuery(ctx context.Context, search SearchEngine, items []Item) {
+func UnrelatedQuery(ctx context.Context, search SearchEngine, items []Item) {
 	for _, item := range items {
 		search.Query(ctx, item.Name)
 	}
@@ -79,7 +80,7 @@ func unrelatedQuery(ctx context.Context, search SearchEngine, items []Item) {
 
 // SHOULD FAIL A17
 
-func nPlusOne(ctx context.Context, pool *pgxpool.Pool, users []User) {
+func NPlusOne(ctx context.Context, pool *pgxpool.Pool, users []User) {
 	for _, user := range users { // want `\[ARGUS-A17\] N\+1 query pattern detected`
 		pool.QueryRow(ctx,
 			`SELECT id FROM profiles WHERE user_id = $1`,
@@ -90,7 +91,7 @@ func nPlusOne(ctx context.Context, pool *pgxpool.Pool, users []User) {
 
 // SHOULD FAIL A17
 
-func nPlusOneDeep(ctx context.Context, users []User) {
+func NPlusOneDeep(ctx context.Context, users []User) {
 	for _, user := range users { // want `\[ARGUS-A17\] N\+1 query pattern detected`
 		loadProfile(ctx, user.ID)
 	}
