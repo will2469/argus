@@ -11,6 +11,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/will2469/argus/rules/a01_sql_concat"
+	"github.com/will2469/argus/rules/a02_unclosed_rows"
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
@@ -97,7 +98,20 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 		})
 	}
 
-	// 3. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
+	// 3. ARGUS-A02: Unclosed rows & missing defer rows.Close()
+	a02Issues := a02_unclosed_rows.InspectFile(pass, fset, node, dm)
+	for _, issue := range a02Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "MISSING_DEFER_CLOSE",
+			Message:  issue.Message,
+			Category: "reliability",
+		})
+	}
+
+	// 4. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
 	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
 	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {

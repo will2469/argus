@@ -3,7 +3,9 @@
 package a02_unclosed_rows
 
 import (
+	"fmt"
 	"go/ast"
+	"go/token"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -24,6 +26,33 @@ var Analyzer = &analysis.Analyzer{
 	},
 }
 
+// Issue describes a detected violation of ARGUS-A02.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
+
+// InspectFile inspects an AST file for unclosed rows and prohibited ownership transfers.
+// Can be called with pass == nil in standalone CLI runner mode.
+func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	if file == nil {
+		return nil
+	}
+	if fset == nil && pass != nil {
+		fset = pass.Fset
+	}
+
+	var issues []Issue
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		checkBlock(fset, fn.Body, dm, &issues)
+	}
+	return issues
+}
+
 func run(pass *analysis.Pass) (interface{}, error) {
 	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
 	if !cfg.IsRuleEnabled(RuleCode) {
@@ -33,23 +62,20 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
 
 	for _, file := range pass.Files {
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			checkBlock(pass, fn.Body, dm)
+		issues := InspectFile(pass, pass.Fset, file, dm)
+		for _, iss := range issues {
+			pass.Reportf(iss.Pos, "[%s] %s", RuleCode, iss.Message)
 		}
 	}
 
 	return nil, nil
 }
 
-func checkBlock(pass *analysis.Pass, body *ast.BlockStmt, dm *directives.DirectiveMap) {
+func checkBlock(fset *token.FileSet, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
 	ast.Inspect(body, func(n ast.Node) bool {
 		// If nested closure, inspect it separately
 		if lit, ok := n.(*ast.FuncLit); ok && lit.Body != nil {
-			checkBlock(pass, lit.Body, dm)
+			checkBlock(fset, lit.Body, dm, issues)
 			return false
 		}
 
@@ -57,8 +83,11 @@ func checkBlock(pass *analysis.Pass, body *ast.BlockStmt, dm *directives.Directi
 		if ret, ok := n.(*ast.ReturnStmt); ok {
 			for _, expr := range ret.Results {
 				if IsQueryCall(expr) {
-					if !dm.IsIgnored(pass.Fset, expr.Pos(), RuleCode) {
-						pass.Reportf(expr.Pos(), "[%s] returning rows transfers resource ownership; consume and close rows within this function", RuleCode)
+					if fset == nil || dm == nil || !dm.IsIgnored(fset, expr.Pos(), RuleCode) {
+						*issues = append(*issues, Issue{
+							Pos:     expr.Pos(),
+							Message: "returning rows transfers resource ownership; consume and close rows within this function",
+						})
 					}
 				}
 			}
@@ -85,19 +114,25 @@ func checkBlock(pass *analysis.Pass, body *ast.BlockStmt, dm *directives.Directi
 			}
 
 			rowsVar := ident.Name
-			if dm.IsIgnored(pass.Fset, rhs.Pos(), RuleCode) {
+			if fset != nil && dm != nil && dm.IsIgnored(fset, rhs.Pos(), RuleCode) {
 				continue
 			}
 
 			// Check if rows returned to caller (prohibited ownership transfer)
 			if IsReturned(body, rowsVar) {
-				pass.Reportf(rhs.Pos(), "[%s] returning rows variable %q transfers resource ownership; consume and close rows within this function", RuleCode, rowsVar)
+				*issues = append(*issues, Issue{
+					Pos:     rhs.Pos(),
+					Message: fmt.Sprintf("returning rows variable %q transfers resource ownership; consume and close rows within this function", rowsVar),
+				})
 				continue
 			}
 
 			// Check if safely deferred or consumed by auto-closing helper
-			if !IsSafelyClosedOrConsumed(body, rowsVar) {
-				pass.Reportf(rhs.Pos(), "[%s] missing defer %s.Close() for Query() call; unclosed rows leak database connections and cause pool starvation", RuleCode, rowsVar)
+			if !IsAssignSafelyClosed(body, assign, rowsVar) {
+				*issues = append(*issues, Issue{
+					Pos:     rhs.Pos(),
+					Message: fmt.Sprintf("missing defer %s.Close() for Query() call; unclosed rows leak database connections and cause pool starvation", rowsVar),
+				})
 			}
 		}
 
