@@ -1,8 +1,14 @@
 package a12_timeout_config
 
 import (
+	"fmt"
+	"go/ast"
+	"go/token"
 	"net/url"
 	"strings"
+
+	"github.com/will2469/argus/shared/callsite"
+	"github.com/will2469/argus/shared/directives"
 )
 
 // DSNCheckResult holds missing and invalid timeout parameters found in a DSN.
@@ -63,6 +69,70 @@ func CheckDSN(dsn string) DSNCheckResult {
 	checkParam("idle_in_transaction_session_timeout", "idle_in_transaction")
 
 	return result
+}
+
+func checkDSNCall(fset *token.FileSet, dsnExpr ast.Expr, dsn string, dm *directives.DirectiveMap, issues *[]Issue) {
+	if fset != nil && dm != nil && dm.IsIgnored(fset, dsnExpr.Pos(), RuleCode) {
+		return
+	}
+
+	res := CheckDSN(dsn)
+	for _, missing := range res.Missing {
+		*issues = append(*issues, Issue{
+			Pos:     dsnExpr.Pos(),
+			Message: fmt.Sprintf("pgxpool DSN missing '%s' parameter; add '%s=<duration>' to prevent unbounded resource consumption", missing, missing),
+		})
+	}
+	for _, zero := range res.Zero {
+		*issues = append(*issues, Issue{
+			Pos:     dsnExpr.Pos(),
+			Message: fmt.Sprintf("pgxpool DSN parameter '%s' must not be set to 0 (unlimited)", zero),
+		})
+	}
+}
+
+func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
+	if call == nil || len(call.Args) == 0 {
+		return nil
+	}
+	dsnArgIdx := 0
+	if len(call.Args) >= 2 {
+		dsnArgIdx = 1
+	}
+	arg := call.Args[dsnArgIdx]
+
+	var results []string
+	switch e := arg.(type) {
+	case *ast.BasicLit:
+		if e.Kind == token.STRING {
+			results = append(results, strings.Trim(e.Value, "`\""))
+		}
+	case *ast.Ident:
+		enclosing := findEnclosingFunc(file, call.Pos())
+		if enclosing != nil && enclosing.Body != nil {
+			ast.Inspect(enclosing.Body, func(n ast.Node) bool {
+				assign, ok := n.(*ast.AssignStmt)
+				if !ok || assign.Pos() >= call.Pos() {
+					return true
+				}
+				for i, lhs := range assign.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
+						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							results = append(results, strings.Trim(lit.Value, "`\""))
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+
+	if len(results) == 0 {
+		if s, ok := callsite.ExtractQueryString(call); ok {
+			results = append(results, s)
+		}
+	}
+	return results
 }
 
 func findKVParam(dsn, key string) (string, bool) {
