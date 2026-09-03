@@ -10,12 +10,15 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatalf("failed to resolve testdata path: %v", err)
+		t.Fatalf("failed to resolve rootDir: %v", err)
 	}
 
-	analysistest.Run(t, testdata, Analyzer, "a21")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/correctness/a21/positive",
+		"./tests/correctness/a21/negative",
+	)
 }
 
 func TestCheckLockingQuery(t *testing.T) {

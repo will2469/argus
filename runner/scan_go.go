@@ -27,6 +27,7 @@ import (
 	"github.com/will2469/argus/rules/a18_rows_err"
 	"github.com/will2469/argus/rules/a19_unbounded_limit"
 	"github.com/will2469/argus/rules/a20_param_limit"
+	"github.com/will2469/argus/rules/a21_row_lock"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
 	"github.com/will2469/argus/shared/callsite"
@@ -303,6 +304,19 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 			Rule:     "UNBOUNDED_BATCH_PARAMS",
 			Message:  fmt.Sprintf(format, args...),
 			Category: "reliability",
+		})
+	})
+
+	// 19. ARGUS-A21: Row Lock Convoys (FOR UPDATE without SKIP LOCKED / NOWAIT)
+	keyColumnMapA21 := a21_row_lock.GetKeyColumns(nil)
+	a21_row_lock.InspectFile(node, fset, dm, keyColumnMapA21, func(pos token.Pos, format string, args ...any) {
+		p := fset.Position(pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     p.Line,
+			Rule:     "BLOCKING_ROW_LOCK",
+			Message:  fmt.Sprintf(format, args...),
+			Category: "performance",
 		})
 	})
 
