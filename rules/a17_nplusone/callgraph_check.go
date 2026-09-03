@@ -37,23 +37,32 @@ func NewHelperQueryDetector(pass *analysis.Pass, file *ast.File) *HelperQueryDet
 		}
 	}
 
-	// 3. Propagate 1 level of calls (functions that call another function with query)
-	for key, fn := range detector.funcDecls {
-		if detector.funcHasQuery[key] {
-			continue
-		}
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
+	// 3. Fixed-point propagation: iteratively propagate query execution through the call graph
+	// until a fixed point is reached (no new helper functions marked across arbitrary call depth).
+	changed := true
+	for changed {
+		changed = false
+		for key, fn := range detector.funcDecls {
+			if detector.funcHasQuery[key] {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if detector.funcHasQuery[key] {
+					return false
+				}
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				calledKey := getCallKey(call)
+				if detector.funcHasQuery[calledKey] {
+					detector.funcHasQuery[key] = true
+					changed = true
+					return false
+				}
 				return true
-			}
-			calledKey := getCallKey(call)
-			if detector.funcHasQuery[calledKey] {
-				detector.funcHasQuery[key] = true
-				return false
-			}
-			return true
-		})
+			})
+		}
 	}
 
 	return detector

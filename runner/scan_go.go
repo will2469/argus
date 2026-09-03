@@ -4,8 +4,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/tools/go/analysis"
 
 	"github.com/will2469/argus/rules/a01_sql_concat"
 	"github.com/will2469/argus/rules/a14_select_star"
@@ -64,8 +67,25 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 		return true
 	})
 
+	// Construct lightweight analysis.Pass with type information for standalone mode
+	typesInfo := &types.Info{
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Defs:       make(map[*ast.Ident]types.Object),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+	}
+	conf := types.Config{
+		Error: func(err error) {}, // ignore unresolved external package errors
+	}
+	_, _ = conf.Check(node.Name.Name, fset, []*ast.File{node}, typesInfo)
+	pass := &analysis.Pass{
+		Fset:      fset,
+		Files:     []*ast.File{node},
+		TypesInfo: typesInfo,
+	}
+
 	// 2. ARGUS-A01: SQL concatenation & unsafe formatting
-	a01Issues := a01_sql_concat.InspectFile(nil, fset, node, dm)
+	a01Issues := a01_sql_concat.InspectFile(pass, fset, node, dm)
 	for _, issue := range a01Issues {
 		pos := fset.Position(issue.Pos)
 		tracker.AddIssue(Issue{
@@ -78,8 +98,8 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 	}
 
 	// 3. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
-	detector := a17_nplusone.NewHelperQueryDetector(nil, node)
-	loopIssues := a17_nplusone.WalkLoops(nil, fset, node, dm, detector)
+	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
+	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {
 		pos := fset.Position(issue.Pos)
 		tracker.AddIssue(Issue{
@@ -92,7 +112,7 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 	}
 
 	// 4. ARGUS-A26: Unsanitized LIKE/ILIKE wildcard input
-	a26Issues := a26_like_sanitize.InspectFile(nil, fset, node, dm)
+	a26Issues := a26_like_sanitize.InspectFile(pass, fset, node, dm)
 	for _, issue := range a26Issues {
 		pos := fset.Position(issue.Pos)
 		tracker.AddIssue(Issue{
@@ -105,7 +125,7 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 	}
 
 	// 5. ARGUS-A24: Multi-tenant table isolation leak (anti-BOLA)
-	a24Issues := a24_tenant_leak.InspectFile(nil, fset, node, dm, nil)
+	a24Issues := a24_tenant_leak.InspectFile(pass, fset, node, dm, nil)
 	for _, issue := range a24Issues {
 		pos := fset.Position(issue.Pos)
 		tracker.AddIssue(Issue{

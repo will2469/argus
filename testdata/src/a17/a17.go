@@ -71,3 +71,37 @@ func Cases(ctx context.Context, db DB, worker NonDBWorker, ids []int) {
 		_ = db.QueryRow(ctx, "SELECT * FROM users WHERE id = $1", id)
 	}
 }
+
+func getUser(ctx context.Context, db DB, id int) (string, error) {
+	_ = db.QueryRow(ctx, "SELECT name FROM users WHERE id = $1", id)
+	return "", nil
+}
+
+func loadUser(ctx context.Context, db DB, id int) (string, error) {
+	return getUser(ctx, db, id)
+}
+
+func fetchUserWrapper(ctx context.Context, db DB, id int) (string, error) {
+	return loadUser(ctx, db, id)
+}
+
+func UnsafeMultiLevelHelperLoop(ctx context.Context, db DB, ids []int) {
+	// 9. Multi-level helper executing DB query called inside loop (Depth 3)
+	for _, id := range ids { // want `\[ARGUS-A17\] N\+1 query pattern detected: helper function "fetchUserWrapper" executes database query inside loop; use batching or set-based query instead`
+		_, _ = fetchUserWrapper(ctx, db, id)
+	}
+}
+
+type SearchEngine struct{}
+
+func (SearchEngine) Query(ctx context.Context, q string) string {
+	return q
+}
+
+func SafeSearchEngineLoop(ctx context.Context, search SearchEngine, items []string) {
+	// 10. Non-DB SearchEngine.Query called inside loop (Compliant - zero findings!)
+	for _, item := range items {
+		_ = search.Query(ctx, item)
+	}
+}
+
