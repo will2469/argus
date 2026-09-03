@@ -3,7 +3,9 @@
 package a05_audit_immutability
 
 import (
+	"fmt"
 	"go/ast"
+	"go/token"
 	"path/filepath"
 	"strings"
 
@@ -27,6 +29,85 @@ var Analyzer = &analysis.Analyzer{
 	},
 }
 
+// Issue describes a detected violation of ARGUS-A05.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
+
+// InspectFile inspects an AST file for forbidden mutations on audit tables.
+// Can be called with pass == nil in standalone CLI runner mode.
+func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap, auditTables map[string]bool) []Issue {
+	if file == nil {
+		return nil
+	}
+	if fset == nil && pass != nil {
+		fset = pass.Fset
+	}
+	if auditTables == nil {
+		auditTables = map[string]bool{"audit_logs": true, "security_events": true}
+	}
+
+	pos := fset.Position(file.Package)
+	if strings.HasSuffix(pos.Filename, "_test.go") {
+		return nil
+	}
+
+	var issues []Issue
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		inspectBody(fset, fn.Body, dm, auditTables, &issues)
+	}
+
+	return issues
+}
+
+func inspectBody(fset *token.FileSet, body *ast.BlockStmt, dm *directives.DirectiveMap, auditTables map[string]bool, issues *[]Issue) {
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
+			return true
+		}
+
+		// Filter non-db receivers
+		if id, ok := sel.X.(*ast.Ident); ok {
+			switch strings.ToLower(id.Name) {
+			case "search", "client", "http", "logger", "queue", "cmd", "runner", "cache":
+				return true
+			}
+		}
+
+		if dm != nil && fset != nil && dm.IsIgnored(fset, call.Pos(), RuleCode) {
+			return true
+		}
+
+		queries := extractAllQueryStrings(call, body)
+		for _, query := range queries {
+			if strings.TrimSpace(query) == "" {
+				continue
+			}
+
+			op, violatedTable := CheckSQLTampering(query, auditTables)
+			if op != "" {
+				*issues = append(*issues, Issue{
+					Pos:     call.Pos(),
+					Message: fmt.Sprintf("forbidden %s on audit table %q; audit trails must be strictly append-only", op, violatedTable),
+				})
+				break
+			}
+		}
+		return true
+	})
+}
+
 func run(pass *analysis.Pass) (interface{}, error) {
 	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
 	if !cfg.IsRuleEnabled(RuleCode) {
@@ -43,32 +124,10 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 	// 1. Inspect Go source files
 	for _, file := range pass.Files {
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
-				return true
-			}
-
-			query, found := callsite.ExtractQueryString(call)
-			if !found || strings.TrimSpace(query) == "" {
-				return true
-			}
-
-			if dm.IsIgnored(pass.Fset, call.Pos(), RuleCode) {
-				return true
-			}
-
-			op, violatedTable := CheckSQLTampering(query, auditTablesMap)
-			if op != "" {
-				pass.Reportf(call.Pos(), "[%s] forbidden %s on audit table %q; audit trails must be strictly append-only", RuleCode, op, violatedTable)
-			}
-			return true
-		})
+		issues := InspectFile(pass, pass.Fset, file, dm, auditTablesMap)
+		for _, iss := range issues {
+			pass.Reportf(iss.Pos, "[%s] %s", RuleCode, iss.Message)
+		}
 	}
 
 	// 2. Inspect migrations if current package directory hosts migrations

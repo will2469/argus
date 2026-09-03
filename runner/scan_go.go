@@ -14,6 +14,7 @@ import (
 	"github.com/will2469/argus/rules/a02_unclosed_rows"
 	"github.com/will2469/argus/rules/a03_context"
 	"github.com/will2469/argus/rules/a04_orderby"
+	"github.com/will2469/argus/rules/a05_audit_immutability"
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
@@ -139,7 +140,20 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 		})
 	}
 
-	// 6. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
+	// 6. ARGUS-A05: Audit Table Immutability
+	a05Issues := a05_audit_immutability.InspectFile(pass, fset, node, dm, nil)
+	for _, issue := range a05Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "FORBIDDEN_AUDIT_MUTATION",
+			Message:  issue.Message,
+			Category: "security",
+		})
+	}
+
+	// 7. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
 	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
 	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {
