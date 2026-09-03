@@ -32,13 +32,23 @@ func CheckRuleGoldenStatus(rootDir string, ruleNum int) RuleCorpusStatus {
 
 	if isMigration {
 		migPath := filepath.Join(rootDir, "tests", "migration", folder)
-		if info, err := os.Stat(migPath); err == nil && info.IsDir() {
+		posFile := filepath.Join(migPath, "positive", "positive.go")
+		negFile := filepath.Join(migPath, "negative", "negative.go")
+		advFile := filepath.Join(migPath, "adversarial", "adversarial.go")
+		testFile := filepath.Join(migPath, fmt.Sprintf("%s_corpus_test.go", folder))
+
+		hasPos := fileExists(posFile)
+		hasNeg := fileExists(negFile)
+		hasAdv := fileExists(advFile)
+		hasTest := fileExists(testFile)
+
+		if hasPos && hasNeg && hasAdv && hasTest {
 			return RuleCorpusStatus{
 				RuleCode:  code,
 				Category:  "Migration",
 				IsAdopted: true,
 				Path:      filepath.Join("tests", "migration", folder),
-				Details:   "Golden migration corpus verified",
+				Details:   "1 SSOT Golden Migration Corpus (positive, negative, adversarial + runner)",
 			}
 		}
 		return RuleCorpusStatus{

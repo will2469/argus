@@ -60,7 +60,7 @@ Setiap aturan yang mengadopsi Golden Corpus wajib mengimplementasikan matriks ka
 
 ## 2. Directory Hierarchy & 1-SSOT Architecture
 
-Semua fixture pengujian berpusat di direktori `tests/`. Folder legacy `testdata/src/<rule>` **dihapus tuntas** begitu rule mengadopsi Golden Corpus:
+Semua fixture pengujian berpusat di direktori `tests/`. Folder legacy `testdata/src/<rule>` **dihapus tuntas** begitu rule mengadopsi Golden Corpus. Standar layout dibuat **100% simetris** antara aturan Go AST dan SQL Migration:
 
 ```text
 tests/
@@ -74,32 +74,37 @@ tests/
 │   │   ├── adversarial/             # A1 - A7 (stress-testing & evasion matrix)
 │   │   │   └── adversarial.go
 │   │   └── a01_corpus_test.go       # Automated resilience & dual-path harness
-│   ├── a17/                         # ARGUS-A17: N+1 in Loops (Pending)
-│   ├── a24/                         # ARGUS-A24: Tenant Isolation Leak (Pending)
-│   └── a26/                         # ARGUS-A26: LIKE Wildcard Injection (Pending)
+│   ├── a02/ s/d a10/                # ADOPTED
+│   └── a12, a14, a16 - a26          # Queued Correctness Rules
 │
-└── migration/                       # SQL Migration rules
+└── migration/                       # SQL Migration rules (100% Symmetric Standard)
     ├── a11/                         # ARGUS-A11: Destructive Migrations
-    ├── a13/                         # ARGUS-A13: Missing Down Migrations
-    ├── a27/                         # ARGUS-A27: Non-Concurrent Indexes
-    ├── a28/                         # ARGUS-A28: Table Locking Constraints
-    ├── a29/                         # ARGUS-A29: Unindexed Foreign Keys
-    └── a30/                         # ARGUS-A30: Timestamps Without Timezone
+    │   ├── positive/                # positive.go (// want) + migrations/*.up.sql
+    │   │   ├── positive.go
+    │   │   └── migrations/          # Violating migrations (DROP TABLE, DROP COLUMN, etc.)
+    │   ├── negative/                # negative.go (0 want) + migrations/*.up.sql
+    │   │   ├── negative.go
+    │   │   └── migrations/          # Safe migrations, -- argus:contract, -- argus:ignore
+    │   ├── adversarial/             # adversarial.go + migrations/*.up.sql
+    │   │   ├── adversarial.go
+    │   │   └── migrations/          # SQL AST evasion (multistmt, casing, quotes, schema)
+    │   └── a11_corpus_test.go       # SQL parser resilience & standalone runner parity
+    └── a13, a15, a27 - a30          # Queued Migration Rules
 ```
 
 ---
 
 ## 3. Wiring `analysistest.Run` ke 1-SSOT Module Root
 
-Untuk menghindari duplikasi fixture antara `testdata/` dan `tests/`, `rules/aXX/analyzer_test.go` diarahkan langsung ke `tests/correctness/aXX/` menggunakan module mode bawaan Go:
+Untuk menghindari duplikasi fixture antara `testdata/` dan `tests/`, `rules/aXX/analyzer_test.go` diarahkan langsung ke `tests/correctness/aXX/` atau `tests/migration/aXX/` menggunakan module mode bawaan Go:
 
+### Untuk Aturan Go AST (`tests/correctness/`):
 ```go
 func TestAnalyzer(t *testing.T) {
 	rootDir, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Menguji positive (// want) dan negative (0 issues) langsung dari SSOT
 	analysistest.Run(t, rootDir, Analyzer,
 		"./tests/correctness/aXX/positive",
 		"./tests/correctness/aXX/negative",
@@ -107,28 +112,63 @@ func TestAnalyzer(t *testing.T) {
 }
 ```
 
-Setiap kali baris pada `positive/positive.go` melanggar aturan, tambahkan anotasi kanonikal `// want`:
+### Untuk Aturan SQL Migration (`tests/migration/`):
 ```go
-db.Query(ctx, "SELECT * FROM users WHERE id = "+id) // want `\[ARGUS-A01\] unsafe SQL concatenation`
+func TestAnalyzer(t *testing.T) {
+	rootDir, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/migration/aXX/positive",
+		"./tests/migration/aXX/negative",
+	)
+}
 ```
-Dengan cara ini, `analysistest.Run` bertindak sebagai verifikator driver Go resmi, sementara `aXX_corpus_test.go` bertindak sebagai verifikator ketahanan mendalam (adversarial matrix dan standalone runner parity).
+
+Setiap kali baris pada `positive/positive.go` melanggar aturan, tambahkan anotasi kanonikal `// want`:
+- Pada kode Go: `db.Query(ctx, "SELECT * FROM users WHERE id = "+id) // want \`\[ARGUS-A01\] unsafe SQL concatenation\``
+- Pada package migrasi: `package positive // want \`\[ARGUS-A11\] 001_destructive.up.sql: Destructive operation ...\``
+
+Dengan cara ini, `analysistest.Run` bertindak sebagai verifikator driver Go resmi, sementara `<rule>_corpus_test.go` bertindak sebagai verifikator ketahanan mendalam (adversarial matrix dan standalone runner parity).
 
 ---
 
-## 4. Rule-by-Rule Iteration Protocol (Alur Migrasi Per Rule)
+## 4. Migration Rules Adversarial Matrix (M1–M7)
+
+Untuk aturan SQL Migration, folder `adversarial/migrations/` menguji ketahanan parser AST `pg_query_go` terhadap vektor penghindaran sintaks SQL:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│               MIGRATION ADVERSARIAL MATRIX (M1 - M7)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  • M1: Multi-statement Chaining  — Safe DDL followed by hidden destructive   │
+│  • M2: Case Insensitivity        — Mixed case syntax (e.g. dRoP cOlUmN)     │
+│  • M3: Quoted Identifiers        — Escaped quotes (e.g. DROP TABLE "users") │
+│  • M4: Schema Qualification      — Explicit schemas (e.g. DROP TABLE pub.u) │
+│  • M5: Interleaved Comments      — Comments inside DDL (ALTER /* c */ TABLE)│
+│  • M6: Procedural Block Wrapping — Nested in DO $$ BEGIN ... END $$;        │
+│  • M7: Batch Multi-Target        — Comma-separated drops (DROP TABLE a, b)  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 5. Rule-by-Rule Iteration Protocol (Alur Migrasi Per Rule)
 
 Saat memigrasikan rule dari legacy unit-test ke Golden Corpus:
 
 1. **Step 1: Scaffolding Corpus Folders**
-   - Buat direktori `tests/correctness/<rule>/` dengan subfolder `positive/`, `negative/`, `adversarial/`.
-2. **Step 2: Implementasi 17 Pola**
-   - `positive/positive.go`: Implementasikan P1–P5 lengkap dengan anotasi `// want` dan kasus `argus:ignore`.
-   - `negative/negative.go`: Implementasikan N1–N5 yang wajib bersih dari diagnostik.
-   - `adversarial/adversarial.go`: Implementasikan A1–A7 untuk menguji batas ketahanan parser AST/taint.
+   - Untuk Go: buat `tests/correctness/<rule>/` dengan subfolder `positive/`, `negative/`, `adversarial/`.
+   - Untuk Migrasi: buat `tests/migration/<rule>/` dengan subfolder `positive/migrations/`, `negative/migrations/`, `adversarial/migrations/`.
+2. **Step 2: Implementasi Pola Matrix**
+   - `positive/`: Implementasikan kasus pelanggaran dengan anotasi `// want`.
+   - `negative/`: Implementasikan kasus patuh, valid, serta verifikasi directive (`argus:ignore`, `argus:contract`).
+   - `adversarial/`: Implementasikan vektor stress-test (A1–A7 untuk Go AST, M1–M7 untuk Migration SQL).
 3. **Step 3: Test Harness & Paritas Runner**
-   - Buat `<rule>_corpus_test.go` yang menguji `InspectFile`, direct assertions, dan `runner.RunAuditWithConfig`.
+   - Buat `<rule>_corpus_test.go` yang menguji `InspectFile`/`ScanMigrationDir`, direct assertions, dan `runner.RunAuditWithConfig`.
 4. **Step 4: Wiring SSOT & Hapus Legacy**
-   - Perbarui `rules/<rule>/analyzer_test.go` agar mengarah ke `./tests/correctness/<rule>/...`.
+   - Perbarui `rules/<rule>/analyzer_test.go` agar mengarah ke `./tests/<category>/<rule>/...`.
    - Hapus berkas dan folder lama di `testdata/src/<rule>/`.
 5. **Step 5: Verifikasi Status Adopsi**
    - Jalankan `go test -v -run TestGoldenCorpus_AdoptionMatrix ./tests`.

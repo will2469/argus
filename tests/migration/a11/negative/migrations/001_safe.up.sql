@@ -1,0 +1,6 @@
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
+ALTER TABLE users ADD COLUMN phone VARCHAR(20) DEFAULT '';
