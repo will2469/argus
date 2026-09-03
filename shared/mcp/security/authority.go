@@ -53,28 +53,35 @@ func (pa *PathAuthority) ValidatePath(targetPath string) (string, error) {
 		return "", fmt.Errorf("path cannot be empty")
 	}
 
-	absTarget, err := filepath.Abs(trimmed)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve path %q: %w", targetPath, err)
-	}
-
-	// Critical Defense: EvalSymlinks resolves any symlink hops to their true physical target!
-	realTarget, err := filepath.EvalSymlinks(absTarget)
-	if err != nil {
-		// Target might not exist on disk yet (e.g. proposed migration file).
-		// Resolve symlinks on the deepest existing ancestor to prevent symlink-nested escapes.
-		realTarget = resolveSymlinkAncestor(absTarget)
-	}
-	realTarget = filepath.Clean(realTarget)
-
 	for _, root := range pa.canonicalRoots {
+		var candidate string
+		if filepath.IsAbs(trimmed) {
+			candidate = trimmed
+		} else {
+			candidate = filepath.Join(root, trimmed)
+		}
+
+		absTarget, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+
+		// Critical Defense: EvalSymlinks resolves any symlink hops to their true physical target!
+		realTarget, err := filepath.EvalSymlinks(absTarget)
+		if err != nil {
+			// Target might not exist on disk yet (e.g. proposed migration file).
+			// Resolve symlinks on the deepest existing ancestor to prevent symlink-nested escapes.
+			realTarget = resolveSymlinkAncestor(absTarget)
+		}
+		realTarget = filepath.Clean(realTarget)
+
 		if isWithin(root, realTarget) {
 			return realTarget, nil
 		}
 	}
 
-	return "", fmt.Errorf("path authority violation: %q (resolved to %q) is not within allowed roots %v",
-		targetPath, realTarget, pa.canonicalRoots)
+	return "", fmt.Errorf("path authority violation: %q is not within allowed roots %v",
+		targetPath, pa.canonicalRoots)
 }
 
 func resolveSymlinkAncestor(path string) string {

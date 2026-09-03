@@ -28,7 +28,7 @@ func TestScanMigrations_StrictMode_ParseFailure(t *testing.T) {
 	tracker := NewMetricsTracker()
 	cfg := config.DefaultConfig() // strict mode enabled by default
 
-	scanMigrationDirectories([]string{tempDir}, tempDir, tracker, cfg)
+	scanMigrationDirectories([]string{tempDir}, tempDir, tracker, cfg, nil)
 
 	issues := tracker.issues
 	if len(issues) != 1 {
@@ -63,7 +63,7 @@ func TestScanMigrations_PermissiveMode_ParseFailure(t *testing.T) {
 	permissive := false
 	cfg.Options.StrictMode = &permissive
 
-	scanMigrationDirectories([]string{tempDir}, tempDir, tracker, cfg)
+	scanMigrationDirectories([]string{tempDir}, tempDir, tracker, cfg, nil)
 
 	issues := tracker.issues
 	if len(issues) != 0 {

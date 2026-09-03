@@ -65,7 +65,9 @@ func (t *checkMigrationTool) Execute(ctx context.Context, id any, rawArgs json.R
 	var input struct {
 		SQL string `json:"sql"`
 	}
-	_ = json.Unmarshal(rawArgs, &input)
+	if err := json.Unmarshal(rawArgs, &input); err != nil {
+		return mcperrors.ToolError(id, fmt.Sprintf("Invalid arguments: %v", err))
+	}
 
 	tmpDir, err := os.MkdirTemp("", "argus-mcp-migration-*")
 	if err != nil {

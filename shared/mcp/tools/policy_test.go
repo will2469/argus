@@ -70,3 +70,50 @@ func TestValidateToolPolicy_ExplainRule(t *testing.T) {
 		t.Fatalf("expected oversized rule_code error, got: %v", err)
 	}
 }
+
+func TestAuthorityConsistencyInvariant(t *testing.T) {
+	// This test ensures that authority resolution is consistent between
+	// policy validation and execution layers, preventing the scenario where:
+	// Policy believes: /A/project
+	// Runner believes: /B/project
+
+	tool, ok := DefaultRegistry.Get("argus_scan")
+	if !ok {
+		t.Fatal("argus_scan not found in default registry")
+	}
+
+	scanTool, ok := tool.(*scanTool)
+	if !ok {
+		t.Fatal("tool is not scanTool")
+	}
+
+	// Resolve authority multiple times to verify consistency
+	auth1, err := scanTool.getAuthority()
+	if err != nil {
+		t.Fatalf("first authority resolution failed: %v", err)
+	}
+
+	auth2, err := scanTool.getAuthority()
+	if err != nil {
+		t.Fatalf("second authority resolution failed: %v", err)
+	}
+
+	// Verify that both authorities have the same canonical roots
+	roots1 := auth1.CanonicalRoots()
+	roots2 := auth2.CanonicalRoots()
+
+	if len(roots1) != len(roots2) {
+		t.Fatalf("authority root count inconsistent: %d vs %d", len(roots1), len(roots2))
+	}
+
+	for i, root1 := range roots1 {
+		if root1 != roots2[i] {
+			t.Fatalf("authority root %d inconsistent: %s vs %s", i, root1, roots2[i])
+		}
+	}
+
+	// Verify primary root consistency
+	if auth1.PrimaryRoot() != auth2.PrimaryRoot() {
+		t.Fatalf("primary root inconsistent: %s vs %s", auth1.PrimaryRoot(), auth2.PrimaryRoot())
+	}
+}

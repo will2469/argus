@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,27 +21,49 @@ import (
 )
 
 // scanMigrationDirectories runs all migration checker rules across specified migration directories.
-func scanMigrationDirectories(migrationDirs []string, rootDir string, tracker *MetricsTracker, cfg *config.Config) {
+func scanMigrationDirectories(migrationDirs []string, rootDir string, tracker *MetricsTracker, cfg *config.Config, fsys fs.FS) {
 	reg := a15_ddl_grant.FromConfig(cfg)
 
 	for _, dir := range migrationDirs {
-		targetDir := dir
-		if !filepath.IsAbs(targetDir) {
-			targetDir = filepath.Join(rootDir, targetDir)
+		var targetDir string
+		var sqlFiles []string
+		if fsys != nil {
+			targetDir = filepath.ToSlash(filepath.Clean(dir))
+			if targetDir == "" {
+				targetDir = "."
+			}
+			sqlFiles = findFilesWithExtFS(fsys, targetDir, ".sql")
+		} else {
+			targetDir = dir
+			if !filepath.IsAbs(targetDir) {
+				targetDir = filepath.Join(rootDir, targetDir)
+			}
+			sqlFiles = findFilesWithExt(targetDir, ".sql")
 		}
 
-		sqlFiles := findFilesWithExt(targetDir, ".sql")
 		tracker.IncrementMigrationFiles(len(sqlFiles))
 
 		dm := directives.NewDirectiveMap()
 
 		// 1. Check A13: Missing Down Migrations
-		for _, issue := range a13_missing_down_migration.ScanDirectory(targetDir, dm) {
+		var a13Issues []migration.Issue
+		if fsys != nil {
+			a13Issues = a13_missing_down_migration.ScanDirectoryFS(fsys, targetDir, dm)
+		} else {
+			a13Issues = a13_missing_down_migration.ScanDirectory(targetDir, dm)
+		}
+		for _, issue := range a13Issues {
 			addMigrationIssue(issue, "ARGUS-A13", rootDir, tracker)
 		}
 
 		// 2. Check A29: Unindexed Foreign Keys across migration directory
-		for _, issue := range a29_unindexed_fk.ScanMigrationDir(targetDir, dm, cfg) {
+		var a29Issues []migration.Issue
+		if fsys != nil {
+			a29Issues = a29_unindexed_fk.ScanMigrationDirFS(fsys, targetDir, dm, cfg)
+		} else {
+			a29Issues = a29_unindexed_fk.ScanMigrationDir(targetDir, dm, cfg)
+		}
+		for _, issue := range a29Issues {
 			addMigrationIssue(issue, "ARGUS-A29", rootDir, tracker)
 		}
 
@@ -49,7 +72,13 @@ func scanMigrationDirectories(migrationDirs []string, rootDir string, tracker *M
 			if !strings.HasSuffix(file, ".up.sql") {
 				continue
 			}
-			data, err := os.ReadFile(file)
+			var data []byte
+			var err error
+			if fsys != nil {
+				data, err = fs.ReadFile(fsys, filepath.ToSlash(file))
+			} else {
+				data, err = os.ReadFile(file)
+			}
 			if err != nil {
 				continue
 			}

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +15,24 @@ func findFilesWithExt(root, ext string) []string {
 			return nil
 		}
 		if !info.IsDir() && strings.HasSuffix(path, ext) {
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files
+}
+
+func findFilesWithExtFS(fsys fs.FS, root, ext string) []string {
+	var files []string
+	cleanRoot := filepath.ToSlash(filepath.Clean(root))
+	if cleanRoot == "" {
+		cleanRoot = "."
+	}
+	_ = fs.WalkDir(fsys, cleanRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil {
+			return nil
+		}
+		if !d.IsDir() && strings.HasSuffix(path, ext) {
 			files = append(files, path)
 		}
 		return nil

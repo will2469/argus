@@ -2,6 +2,7 @@
 package a29_unindexed_fk
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,33 +16,64 @@ import (
 
 // ScanMigrationDir scans all migration files in a directory and subdirectories and cross-references FKs with Indexes.
 func ScanMigrationDir(dir string, dm *directives.DirectiveMap, cfg *config.Config) []migration.Issue {
+	return ScanMigrationDirFS(nil, dir, dm, cfg)
+}
+
+// ScanMigrationDirFS scans all migration files using the provided fs.FS (or ambient OS if fsys is nil).
+func ScanMigrationDirFS(fsys fs.FS, dir string, dm *directives.DirectiveMap, cfg *config.Config) []migration.Issue {
 	files := make(map[string]string)
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil || info.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(info.Name(), ".up.sql") {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err == nil {
-			files[path] = string(data)
-			if dm != nil {
-				fileDm := directives.ParseSQLDirectives(string(data), path)
-				lineCount := strings.Count(string(data), "\n") + 1
-				for l := 1; l <= lineCount; l++ {
-					if fileDm.IsLineIgnored(path, l, RuleCode) {
-						dm.AddDirective(path, l, RuleCode, "sql directive")
-						dm.AddDirective(info.Name(), l, RuleCode, "sql directive")
+
+	if fsys != nil {
+		walkDir := filepath.ToSlash(filepath.Clean(dir))
+		_ = fs.WalkDir(fsys, walkDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d == nil || d.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(d.Name(), ".up.sql") {
+				return nil
+			}
+			data, err := fs.ReadFile(fsys, path)
+			if err == nil {
+				files[path] = string(data)
+				if dm != nil {
+					fileDm := directives.ParseSQLDirectives(string(data), path)
+					lineCount := strings.Count(string(data), "\n") + 1
+					for l := 1; l <= lineCount; l++ {
+						if fileDm.IsLineIgnored(path, l, RuleCode) {
+							dm.AddDirective(path, l, RuleCode, "sql directive")
+							dm.AddDirective(d.Name(), l, RuleCode, "sql directive")
+						}
 					}
 				}
 			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil
+			return nil
+		})
+	} else {
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info == nil || info.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(info.Name(), ".up.sql") {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err == nil {
+				files[path] = string(data)
+				if dm != nil {
+					fileDm := directives.ParseSQLDirectives(string(data), path)
+					lineCount := strings.Count(string(data), "\n") + 1
+					for l := 1; l <= lineCount; l++ {
+						if fileDm.IsLineIgnored(path, l, RuleCode) {
+							dm.AddDirective(path, l, RuleCode, "sql directive")
+							dm.AddDirective(info.Name(), l, RuleCode, "sql directive")
+						}
+					}
+				}
+			}
+			return nil
+		})
 	}
+
 	return CheckMigrations(files, dm, cfg)
 }
 

@@ -13,9 +13,18 @@ import (
 	"github.com/will2469/argus/shared/mcp/security"
 )
 
-// NewScanTool initializes the argus_scan tool.
+type scanTool struct {
+	allowedRoots []string
+}
+
+// NewScanTool initializes the argus_scan tool with default roots.
 func NewScanTool() Tool {
 	return &scanTool{}
+}
+
+// NewScanToolWithRoots initializes the argus_scan tool with explicit allowed roots.
+func NewScanToolWithRoots(roots []string) Tool {
+	return &scanTool{allowedRoots: roots}
 }
 
 func (t *scanTool) Name() string {
@@ -53,20 +62,37 @@ func (t *scanTool) Definition() ToolDef {
 	}
 }
 
+func (t *scanTool) getAuthority() (*security.PathAuthority, error) {
+	if len(t.allowedRoots) > 0 {
+		return security.NewPathAuthority(t.allowedRoots...)
+	}
+	cfg, err := config.LoadConfig(".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+	roots := cfg.GetAllowedRoots()
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("no allowed roots configured")
+	}
+	return security.NewPathAuthority(roots...)
+}
+
 func (t *scanTool) ValidatePolicy(rawArgs json.RawMessage) error {
 	var input struct {
 		Dirs       []string `json:"dirs"`
 		Migrations []string `json:"migrations"`
 	}
+	// Allow empty args for default behavior (scan project root)
 	if len(rawArgs) > 0 {
-		_ = json.Unmarshal(rawArgs, &input)
+		if err := json.Unmarshal(rawArgs, &input); err != nil {
+			return fmt.Errorf("invalid arguments: %w", err)
+		}
 	}
 	if len(input.Dirs)+len(input.Migrations) > security.MaxScanDirsLimit {
 		return fmt.Errorf("too many scan directories specified (limit: %d)", security.MaxScanDirsLimit)
 	}
 
-	cfg, _ := config.LoadConfig(".")
-	authority, err := security.NewPathAuthority(cfg.GetAllowedRoots()...)
+	authority, err := t.getAuthority()
 	if err != nil {
 		return fmt.Errorf("failed to initialize path authority: %w", err)
 	}
@@ -89,15 +115,31 @@ func (t *scanTool) Execute(ctx context.Context, id any, rawArgs json.RawMessage)
 		Dirs       []string `json:"dirs"`
 		Migrations []string `json:"migrations"`
 	}
-	if rawArgs != nil {
-		_ = json.Unmarshal(rawArgs, &input)
+	// Allow empty args for default behavior (scan project root)
+	if len(rawArgs) > 0 {
+		if err := json.Unmarshal(rawArgs, &input); err != nil {
+			return mcperrors.ToolError(id, fmt.Sprintf("Invalid arguments: %v", err))
+		}
 	}
 
+	authority, err := t.getAuthority()
+	if err != nil {
+		return mcperrors.ToolError(id, fmt.Sprintf("Security configuration error: %v", err))
+	}
+
+	// Mandatory capability acquisition: Atomically validate and open root capability
+	cap, cleanDirs, cleanMigs, err := authority.AuthorizeAndOpen(input.Dirs, input.Migrations)
+	if err != nil {
+		return mcperrors.ToolError(id, fmt.Sprintf("Path authority violation: %v", err))
+	}
+	defer cap.Close()
+
 	cfg := runner.AuditConfig{
-		RootDir:       ".",
-		ScanDirs:      input.Dirs,
-		MigrationDirs: input.Migrations,
+		RootDir:       authority.PrimaryRoot(),
+		ScanDirs:      cleanDirs,
+		MigrationDirs: cleanMigs,
 		Context:       ctx,
+		FS:            cap.FS(),
 	}
 
 	result, err := runner.RunAuditWithConfig(cfg)

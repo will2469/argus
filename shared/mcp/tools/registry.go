@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/will2469/argus/shared/mcp/errors"
 	"github.com/will2469/argus/shared/mcp/security"
@@ -16,9 +17,29 @@ func NewRegistry() *Registry {
 	}
 }
 
-// Register adds a tool to the registry.
+// Register adds a tool to the registry. It enforces strict structural contract
+// invariants (non-nil, non-empty matching name, object schema, valid cost)
+// so that rogue or malformed tools cannot enter the dispatch lifecycle.
 func (r *Registry) Register(t Tool) {
-	name := t.Name()
+	if t == nil {
+		panic("mcp: cannot register nil tool")
+	}
+	name := strings.TrimSpace(t.Name())
+	if name == "" {
+		panic("mcp: tool name cannot be empty")
+	}
+	def := t.Definition()
+	if def.Name != name {
+		panic(fmt.Sprintf("mcp: tool definition name %q does not match Name() %q", def.Name, name))
+	}
+	if def.InputSchema.Type != "object" {
+		panic(fmt.Sprintf("mcp: tool %q input schema type must be \"object\", got %q", name, def.InputSchema.Type))
+	}
+	cost := t.Cost()
+	if cost != CostCheap && cost != CostExpensive {
+		panic(fmt.Sprintf("mcp: tool %q has invalid cost classification: %v", name, cost))
+	}
+
 	if _, exists := r.tools[name]; !exists {
 		r.order = append(r.order, name)
 	}

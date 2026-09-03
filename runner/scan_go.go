@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,9 +41,18 @@ import (
 	"github.com/will2469/argus/shared/directives"
 )
 
-func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg *config.Config) {
+func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg *config.Config, fsys fs.FS) {
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+	var src any
+	if fsys != nil {
+		cleanPath := filepath.ToSlash(filepath.Clean(filePath))
+		data, err := fs.ReadFile(fsys, cleanPath)
+		if err != nil {
+			return
+		}
+		src = data
+	}
+	node, err := parser.ParseFile(fset, filePath, src, parser.ParseComments)
 	if err != nil {
 		return
 	}

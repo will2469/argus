@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
@@ -18,6 +19,7 @@ type AuditConfig struct {
 	Config        *config.Config
 	Analyzers     []*analysis.Analyzer
 	Context       context.Context
+	FS            fs.FS
 }
 
 // RunAuditWithConfig scans specified targets using provided configuration.
@@ -43,15 +45,27 @@ func RunAuditWithConfig(cfg AuditConfig) (*AuditResult, error) {
 	var goFiles []string
 	seenFiles := make(map[string]bool)
 	for _, dir := range scanDirs {
-		target := dir
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(rootDir, target)
-		}
 		var files []string
-		if strings.HasSuffix(target, ".go") {
-			files = []string{target}
+		if cfg.FS != nil {
+			cleanTarget := filepath.ToSlash(filepath.Clean(dir))
+			if cleanTarget == "" {
+				cleanTarget = "."
+			}
+			if strings.HasSuffix(cleanTarget, ".go") {
+				files = []string{cleanTarget}
+			} else {
+				files = findFilesWithExtFS(cfg.FS, cleanTarget, ".go")
+			}
 		} else {
-			files = findFilesWithExt(target, ".go")
+			target := dir
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(rootDir, target)
+			}
+			if strings.HasSuffix(target, ".go") {
+				files = []string{target}
+			} else {
+				files = findFilesWithExt(target, ".go")
+			}
 		}
 		for _, f := range files {
 			if !seenFiles[f] {
@@ -69,7 +83,7 @@ func RunAuditWithConfig(cfg AuditConfig) (*AuditResult, error) {
 			continue
 		}
 		tracker.IncrementScannedFiles(1)
-		scanGoSourceFile(file, rootDir, tracker, appCfg)
+		scanGoSourceFile(file, rootDir, tracker, appCfg, cfg.FS)
 	}
 
 	if cfg.Context != nil && cfg.Context.Err() != nil {
@@ -82,7 +96,7 @@ func RunAuditWithConfig(cfg AuditConfig) (*AuditResult, error) {
 		migrationDirs = appCfg.GetMigrationDirs()
 	}
 
-	scanMigrationDirectories(migrationDirs, rootDir, tracker, appCfg)
+	scanMigrationDirectories(migrationDirs, rootDir, tracker, appCfg, cfg.FS)
 
 	// 3. Build dynamic rule audit info from active analyzers and tracker issues
 	rulesInfo := BuildDynamicRuleAuditInfo(cfg.Analyzers, appCfg, tracker.verifiedQuerySites, tracker.scannedMigrationFiles, tracker.scannedFiles, tracker.issues)

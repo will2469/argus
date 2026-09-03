@@ -46,6 +46,5 @@ var DefaultRegistry = NewRegistry()
 
 // Concrete Tool Implementations
 
-type scanTool struct{}
 type checkMigrationTool struct{}
 type explainRuleTool struct{}

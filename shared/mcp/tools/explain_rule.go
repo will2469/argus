@@ -62,7 +62,9 @@ func (t *explainRuleTool) Execute(ctx context.Context, id any, rawArgs json.RawM
 	var input struct {
 		RuleCode string `json:"rule_code"`
 	}
-	_ = json.Unmarshal(rawArgs, &input)
+	if err := json.Unmarshal(rawArgs, &input); err != nil {
+		return mcperrors.ToolError(id, fmt.Sprintf("Invalid arguments: %v", err))
+	}
 
 	code := strings.ToUpper(strings.TrimSpace(input.RuleCode))
 	if !strings.HasPrefix(code, "A") {
