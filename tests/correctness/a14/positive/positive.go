@@ -1,4 +1,4 @@
-package a14
+package positive
 
 import (
 	"context"
@@ -18,29 +18,33 @@ func (DB) Exec(ctx context.Context, sql string, args ...any) (any, error) {
 	return nil, nil
 }
 
-func TestCases(ctx context.Context, db DB) {
-	// 1. Plain SELECT *
+// P1: Obvious Violation — direct SELECT * wildcard.
+func P1_Obvious(ctx context.Context, db DB) {
 	_, _ = db.Query(ctx, "SELECT * FROM users") // want `\[ARGUS-A14\] Forbidden 'SELECT \*' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure \(CWE-200\)`
+}
 
-	// 2. Table alias wildcard
+// P2: Indirect Violation — table alias wildcard projection.
+func P2_Indirect(ctx context.Context, db DB) {
 	_, _ = db.Query(ctx, "SELECT u.*, p.name FROM users u JOIN profiles p ON u.id = p.user_id") // want `\[ARGUS-A14\] Forbidden 'SELECT \*' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure \(CWE-200\)`
+}
 
-	// 3. Wildcard in CTE
+// P3: Helper Violation — wildcard in CTE subquery.
+func P3_Helper(ctx context.Context, db DB) {
 	_, _ = db.Query(ctx, "WITH active AS (SELECT * FROM users) SELECT id FROM active") // want `\[ARGUS-A14\] Forbidden 'SELECT \*' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure \(CWE-200\)`
+}
 
-	// 4. Compliant explicit projection
-	_, _ = db.Query(ctx, "SELECT id, nik, nama_lengkap FROM users WHERE is_active = true")
+// P4: Nested Violation — wildcard in UNION select statement.
+func P4_Nested(ctx context.Context, db DB) {
+	_, _ = db.Query(ctx, "SELECT id FROM users UNION SELECT * FROM archived_users") // want `\[ARGUS-A14\] Forbidden 'SELECT \*' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure \(CWE-200\)`
+}
 
-	// 5. Compliant COUNT(*) aggregate
-	_ = db.QueryRow(ctx, "SELECT COUNT(*) FROM users")
+// P5: Alias Violation — multiple table alias wildcards.
+func P5_Alias(ctx context.Context, db DB) {
+	_, _ = db.Query(ctx, "SELECT a.*, b.* FROM table_a a JOIN table_b b ON a.id = b.id") // want `\[ARGUS-A14\] Forbidden 'SELECT \*' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure \(CWE-200\)`
+}
 
-	// 6. Compliant EXISTS (SELECT * ...)
-	_, _ = db.Query(ctx, "SELECT id FROM users WHERE EXISTS (SELECT * FROM profiles WHERE profiles.user_id = users.id)")
-
-	// 7. Compliant NOT EXISTS (SELECT * ...)
-	_, _ = db.Query(ctx, "SELECT id FROM users WHERE NOT EXISTS (SELECT * FROM profiles WHERE profiles.user_id = users.id)")
-
-	// 8. Ignored call via canonical shortcode
+// P_Ignored: Suppressed violation using verified argus:ignore directive.
+func P_Ignored(ctx context.Context, db DB) {
 	// argus:ignore-a14 offline disaster recovery full row table dump
 	_, _ = db.Query(ctx, "SELECT * FROM audit_logs_archive")
 }

@@ -6,7 +6,6 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -57,20 +56,6 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 				params := CountParameters(val)
 				if params > 0 {
 					tracker.IncrementParameterizedSites(params)
-				}
-				// ARGUS-A14: Forbidden SELECT *
-				if a14_select_star.HasForbiddenSelectStar(val) {
-					if !dm.IsIgnored(fset, x.Pos(), "ARGUS-A14") {
-						pos := fset.Position(x.Pos())
-						tracker.AddIssue(Issue{
-							File:     relPath,
-							Line:     pos.Line,
-							Rule:     "FORBIDDEN_SELECT_STAR",
-							Message:  "Forbidden 'SELECT *' or wildcard column selection detected. Explicitly list all required columns to minimize DB memory overhead and network payload.",
-							Snippet:  strings.TrimSpace(val),
-							Category: "performance",
-						})
-					}
 				}
 			}
 		}
@@ -237,7 +222,20 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 		})
 	}
 
-	// 13. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
+	// 13. ARGUS-A14: Forbidden SELECT *
+	a14Issues := a14_select_star.InspectFile(pass, fset, node, dm)
+	for _, issue := range a14Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "FORBIDDEN_SELECT_STAR",
+			Message:  issue.Message,
+			Category: "performance",
+		})
+	}
+
+	// 14. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
 	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
 	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {

@@ -4,6 +4,7 @@ package a14_select_star
 
 import (
 	"go/ast"
+	"go/token"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -27,6 +28,122 @@ var Analyzer = &analysis.Analyzer{
 	},
 }
 
+// Issue describes a detected violation of ARGUS-A14.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
+
+// InspectFile inspects an AST file for forbidden SELECT * wildcard queries.
+// Supports both pass mode and standalone runner mode (pass == nil).
+func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	if file == nil {
+		return nil
+	}
+	if fset == nil && pass != nil {
+		fset = pass.Fset
+	}
+
+	pos := fset.Position(file.Package)
+	if strings.HasSuffix(pos.Filename, "_test.go") {
+		return nil
+	}
+
+	var issues []Issue
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		methodName := callsite.GetCallMethodName(call.Fun)
+		if !callsite.IsDBQueryMethod(methodName) {
+			return true
+		}
+
+		queries := extractAllQueryStrings(call, file)
+		for _, query := range queries {
+			if strings.TrimSpace(query) == "" {
+				continue
+			}
+
+			if HasForbiddenSelectStar(query) {
+				if fset != nil && dm != nil && (dm.IsIgnored(fset, call.Pos(), RuleCode) || dm.IsIgnored(fset, call.Pos(), RuleCode+".SELECT-STAR")) {
+					continue
+				}
+				issues = append(issues, Issue{
+					Pos:     call.Pos(),
+					Message: "Forbidden 'SELECT *' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure (CWE-200)",
+				})
+				break
+			}
+		}
+
+		return true
+	})
+
+	return issues
+}
+
+func extractAllQueryStrings(call *ast.CallExpr, file *ast.File) []string {
+	if call == nil || len(call.Args) == 0 {
+		return nil
+	}
+
+	queryArgIdx := 0
+	if len(call.Args) >= 2 {
+		queryArgIdx = 1
+	}
+	arg := call.Args[queryArgIdx]
+
+	var results []string
+	switch e := arg.(type) {
+	case *ast.BasicLit:
+		if e.Kind == token.STRING {
+			results = append(results, strings.Trim(e.Value, "`\""))
+		}
+	case *ast.Ident:
+		enclosing := findEnclosingFunc(file, call.Pos())
+		if enclosing != nil && enclosing.Body != nil {
+			ast.Inspect(enclosing.Body, func(n ast.Node) bool {
+				assign, ok := n.(*ast.AssignStmt)
+				if !ok || assign.Pos() >= call.Pos() {
+					return true
+				}
+				for i, lhs := range assign.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
+						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							results = append(results, strings.Trim(lit.Value, "`\""))
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+
+	if len(results) == 0 {
+		if s, ok := callsite.ExtractQueryString(call); ok {
+			results = append(results, s)
+		}
+	}
+	return results
+}
+
+func findEnclosingFunc(file *ast.File, pos token.Pos) *ast.FuncDecl {
+	if file == nil {
+		return nil
+	}
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			if fn.Pos() <= pos && pos <= fn.End() {
+				return fn
+			}
+		}
+	}
+	return nil
+}
+
 func run(pass *analysis.Pass) (interface{}, error) {
 	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
 	if !cfg.IsRuleEnabled(RuleCode) {
@@ -36,38 +153,10 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
 
 	for _, file := range pass.Files {
-		pos := pass.Fset.Position(file.Package)
-		if strings.HasSuffix(pos.Filename, "_test.go") {
-			continue
+		issues := InspectFile(pass, pass.Fset, file, dm)
+		for _, iss := range issues {
+			pass.Reportf(iss.Pos, "[%s] %s", RuleCode, iss.Message)
 		}
-
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-
-			methodName := callsite.GetCallMethodName(call.Fun)
-			if !callsite.IsDBQueryMethod(methodName) {
-				return true
-			}
-
-			query, found := callsite.ExtractQueryString(call)
-			if !found || strings.TrimSpace(query) == "" {
-				return true
-			}
-
-			if HasForbiddenSelectStar(query) {
-				if dm != nil && (dm.IsIgnored(pass.Fset, call.Pos(), RuleCode) || dm.IsIgnored(pass.Fset, call.Pos(), RuleCode+".SELECT-STAR")) {
-					return true
-				}
-				pass.Reportf(call.Pos(),
-					"[%s] Forbidden 'SELECT *' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure (CWE-200)",
-					RuleCode)
-			}
-
-			return true
-		})
 	}
 
 	return nil, nil
