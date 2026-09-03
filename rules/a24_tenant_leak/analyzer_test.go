@@ -20,8 +20,9 @@ func TestCheckTenantQuery(t *testing.T) {
 	tc := &TenantConfig{
 		TenantColumn: "tenant_id",
 		TenantTables: map[string]bool{
-			"users":  true,
-			"orders": true,
+			"users":     true,
+			"orders":    true,
+			"customers": true,
 		},
 	}
 
@@ -73,6 +74,40 @@ func TestCheckTenantQuery(t *testing.T) {
 		{
 			sql:       "SELECT id, name FROM users WHERE id = $1 AND (status = 'A' OR tenant_id = $2)",
 			violating: true,
+		},
+		// P0 Adversarial operator & constraint validation cases
+		{
+			sql:       "SELECT id FROM users WHERE tenant_id IS NOT NULL",
+			violating: true,
+		},
+		{
+			sql:       "SELECT id FROM users WHERE tenant_id > 0",
+			violating: true,
+		},
+		{
+			sql:       "SELECT id FROM users WHERE tenant_id != $1",
+			violating: true,
+		},
+		{
+			sql:       "SELECT id FROM users WHERE tenant_id <> $1",
+			violating: true,
+		},
+		// P0 Multi-table JOIN isolation cases
+		{
+			sql:       "SELECT u.id, c.name FROM users u JOIN customers c ON c.id = u.customer_id WHERE u.tenant_id = $1",
+			violating: true,
+		},
+		{
+			sql:       "SELECT u.id, c.name FROM users u JOIN customers c ON c.id = u.customer_id WHERE u.tenant_id = $1 AND c.tenant_id = $1",
+			violating: false,
+		},
+		{
+			sql:       "SELECT u.id, c.name FROM users u JOIN customers c ON c.id = u.customer_id AND c.tenant_id = $1 WHERE u.tenant_id = $2",
+			violating: false,
+		},
+		{
+			sql:       "SELECT u.id, c.name FROM users u JOIN customers c ON c.tenant_id = u.tenant_id WHERE u.tenant_id = $1",
+			violating: false,
 		},
 	}
 

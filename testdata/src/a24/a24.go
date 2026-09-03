@@ -79,3 +79,34 @@ func UnsafeSelectDisjunctiveOR(ctx context.Context, db DB, id, tenantID string) 
 	return db.Query(ctx, query, id, tenantID) // want `\[ARGUS-A24\] query on multi-tenant table 'users' missing 'tenant_id' predicate; risk of cross-tenant data breach \(CWE-284, OWASP API1:2023 BOLA\)`
 }
 
+// 12. Unsafe SELECT using NullTest pseudo-predicate (Violation)
+func UnsafeSelectNullTest(ctx context.Context, db DB) (any, error) {
+	const query = "SELECT id, email FROM users WHERE tenant_id IS NOT NULL"
+	return db.Query(ctx, query) // want `\[ARGUS-A24\] query on multi-tenant table 'users' missing 'tenant_id' predicate; risk of cross-tenant data breach \(CWE-284, OWASP API1:2023 BOLA\)`
+}
+
+// 13. Unsafe SELECT using non-isolating relational operator (Violation)
+func UnsafeSelectRelationalOp(ctx context.Context, db DB) (any, error) {
+	const query = "SELECT id, email FROM users WHERE tenant_id > 0"
+	return db.Query(ctx, query) // want `\[ARGUS-A24\] query on multi-tenant table 'users' missing 'tenant_id' predicate; risk of cross-tenant data breach \(CWE-284, OWASP API1:2023 BOLA\)`
+}
+
+// 14. Unsafe SELECT using inequality operator (Violation)
+func UnsafeSelectNotEqual(ctx context.Context, db DB, tenantID string) (any, error) {
+	const query = "SELECT id, email FROM users WHERE tenant_id != $1"
+	return db.Query(ctx, query, tenantID) // want `\[ARGUS-A24\] query on multi-tenant table 'users' missing 'tenant_id' predicate; risk of cross-tenant data breach \(CWE-284, OWASP API1:2023 BOLA\)`
+}
+
+// 15. Unsafe multi-table JOIN leaking unconstrained second tenant table (Violation)
+func UnsafeJoinMissingSecondTableTenant(ctx context.Context, db DB, tenantID string) (any, error) {
+	const query = "SELECT u.id, a.name FROM users u JOIN accounts a ON a.id = u.account_id WHERE u.tenant_id = $1"
+	return db.Query(ctx, query, tenantID) // want `\[ARGUS-A24\] query on multi-tenant table 'accounts' missing 'tenant_id' predicate; risk of cross-tenant data breach \(CWE-284, OWASP API1:2023 BOLA\)`
+}
+
+// 16. Safe multi-table JOIN with both tenant tables properly constrained (Compliant)
+func SafeJoinBothTablesIsolated(ctx context.Context, db DB, tenantID string) (any, error) {
+	const query = "SELECT u.id, a.name FROM users u JOIN accounts a ON a.id = u.account_id WHERE u.tenant_id = $1 AND a.tenant_id = $1"
+	return db.Query(ctx, query, tenantID)
+}
+
+

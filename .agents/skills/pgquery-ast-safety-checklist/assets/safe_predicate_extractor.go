@@ -54,6 +54,9 @@ func inspectConjunctiveNode(node *pg_query.Node, targets map[string]bool) bool {
 
 	// 2. Direct binary comparison expression: e.g. tenant_id = $1, tenant_id IN (...)
 	if aexpr := node.GetAExpr(); aexpr != nil {
+		if !isIsolatingOperator(aexpr) {
+			return false
+		}
 		if hasTargetColumn(aexpr.Lexpr, targets) || hasTargetColumn(aexpr.Rexpr, targets) {
 			return true
 		}
@@ -61,19 +64,35 @@ func inspectConjunctiveNode(node *pg_query.Node, targets map[string]bool) bool {
 
 	// 3. SubLink comparison: e.g. tenant_id IN (SELECT ...)
 	if subLink := node.GetSubLink(); subLink != nil {
-		if hasTargetColumn(subLink.Testexpr, targets) {
+		if subLink.SubLinkType == pg_query.SubLinkType_ANY_SUBLINK && hasTargetColumn(subLink.Testexpr, targets) {
 			return true
 		}
 	}
 
-	// 4. Null test: e.g. tenant_id IS NOT NULL
-	if nullTest := node.GetNullTest(); nullTest != nil {
-		if hasTargetColumn(nullTest.Arg, targets) {
-			return true
-		}
-	}
-
+	// 4. NullTest (e.g. tenant_id IS NOT NULL) is strictly non-isolating (never true)
 	return false
+}
+
+func isIsolatingOperator(aexpr *pg_query.A_Expr) bool {
+	if aexpr == nil || len(aexpr.Name) == 0 {
+		return false
+	}
+	op := ""
+	for _, n := range aexpr.Name {
+		if s := n.GetString_(); s != nil {
+			op = s.Sval
+		}
+	}
+	switch aexpr.Kind {
+	case pg_query.A_Expr_Kind_AEXPR_OP:
+		return op == "="
+	case pg_query.A_Expr_Kind_AEXPR_IN:
+		return op == "="
+	case pg_query.A_Expr_Kind_AEXPR_OP_ANY:
+		return op == "="
+	default:
+		return false
+	}
 }
 
 func hasTargetColumn(node *pg_query.Node, targets map[string]bool) bool {
