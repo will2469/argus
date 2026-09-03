@@ -8,11 +8,14 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	analysistest.Run(t, testdata, Analyzer, "a06")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/correctness/a06/positive",
+		"./tests/correctness/a06/negative",
+	)
 }
 
 func TestDetectRuntimeDDL_Compliant(t *testing.T) {
