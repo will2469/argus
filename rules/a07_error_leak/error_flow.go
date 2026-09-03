@@ -12,14 +12,17 @@ import (
 )
 
 // CheckPgErrorSensitiveFields checks for forbidden direct access to Detail, Hint, or Where on PgError.
-func CheckPgErrorSensitiveFields(pass *analysis.Pass, sel *ast.SelectorExpr, dm *directives.DirectiveMap) {
+func CheckPgErrorSensitiveFields(pass *analysis.Pass, fset *token.FileSet, sel *ast.SelectorExpr, dm *directives.DirectiveMap, issues *[]Issue) {
 	switch sel.Sel.Name {
 	case "Detail", "Hint", "Where":
 		if IsPgErrorSelector(pass, sel) {
-			if dm.IsIgnored(pass.Fset, sel.Pos(), RuleCode) {
+			if fset != nil && dm != nil && dm.IsIgnored(fset, sel.Pos(), RuleCode) {
 				return
 			}
-			pass.Reportf(sel.Pos(), "[%s] forbidden direct access to pgconn.PgError.%s; contains raw database internals and PII", RuleCode, sel.Sel.Name)
+			*issues = append(*issues, Issue{
+				Pos:     sel.Pos(),
+				Message: "forbidden direct access to pgconn.PgError." + sel.Sel.Name + "; contains raw database internals and PII",
+			})
 		}
 	}
 }
@@ -42,21 +45,29 @@ func IsPgErrorSelector(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 }
 
 // CheckLeakedErrorArg validates an expression passed into an API response sink.
-func CheckLeakedErrorArg(pass *analysis.Pass, arg ast.Expr, callPos token.Pos, body *ast.BlockStmt, dm *directives.DirectiveMap) {
-	if dm.IsIgnored(pass.Fset, arg.Pos(), RuleCode) || dm.IsIgnored(pass.Fset, callPos, RuleCode) {
-		return
+func CheckLeakedErrorArg(pass *analysis.Pass, fset *token.FileSet, arg ast.Expr, callPos token.Pos, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+	if fset != nil && dm != nil {
+		if dm.IsIgnored(fset, arg.Pos(), RuleCode) || dm.IsIgnored(fset, callPos, RuleCode) {
+			return
+		}
 	}
 
 	// 1. Direct call: err.Error()
 	if IsErrorCall(arg) {
-		pass.Reportf(arg.Pos(), "[%s] raw err.Error() passed directly to HTTP response; may leak internal database errors and PII", RuleCode)
+		*issues = append(*issues, Issue{
+			Pos:     arg.Pos(),
+			Message: "raw err.Error() passed directly to HTTP response; may leak internal database errors and PII",
+		})
 		return
 	}
 
 	// 2. Local variable assigned from err.Error() or pgErr.Detail
 	if id, ok := arg.(*ast.Ident); ok {
 		if IsVarAssignedFromError(id.Name, body) {
-			pass.Reportf(arg.Pos(), "[%s] variable %q derived from raw err.Error() passed to HTTP response; may leak internal database errors and PII", RuleCode, id.Name)
+			*issues = append(*issues, Issue{
+				Pos:     arg.Pos(),
+				Message: "variable \"" + id.Name + "\" derived from raw err.Error() passed to HTTP response; may leak internal database errors and PII",
+			})
 		}
 	}
 }

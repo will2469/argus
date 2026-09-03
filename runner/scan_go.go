@@ -16,6 +16,7 @@ import (
 	"github.com/will2469/argus/rules/a04_orderby"
 	"github.com/will2469/argus/rules/a05_audit_immutability"
 	"github.com/will2469/argus/rules/a06_runtime_ddl"
+	"github.com/will2469/argus/rules/a07_error_leak"
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
@@ -167,7 +168,20 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 		})
 	}
 
-	// 8. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
+	// 8. ARGUS-A07: Database Error Leakage in Responses
+	a07Issues := a07_error_leak.InspectFile(pass, fset, node, dm)
+	for _, issue := range a07Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "DATABASE_ERROR_LEAK",
+			Message:  issue.Message,
+			Category: "security",
+		})
+	}
+
+	// 9. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
 	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
 	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {

@@ -4,6 +4,7 @@ package a07_error_leak
 
 import (
 	"go/ast"
+	"go/token"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -25,6 +26,53 @@ var Analyzer = &analysis.Analyzer{
 	},
 }
 
+// Issue describes a detected violation of ARGUS-A07.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
+
+// InspectFile inspects an AST file for database error leakage into API responses.
+// Can be called with pass == nil in standalone CLI runner mode.
+func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	if file == nil {
+		return nil
+	}
+	if fset == nil && pass != nil {
+		fset = pass.Fset
+	}
+
+	pos := fset.Position(file.Package)
+	if strings.HasSuffix(pos.Filename, "_test.go") {
+		return nil
+	}
+
+	var issues []Issue
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.SelectorExpr:
+				CheckPgErrorSensitiveFields(pass, fset, node, dm, &issues)
+			case *ast.CallExpr:
+				sink := InspectResponseSink(node)
+				if sink.IsSink {
+					for _, arg := range sink.Args {
+						CheckLeakedErrorArg(pass, fset, arg, node.Pos(), fn.Body, dm, &issues)
+					}
+				}
+			}
+			return true
+		})
+	}
+
+	return issues
+}
+
 func run(pass *analysis.Pass) (interface{}, error) {
 	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
 	if !cfg.IsRuleEnabled(RuleCode) {
@@ -34,31 +82,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
 
 	for _, file := range pass.Files {
-		pos := pass.Fset.Position(file.Package)
-		if strings.HasSuffix(pos.Filename, "_test.go") {
-			continue
-		}
-
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch node := n.(type) {
-				case *ast.SelectorExpr:
-					CheckPgErrorSensitiveFields(pass, node, dm)
-				case *ast.CallExpr:
-					sink := InspectResponseSink(node)
-					if sink.IsSink {
-						for _, arg := range sink.Args {
-							CheckLeakedErrorArg(pass, arg, node.Pos(), fn.Body, dm)
-						}
-					}
-				}
-				return true
-			})
+		issues := InspectFile(pass, pass.Fset, file, dm)
+		for _, iss := range issues {
+			pass.Reportf(iss.Pos, "[%s] %s", RuleCode, iss.Message)
 		}
 	}
 
