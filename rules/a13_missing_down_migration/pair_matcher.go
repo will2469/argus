@@ -3,6 +3,7 @@ package a13_missing_down_migration
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -17,8 +18,14 @@ func MatchPairExistence(dir, upName string, existingFiles map[string]bool, dm *d
 	downPath := filepath.Join(dir, downName)
 
 	if !existingFiles[downName] {
-		if dm != nil && dm.IsLineIgnored(upPath, 1, RuleCode) {
+		if dm != nil && (dm.IsLineIgnored(upPath, 1, RuleCode) || dm.IsLineIgnored(upName, 1, RuleCode)) {
 			return downPath, nil
+		}
+		if upData, err := os.ReadFile(upPath); err == nil {
+			fileDm := directives.ParseSQLDirectives(string(upData), upName)
+			if fileDm != nil && (fileDm.IsLineIgnored(upName, 1, RuleCode) || fileDm.IsLineIgnored(upPath, 1, RuleCode)) {
+				return downPath, nil
+			}
 		}
 		return downPath, &migration.Issue{
 			Rule:     RuleCode,

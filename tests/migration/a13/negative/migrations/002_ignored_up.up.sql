@@ -1,2 +1,2 @@
 -- argus:ignore-a13 ADR-0042 data backfill irreversible
-SELECT 1;
+CREATE TABLE audit_logs (id int);

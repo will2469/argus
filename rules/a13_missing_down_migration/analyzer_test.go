@@ -9,12 +9,15 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatalf("failed to resolve testdata path: %v", err)
+		t.Fatalf("failed to resolve rootDir: %v", err)
 	}
 
-	analysistest.Run(t, testdata, Analyzer, "a13")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/migration/a13/positive",
+		"./tests/migration/a13/negative",
+	)
 }
 
 func TestScanDirectory_Compliant(t *testing.T) {
