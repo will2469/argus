@@ -152,7 +152,7 @@ func calculateScoreAndGrade(issues []Issue) (float64, string) {
 		score = 0.0
 	}
 
-	grade := "A+"
+	var grade string
 	switch {
 	case score >= 95.0:
 		grade = "A+"

@@ -4,6 +4,7 @@ package a04_orderby
 import (
 	"go/ast"
 	"regexp"
+	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"github.com/will2469/argus/shared/sqlparser"
@@ -35,9 +36,13 @@ func IsFmtSprintf(call *ast.CallExpr) bool {
 	return ok && id.Name == "fmt"
 }
 
-// HasOrderByClause checks whether the format string contains an ORDER BY clause.
+// HasOrderByClause checks whether the format string contains an ORDER BY clause in a SQL statement.
 func HasOrderByClause(format string) bool {
-	return orderByRegex.MatchString(format)
+	if !orderByRegex.MatchString(format) {
+		return false
+	}
+	upper := strings.ToUpper(format)
+	return strings.Contains(upper, "SELECT") || strings.Contains(upper, "FROM") || strings.Contains(upper, "WITH")
 }
 
 // GetOrderByArgIndices returns 1-based argument indices of placeholders within the ORDER BY clause.
@@ -87,11 +92,13 @@ func IsQuotingSanitizer(e ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return false
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+		return sel.Sel.Name == "Sanitize" || sel.Sel.Name == "SanitizeIdentifier"
 	}
-	return sel.Sel.Name == "Sanitize" || sel.Sel.Name == "SanitizeIdentifier"
+	if id, ok := call.Fun.(*ast.Ident); ok {
+		return id.Name == "Sanitize" || id.Name == "SanitizeIdentifier"
+	}
+	return false
 }
 
 // ExtractSortClauses parses a SQL string and extracts its SortClause definitions from the PostgreSQL AST.

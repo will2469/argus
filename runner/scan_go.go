@@ -13,6 +13,7 @@ import (
 	"github.com/will2469/argus/rules/a01_sql_concat"
 	"github.com/will2469/argus/rules/a02_unclosed_rows"
 	"github.com/will2469/argus/rules/a03_context"
+	"github.com/will2469/argus/rules/a04_orderby"
 	"github.com/will2469/argus/rules/a14_select_star"
 	"github.com/will2469/argus/rules/a17_nplusone"
 	"github.com/will2469/argus/rules/a24_tenant_leak"
@@ -125,7 +126,20 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker) {
 		})
 	}
 
-	// 5. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
+	// 5. ARGUS-A04: Unsafe dynamic ORDER BY clauses
+	a04Issues := a04_orderby.InspectFile(pass, fset, node, dm)
+	for _, issue := range a04Issues {
+		pos := fset.Position(issue.Pos)
+		tracker.AddIssue(Issue{
+			File:     relPath,
+			Line:     pos.Line,
+			Rule:     "UNSAFE_DYNAMIC_ORDERBY",
+			Message:  issue.Message,
+			Category: "security",
+		})
+	}
+
+	// 6. ARGUS-A17: Deep Loop Walker & Helper Call Graph Analysis
 	detector := a17_nplusone.NewHelperQueryDetector(pass, node)
 	loopIssues := a17_nplusone.WalkLoops(pass, fset, node, dm, detector)
 	for _, issue := range loopIssues {

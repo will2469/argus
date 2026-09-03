@@ -40,7 +40,7 @@ func InspectIndexStatements(filename, content string, tree *pgquery.ParseResult,
 				idxName = "unnamed"
 			}
 
-			line := 1
+			var line int
 			if idxName != "unnamed" {
 				line = migration.FindLineForKeyword(content, idxName)
 			} else {

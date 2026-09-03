@@ -62,7 +62,7 @@ func InspectAlterTableConstraints(filename, content string, tree *pgquery.ParseR
 					conName = "unnamed"
 				}
 
-				line := 1
+				var line int
 				if conName != "unnamed" {
 					line = migration.FindLineForKeyword(content, conName)
 				} else {

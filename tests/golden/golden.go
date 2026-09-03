@@ -102,5 +102,5 @@ func loadProfile(ctx context.Context, id int) {
 }
 
 func fetchProfile(ctx context.Context, id int) {
-	db.Query(ctx, "SELECT id, name FROM profiles WHERE id = $1", id)
+	_, _ = db.Query(ctx, "SELECT id, name FROM profiles WHERE id = $1", id)
 }

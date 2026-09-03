@@ -14,7 +14,7 @@ func TestFetchLatestTag(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"tag_name":"v1.0.0","html_url":"https://github.com/will2469/argus/releases/tag/v1.0.0"}`))
+		_, _ = w.Write([]byte(`{"tag_name":"v1.0.0","html_url":"https://github.com/will2469/argus/releases/tag/v1.0.0"}`))
 	}))
 	defer ts.Close()
 

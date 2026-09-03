@@ -14,12 +14,12 @@ type DBExecutor interface {
 
 // N1: Obvious Safe — standard parameterized query with placeholders.
 func N1_ObviousSafe(ctx context.Context, db DBExecutor, id string) {
-	db.Query(ctx, "SELECT id, name FROM users WHERE id = $1", id)
+	_, _ = db.Query(ctx, "SELECT id, name FROM users WHERE id = $1", id)
 }
 
 // N2: Legitimate Idiom — compile-time string literal concatenation across lines.
 func N2_LegitimateIdiom(ctx context.Context, db DBExecutor) {
-	db.Query(ctx, "SELECT id, name, email "+
+	_, _ = db.Query(ctx, "SELECT id, name, email "+
 		"FROM users "+
 		"WHERE active = true AND deleted_at IS NULL")
 }
@@ -44,12 +44,12 @@ func SanitizeIdentifier(ident string) string {
 }
 
 func N4_SanitizedInput(ctx context.Context, db DBExecutor, tableName string) {
-	db.Query(ctx, "SELECT * FROM "+SanitizeIdentifier(tableName))
+	_, _ = db.Query(ctx, "SELECT * FROM "+SanitizeIdentifier(tableName))
 }
 
 // N5: Static/Constant Input — compile-time constant string query.
 const ActiveUsersQuery = "SELECT id, email FROM users WHERE is_active = true"
 
 func N5_StaticConstant(ctx context.Context, db DBExecutor) {
-	db.Query(ctx, ActiveUsersQuery)
+	_, _ = db.Query(ctx, ActiveUsersQuery)
 }

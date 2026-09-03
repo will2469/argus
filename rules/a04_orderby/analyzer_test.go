@@ -8,11 +8,14 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	testdata, err := filepath.Abs("../../testdata")
+	rootDir, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	analysistest.Run(t, testdata, Analyzer, "a04")
+	analysistest.Run(t, rootDir, Analyzer,
+		"./tests/correctness/a04/positive",
+		"./tests/correctness/a04/negative",
+	)
 }
 
 func TestExtractSortClauses(t *testing.T) {

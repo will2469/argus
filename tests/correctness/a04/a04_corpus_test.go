@@ -1,4 +1,4 @@
-package a01_test
+package a04_test
 
 import (
 	"go/parser"
@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/will2469/argus/rules/a01_sql_concat"
+	"github.com/will2469/argus/rules/a04_orderby"
 	"github.com/will2469/argus/runner"
 	"github.com/will2469/argus/shared/directives"
 )
 
-func parseAndInspect(t *testing.T, relPath string) ([]a01_sql_concat.Issue, *token.FileSet) {
+func parseAndInspect(t *testing.T, relPath string) ([]a04_orderby.Issue, *token.FileSet) {
 	t.Helper()
 	absPath, err := filepath.Abs(relPath)
 	if err != nil {
@@ -25,20 +25,20 @@ func parseAndInspect(t *testing.T, relPath string) ([]a01_sql_concat.Issue, *tok
 	}
 
 	dm := directives.ParseGoDirectives(file, fset)
-	issues := a01_sql_concat.InspectFile(nil, fset, file, dm)
+	issues := a04_orderby.InspectFile(nil, fset, file, dm)
 	return issues, fset
 }
 
-func TestA01_PositiveCorpus(t *testing.T) {
+func TestA04_PositiveCorpus(t *testing.T) {
 	issues, fset := parseAndInspect(t, "positive/positive.go")
 
 	t.Logf("=== Positive Corpus Results (%d issues found) ===", len(issues))
 	expectedLines := map[int]string{
-		17: "P1_Obvious",
-		24: "P2_Indirect",
-		34: "P3_Helper",
-		41: "P4_Nested",
-		50: "P5_Alias",
+		20: "P1_Obvious",
+		28: "P2_Indirect",
+		41: "P3_Helper",
+		48: "P4_Nested",
+		61: "P5_Alias",
 	}
 
 	foundLines := make(map[int]bool)
@@ -49,7 +49,6 @@ func TestA01_PositiveCorpus(t *testing.T) {
 		t.Logf("  [%s] Line %d: %s", pattern, pos.Line, iss.Message)
 	}
 
-	// 100% Positive Detection Gate
 	for line, name := range expectedLines {
 		if !foundLines[line] {
 			t.Errorf("Positive Gate FAILED: expected violation for %s at line %d was NOT detected", name, line)
@@ -60,7 +59,7 @@ func TestA01_PositiveCorpus(t *testing.T) {
 	}
 }
 
-func TestA01_NegativeCorpus(t *testing.T) {
+func TestA04_NegativeCorpus(t *testing.T) {
 	issues, fset := parseAndInspect(t, "negative/negative.go")
 
 	t.Logf("=== Negative Corpus Results (%d issues found) ===", len(issues))
@@ -69,13 +68,12 @@ func TestA01_NegativeCorpus(t *testing.T) {
 		t.Errorf("Negative Gate FAILED (False Positive): unexpected issue at Line %d: %s", pos.Line, iss.Message)
 	}
 
-	// 0% False Positive Invariant
 	if len(issues) != 0 {
 		t.Fatalf("Negative Gate FAILED: expected 0 false positives, got %d", len(issues))
 	}
 }
 
-func TestA01_AdversarialCorpus(t *testing.T) {
+func TestA04_AdversarialCorpus(t *testing.T) {
 	issues, fset := parseAndInspect(t, "adversarial/adversarial.go")
 
 	t.Logf("=== Adversarial Corpus Stress-Test Results (%d issues found) ===", len(issues))
@@ -86,29 +84,18 @@ func TestA01_AdversarialCorpus(t *testing.T) {
 		t.Logf("  Detected at Line %d: %s", pos.Line, iss.Message)
 	}
 
-	// Matrix of expectations:
-	// A1 (Line 21): Branch - must be CAUGHT
-	// A2 Clean (Line 27): Reassignment to clean - must SURVIVE (NOT caught)
-	// A2 Dirty (Line 36): Reassignment to dirty - must be CAUGHT
-	// A3 (Line 43): Alias via pointer - must be CAUGHT
-	// A4 (Line 56): Wrapper struct - must be CAUGHT
-	// A5 (Line 63): Nested closure - must be CAUGHT
-	// A6 (Line 74): Generic struct - must be CAUGHT
-	// A7 (Line 80): Interface assertion - must be CAUGHT
-
 	assertions := []struct {
 		vector     string
 		line       int
 		mustDetect bool
 	}{
-		{"A1_Branch", 21, true},
-		{"A2_Reassignment_CleanOverride", 28, false},
-		{"A2_Reassignment_DirtyOverride", 38, true},
-		{"A3_Alias_Pointer", 45, true},
-		{"A4_Wrapper_Repo", 58, true},
-		{"A5_NestedFunction_Closure", 65, true},
-		{"A6_Generic_Repo", 76, true},
-		{"A7_Interface_Assertion", 82, true},
+		{"A1_Branch", 22, true},
+		{"A2_Reassignment", 34, true},
+		{"A3_Alias", 44, true},
+		{"A4_Wrapper", 55, true},
+		{"A5_NestedFunction", 63, true},
+		{"A6_Generic", 76, true},
+		{"A7_Interface", 87, true},
 	}
 
 	for _, a := range assertions {
@@ -127,11 +114,10 @@ func TestA01_AdversarialCorpus(t *testing.T) {
 	}
 }
 
-func TestA01_StandaloneRunner_DualPathParity(t *testing.T) {
+func TestA04_StandaloneRunner_DualPathParity(t *testing.T) {
 	positiveAbs, _ := filepath.Abs("positive")
 	negativeAbs, _ := filepath.Abs("negative")
 
-	// 1. Audit positive directory with standalone runner
 	auditCfg := runner.AuditConfig{
 		RootDir:       positiveAbs,
 		ScanDirs:      []string{positiveAbs},
@@ -142,17 +128,16 @@ func TestA01_StandaloneRunner_DualPathParity(t *testing.T) {
 		t.Fatalf("standalone runner audit failed: %v", err)
 	}
 
-	a01Issues := 0
+	a04Issues := 0
 	for _, iss := range res.Issues {
-		if iss.Rule == "UNSAFE_SQL_CONCATENATION" {
-			a01Issues++
+		if iss.Rule == "UNSAFE_DYNAMIC_ORDERBY" {
+			a04Issues++
 		}
 	}
-	if a01Issues != 5 {
-		t.Errorf("Dual-Path Parity FAILED on positive corpus: expected 5 issues from standalone runner, got %d", a01Issues)
+	if a04Issues != 5 {
+		t.Errorf("Dual-Path Parity FAILED on positive corpus: expected 5 issues from standalone runner, got %d", a04Issues)
 	}
 
-	// 2. Audit negative directory with standalone runner
 	auditCfgNeg := runner.AuditConfig{
 		RootDir:       negativeAbs,
 		ScanDirs:      []string{negativeAbs},
@@ -165,7 +150,7 @@ func TestA01_StandaloneRunner_DualPathParity(t *testing.T) {
 
 	negIssues := 0
 	for _, iss := range resNeg.Issues {
-		if iss.Rule == "UNSAFE_SQL_CONCATENATION" {
+		if iss.Rule == "UNSAFE_DYNAMIC_ORDERBY" {
 			negIssues++
 		}
 	}

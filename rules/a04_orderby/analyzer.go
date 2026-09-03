@@ -3,6 +3,7 @@
 package a04_orderby
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"strconv"
@@ -27,6 +28,71 @@ var Analyzer = &analysis.Analyzer{
 	},
 }
 
+// Issue describes a detected violation of ARGUS-A04.
+type Issue struct {
+	Pos     token.Pos
+	Message string
+}
+
+// InspectFile inspects an AST file for unsafe dynamic ORDER BY clauses.
+// Can be called with pass == nil in standalone CLI runner mode.
+func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	if file == nil {
+		return nil
+	}
+	if fset == nil && pass != nil {
+		fset = pass.Fset
+	}
+
+	pos := fset.Position(file.Package)
+	if strings.HasSuffix(pos.Filename, "_test.go") {
+		return nil
+	}
+
+	var issues []Issue
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		inspectFunctionBody(fset, fn.Body, dm, &issues)
+	}
+	return issues
+}
+
+func inspectFunctionBody(fset *token.FileSet, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+	ast.Inspect(body, func(n ast.Node) bool {
+		// Inspect nested closures separately
+		if lit, ok := n.(*ast.FuncLit); ok && lit.Body != nil {
+			inspectFunctionBody(fset, lit.Body, dm, issues)
+			return false
+		}
+
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		if IsFmtSprintf(call) && len(call.Args) >= 2 {
+			formatLit, ok := call.Args[0].(*ast.BasicLit)
+			if ok && formatLit.Kind == token.STRING && HasOrderByClause(formatLit.Value) {
+				rawFormat, err := strconv.Unquote(formatLit.Value)
+				if err != nil {
+					rawFormat = strings.Trim(formatLit.Value, "`\"")
+				}
+				targetIndices := GetOrderByArgIndices(rawFormat)
+				for _, idx := range targetIndices {
+					if idx < len(call.Args) {
+						checkOrderByArg(fset, call.Args[idx], call.Pos(), body, dm, issues)
+					}
+				}
+			}
+		}
+
+		return true
+	})
+}
+
 func run(pass *analysis.Pass) (interface{}, error) {
 	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
 	if !cfg.IsRuleEnabled(RuleCode) {
@@ -36,50 +102,20 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
 
 	for _, file := range pass.Files {
-		pos := pass.Fset.Position(file.Package)
-		if strings.HasSuffix(pos.Filename, "_test.go") {
-			continue
-		}
-
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-
-				if IsFmtSprintf(call) && len(call.Args) >= 2 {
-					formatLit, ok := call.Args[0].(*ast.BasicLit)
-					if ok && formatLit.Kind == token.STRING && HasOrderByClause(formatLit.Value) {
-						rawFormat, err := strconv.Unquote(formatLit.Value)
-						if err != nil {
-							rawFormat = strings.Trim(formatLit.Value, "`\"")
-						}
-						targetIndices := GetOrderByArgIndices(rawFormat)
-						for _, idx := range targetIndices {
-							if idx < len(call.Args) {
-								checkOrderByArg(pass, call.Args[idx], call.Pos(), fn.Body, dm)
-							}
-						}
-					}
-				}
-
-				return true
-			})
+		issues := InspectFile(pass, pass.Fset, file, dm)
+		for _, iss := range issues {
+			pass.Reportf(iss.Pos, "[%s] %s", RuleCode, iss.Message)
 		}
 	}
 
 	return nil, nil
 }
 
-func checkOrderByArg(pass *analysis.Pass, arg ast.Expr, callPos token.Pos, body *ast.BlockStmt, dm *directives.DirectiveMap) {
-	if dm.IsIgnored(pass.Fset, arg.Pos(), RuleCode) || dm.IsIgnored(pass.Fset, callPos, RuleCode) {
-		return
+func checkOrderByArg(fset *token.FileSet, arg ast.Expr, callPos token.Pos, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+	if fset != nil && dm != nil {
+		if dm.IsIgnored(fset, arg.Pos(), RuleCode) || dm.IsIgnored(fset, callPos, RuleCode) {
+			return
+		}
 	}
 
 	// Direct string literals are safe constants
@@ -89,18 +125,27 @@ func checkOrderByArg(pass *analysis.Pass, arg ast.Expr, callPos token.Pos, body 
 
 	// Quoting sanitizer pgx.Identifier.Sanitize() is explicitly rejected for ORDER BY
 	if IsQuotingSanitizer(arg) {
-		pass.Reportf(arg.Pos(), "[%s] identifier quoting is insufficient for ORDER BY; must be mapped via closed-set allowlist map or switch-case", RuleCode)
+		*issues = append(*issues, Issue{
+			Pos:     arg.Pos(),
+			Message: "identifier quoting is insufficient for ORDER BY; must be mapped via closed-set allowlist map or switch-case",
+		})
 		return
 	}
 
 	// Check variable data flow
 	if ident, ok := arg.(*ast.Ident); ok {
 		if !IsSafeOrderBy(ident, body) && !IsSortDirectionSafe(ident, body) {
-			pass.Reportf(arg.Pos(), "[%s] unsafe dynamic ORDER BY variable %q; must be mapped via closed-set allowlist map or switch-case", RuleCode, ident.Name)
+			*issues = append(*issues, Issue{
+				Pos:     arg.Pos(),
+				Message: fmt.Sprintf("unsafe dynamic ORDER BY variable %q; must be mapped via closed-set allowlist map or switch-case", ident.Name),
+			})
 		}
 		return
 	}
 
 	// Any other dynamic expression (e.g. r.URL.Query().Get("sort")) is unsafe
-	pass.Reportf(arg.Pos(), "[%s] unsafe dynamic ORDER BY expression; must be mapped via closed-set allowlist map or switch-case", RuleCode)
+	*issues = append(*issues, Issue{
+		Pos:     arg.Pos(),
+		Message: "unsafe dynamic ORDER BY expression; must be mapped via closed-set allowlist map or switch-case",
+	})
 }

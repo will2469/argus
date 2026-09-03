@@ -269,7 +269,12 @@ func handleScan(id any, args json.RawMessage) *jsonrpcResponse {
 		Migrations []string `json:"migrations"`
 	}
 	if args != nil {
-		json.Unmarshal(args, &input)
+		if err := json.Unmarshal(args, &input); err != nil {
+			return &jsonrpcResponse{
+				JSONRPC: "2.0", ID: id,
+				Result: map[string]any{"content": textContent(fmt.Sprintf("Invalid arguments: %v", err)), "isError": true},
+			}
+		}
 	}
 
 	cfg := runner.AuditConfig{

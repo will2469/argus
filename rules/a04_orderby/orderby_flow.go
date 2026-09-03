@@ -14,8 +14,8 @@ func IsSafeOrderBy(ident *ast.Ident, body *ast.BlockStmt) bool {
 		return false
 	}
 
-	var isSafe bool
-	var hasAssignment bool
+	var hasSafeAssignment bool
+	var hasUnsafeAssignment bool
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch stmt := n.(type) {
@@ -25,39 +25,35 @@ func IsSafeOrderBy(ident *ast.Ident, body *ast.BlockStmt) bool {
 				if !ok || id.Name != ident.Name || i >= len(stmt.Rhs) {
 					continue
 				}
-				hasAssignment = true
 				rhs := stmt.Rhs[i]
 
 				// 1. Allowlist map lookup: val, ok := sortMap[userSort] or val := sortMap[key]
 				if _, isIndex := rhs.(*ast.IndexExpr); isIndex {
-					isSafe = true
-					return true
+					hasSafeAssignment = true
+					continue
 				}
 
 				// 2. Static string literal assignment: col = "created_at"
 				if lit, isLit := rhs.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
-					isSafe = true
-					return true
+					hasSafeAssignment = true
+					continue
 				}
+
+				// Any other assignment is considered untrusted
+				hasUnsafeAssignment = true
 			}
 
 		case *ast.SwitchStmt:
 			// Check if variable is assigned inside switch-case branches
 			if checkSwitchCasesAssign(stmt, ident.Name) {
-				hasAssignment = true
-				isSafe = true
+				hasSafeAssignment = true
 			}
 		}
 
 		return true
 	})
 
-	// If variable was assigned from an allowlist or switch-case, it is safe
-	if hasAssignment && isSafe {
-		return true
-	}
-
-	return false
+	return hasSafeAssignment && !hasUnsafeAssignment
 }
 
 // checkSwitchCasesAssign checks if every branch in a switch assigns a static string literal to varName.
