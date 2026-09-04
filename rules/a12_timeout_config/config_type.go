@@ -24,10 +24,8 @@ func isPgxpoolConfigArg(pass *analysis.Pass, file *ast.File, expr ast.Expr) bool
 		if isPgxpoolPath(pkg.Path()) {
 			return true
 		}
-		if isA12TestPackage(pkg.Path()) {
-			if st, ok := named.Underlying().(*types.Struct); ok {
-				return isPgxpoolConfigStructType(st)
-			}
+		if st, ok := named.Underlying().(*types.Struct); ok {
+			return isPgxpoolConfigStructType(st)
 		}
 		return false
 	}
@@ -164,15 +162,15 @@ func isPgxpoolConfigTypeExpr(file *ast.File, typeExpr ast.Expr) bool {
 	}
 	if sel, ok := typeExpr.(*ast.SelectorExpr); ok && sel.Sel.Name == "Config" {
 		if id, ok := sel.X.(*ast.Ident); ok {
-			if target, ok := findPgxpoolImport(file); ok && id.Name == target {
+			if id.Name == "pgxpool" {
 				return true
 			}
-			if isA12TestFile(file) && (id.Name == "pgxpool" || id.Name == "positive" || id.Name == "negative" || id.Name == "adversarial") {
+			if target, ok := findPgxpoolImport(file); ok && id.Name == target {
 				return true
 			}
 		}
 	}
-	if id, ok := typeExpr.(*ast.Ident); ok && id.Name == "Config" && isA12TestFile(file) {
+	if id, ok := typeExpr.(*ast.Ident); ok && id.Name == "Config" {
 		return isConfigStructDeclaredWithConnConfig(file, "Config")
 	}
 	return false
@@ -190,10 +188,8 @@ func isPgxpoolConfigType(pass *analysis.Pass, file *ast.File, expr ast.Expr) boo
 		if isPgxpoolPath(pkg.Path()) {
 			return true
 		}
-		if isA12TestPackage(pkg.Path()) {
-			if st, ok := named.Underlying().(*types.Struct); ok {
-				return isPgxpoolConfigStructType(st)
-			}
+		if st, ok := named.Underlying().(*types.Struct); ok {
+			return isPgxpoolConfigStructType(st)
 		}
 		return false
 	}

@@ -17,15 +17,6 @@ func isPgxpoolPath(path string) bool {
 	return path == "github.com/jackc/pgx/v5/pgxpool" || path == "github.com/jackc/pgx/v4/pgxpool"
 }
 
-func isA12TestPackage(path string) bool {
-	return path == "positive" || path == "negative" || path == "adversarial" || path == "testpkg" ||
-		strings.Contains(path, "argus/tests/correctness/a12") || strings.Contains(path, "argus/rules/a12_timeout_config")
-}
-
-func isA12TestFile(file *ast.File) bool {
-	return file != nil && file.Name != nil && (file.Name.Name == "positive" || file.Name.Name == "negative" || file.Name.Name == "adversarial" || file.Name.Name == "testpkg")
-}
-
 func findPgxpoolImport(file *ast.File) (string, bool) {
 	if file == nil {
 		return "", false
@@ -65,13 +56,8 @@ func isPgxpoolCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) (boo
 						t = ptr.Elem()
 					}
 					if named, ok := t.(*types.Named); ok {
-						if pkg := named.Obj().Pkg(); pkg != nil {
-							if isPgxpoolPath(pkg.Path()) {
-								return true, methodName
-							}
-							if isA12TestPackage(pkg.Path()) && (named.Obj().Name() == "pgxpoolPkg" || named.Obj().Name() == "poolPkg") {
-								return true, methodName
-							}
+						if pkg := named.Obj().Pkg(); pkg != nil && isPgxpoolPath(pkg.Path()) {
+							return true, methodName
 						}
 						if named.Obj().Name() == "pgxpoolPkg" || named.Obj().Name() == "poolPkg" {
 							return true, methodName
@@ -87,7 +73,7 @@ func isPgxpoolCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) (boo
 					return isPgxpoolPath(pkgName.Imported().Path()), methodName
 				}
 				if vr, ok := obj.(*types.Var); ok {
-					if vr.Name() == "pgxpool" && isA12TestPackage(vr.Pkg().Path()) {
+					if vr.Name() == "pgxpool" {
 						return true, methodName
 					}
 					return false, ""
@@ -103,7 +89,7 @@ func isPgxpoolCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) (boo
 			if target, ok := findPgxpoolImport(file); ok && id.Name == target {
 				return true, methodName
 			}
-			if isA12TestFile(file) && id.Name == "pgxpool" {
+			if id.Name == "pgxpool" {
 				return true, methodName
 			}
 		}
