@@ -107,6 +107,8 @@ func TestA06_AdversarialCorpus(t *testing.T) {
 		{"A11_CustomBuilderTypeSpoofing", 122, false, "Non-builder type with safe string"},
 		{"A12_UnconventionalReceiverName", 128, true, "Receiver named client with proven DBExecutor type"},
 		{"A13_FakeDBReceiverName", 134, false, "Receiver named db but with non-DB SearchEngine type"},
+		{"A14_EvilDirect", 155, false, "Direct call on Evil struct returning nil"},
+		{"A14_EvilInterface", 156, false, "Call on FakeDB interface backed by Evil struct"},
 	}
 
 	for _, a := range assertions {

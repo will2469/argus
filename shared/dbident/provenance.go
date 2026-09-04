@@ -7,24 +7,16 @@ import (
 )
 
 // IsProvenDBQuerierType reports whether t is a proven database querier:
-// either a concrete driver type, or an interface satisfying the full database
-// querier contract (both Exec and Query returning driver types and error).
+// strictly a concrete driver type or a struct wrapping a known DB driver.
+// Custom interfaces cannot prove their implementation in isolation and
+// must be verified in package context using IsProvenDBQuerierWithPkg.
 func IsProvenDBQuerierType(t types.Type) bool {
 	if t == nil {
 		return false
 	}
 	t = UnwrapPointer(t)
 
-	if IsKnownDBDriverType(t) {
-		return true
-	}
-
-	iface, ok := t.Underlying().(*types.Interface)
-	if !ok {
-		return false
-	}
-
-	return hasProvenDBQuerierMethods(iface)
+	return IsKnownDBDriverType(t)
 }
 
 func hasProvenDBQuerierMethods(iface *types.Interface) bool {

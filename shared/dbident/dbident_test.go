@@ -257,9 +257,9 @@ func TestSearchEngineQuerier_MustBeRejected(t *testing.T) {
 	}
 }
 
-// TestDBExecutor_MustBeAccepted tests that a complete DB querier contract
-// (Exec returning (sql.Result, error) AND Query returning (*sql.Rows, error)) is accepted.
-func TestDBExecutor_MustBeAccepted(t *testing.T) {
+// TestDBExecutor_CustomInterfaceInIsolation_MustBeRejected ensures that custom interfaces
+// without proven implementation are rejected in isolation (UNKNOWN / NOT SAFE).
+func TestDBExecutor_CustomInterfaceInIsolation_MustBeRejected(t *testing.T) {
 	sqlPkg := types.NewPackage("database/sql", "sql")
 	resultNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Result", nil), types.NewInterfaceType(nil, nil), nil)
 	rowsNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Rows", nil), types.NewStruct(nil, nil), nil)
@@ -277,8 +277,55 @@ func TestDBExecutor_MustBeAccepted(t *testing.T) {
 		)),
 	)
 
-	if !IsProvenDBQuerierType(dbExecutor) {
-		t.Fatal("PROVENANCE FAILURE: Complete DBExecutor was REJECTED by IsProvenDBQuerierType")
+	if IsProvenDBQuerierType(dbExecutor) {
+		t.Fatal("PROVENANCE FAILURE: Custom interface without proven implementation was ACCEPTED by IsProvenDBQuerierType")
+	}
+}
+
+// TestEvilImplementation_MustBeRejected verifies the user's adversarial scenario:
+// FakeDB interface implemented by Evil struct returning (nil, nil) must NOT be proven.
+func TestEvilImplementation_MustBeRejected(t *testing.T) {
+	sqlPkg := types.NewPackage("database/sql", "sql")
+	resultNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Result", nil), types.NewInterfaceType(nil, nil), nil)
+	rowsNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Rows", nil), types.NewStruct(nil, nil), nil)
+	rowsPtr := types.NewPointer(rowsNamed)
+	errType := types.Universe.Lookup("error").Type()
+
+	fakeDB := buildInterface(t,
+		method("Exec", stringParam(), types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", resultNamed),
+			types.NewVar(token.NoPos, nil, "", errType),
+		)),
+		method("Query", stringParam(), types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", rowsPtr),
+			types.NewVar(token.NoPos, nil, "", errType),
+		)),
+	)
+
+	// Create test package with Evil struct implementing FakeDB
+	testPkg := types.NewPackage("testpkg", "testpkg")
+	evilNamed := types.NewNamed(types.NewTypeName(token.NoPos, testPkg, "Evil", nil), types.NewStruct(nil, nil), nil)
+	recvVar := types.NewVar(token.NoPos, testPkg, "", evilNamed)
+	execSig := types.NewSignatureType(recvVar, nil, nil, stringParam(), types.NewTuple(
+		types.NewVar(token.NoPos, nil, "", resultNamed),
+		types.NewVar(token.NoPos, nil, "", errType),
+	), false)
+	querySig := types.NewSignatureType(recvVar, nil, nil, stringParam(), types.NewTuple(
+		types.NewVar(token.NoPos, nil, "", rowsPtr),
+		types.NewVar(token.NoPos, nil, "", errType),
+	), false)
+	evilNamed.AddMethod(types.NewFunc(token.NoPos, testPkg, "Exec", execSig))
+	evilNamed.AddMethod(types.NewFunc(token.NoPos, testPkg, "Query", querySig))
+	testPkg.Scope().Insert(evilNamed.Obj())
+
+	// Evil direct check
+	if IsProvenDBQuerierType(evilNamed) {
+		t.Fatal("Evil struct should NOT be recognized as DB querier")
+	}
+
+	// FakeDB with Evil implementation in pkg
+	if IsProvenDBQuerierWithPkg(fakeDB, testPkg) {
+		t.Fatal("FakeDB implemented by Evil struct without DB fields MUST be rejected as DB querier")
 	}
 }
 

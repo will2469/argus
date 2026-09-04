@@ -107,6 +107,9 @@ func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
 	if !ok || iface.Methods == nil {
 		return false
 	}
+	if dbident.HasNonDBStructImplementation(file, iface) {
+		return false
+	}
 	hasExec, hasQuery := false, false
 	for _, m := range iface.Methods.List {
 		if _, ok := m.Type.(*ast.FuncType); !ok {

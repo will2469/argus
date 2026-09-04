@@ -64,6 +64,9 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 			if dbident.IsKnownDBDriverType(recvType) {
 				return true
 			}
+			if pass.Pkg != nil && dbident.IsProvenDBQuerierWithPkg(recvType, pass.Pkg) {
+				return true
+			}
 			if dbident.IsProvenDBQuerierType(recvType) {
 				return true
 			}
@@ -76,16 +79,19 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 	}
 
 	// 2. Standalone Mode (pass == nil or TypesInfo unavailable)
+	var fn *ast.FuncDecl
+	if file != nil {
+		fn = findEnclosingFunc(file, call.Pos())
+	}
+	if fn != nil && file != nil && dbident.IsAssignedFromNonDBConstructor(sel.X, fn, file) {
+		return false
+	}
 	if id, ok := sel.X.(*ast.Ident); ok {
 		if file != nil && dbident.IsImportedDBPackageIdent(file, id.Name) {
 			return true
 		}
 	}
 
-	var fn *ast.FuncDecl
-	if file != nil {
-		fn = findEnclosingFunc(file, call.Pos())
-	}
 	astType := findASTType(sel.X, fn, file)
 	if astType != nil && isProvenDBASTType(astType, file) {
 		return true

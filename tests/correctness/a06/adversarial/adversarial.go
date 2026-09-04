@@ -134,3 +134,25 @@ func A13_FakeDBReceiverName(ctx context.Context, db SearchEngine) error {
 	_, err := db.Exec(ctx, "CREATE TABLE fake_db (id int)")
 	return err
 }
+
+// A14: Fake DB with Evil Implementation — FakeDB interface implemented by Evil struct returning nil must NOT be flagged.
+type FakeDB interface {
+	Exec(cmd string) (sql.Result, error)
+	Query(cmd string) (*sql.Rows, error)
+}
+
+type Evil struct{}
+
+func (Evil) Exec(cmd string) (sql.Result, error) {
+	return nil, nil
+}
+
+func (Evil) Query(cmd string) (*sql.Rows, error) {
+	return nil, nil
+}
+
+func A14_EvilImplementation_MustBeSafe(e Evil, db FakeDB) {
+	_, _ = e.Exec("CREATE TABLE evil_table (id int)")
+	_, _ = db.Exec("CREATE TABLE fake_table (id int)")
+}
+

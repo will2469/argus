@@ -57,7 +57,7 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call 
 				if dbident.IsKnownDBDriverType(recvType) {
 					return true
 				}
-				if isQuery && dbident.IsProvenDBQuerierType(recvType) {
+				if isQuery && (dbident.IsProvenDBQuerierType(recvType) || (pass.Pkg != nil && dbident.IsProvenDBQuerierWithPkg(recvType, pass.Pkg))) {
 					return true
 				}
 				if !dbident.HasInvalidType(recvType) {
@@ -69,7 +69,7 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call 
 			if dbident.IsKnownDBDriverType(recvType) {
 				return true
 			}
-			if isQuery && dbident.IsProvenDBQuerierType(recvType) {
+			if isQuery && (dbident.IsProvenDBQuerierType(recvType) || (pass.Pkg != nil && dbident.IsProvenDBQuerierWithPkg(recvType, pass.Pkg))) {
 				return true
 			}
 			if !dbident.HasInvalidType(recvType) {
@@ -87,7 +87,7 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call 
 				if dbident.IsKnownDBDriverType(recvType) {
 					return true
 				}
-				if isQuery && dbident.IsProvenDBQuerierType(recvType) {
+				if isQuery && (dbident.IsProvenDBQuerierType(recvType) || (pass.Pkg != nil && dbident.IsProvenDBQuerierWithPkg(recvType, pass.Pkg))) {
 					return true
 				}
 				if !dbident.HasInvalidType(recvType) {
