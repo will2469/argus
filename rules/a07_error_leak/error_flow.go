@@ -109,7 +109,7 @@ func CheckLeakedErrorArg(pass *analysis.Pass, fset *token.FileSet, arg ast.Expr,
 		call := arg.(*ast.CallExpr)
 		sel := call.Fun.(*ast.SelectorExpr)
 		origin := GetErrorOrigin(pass, sel.X, fn)
-		if origin == OriginNonDatabase {
+		if origin != OriginDatabase && origin != OriginGeneric {
 			return
 		}
 		*issues = append(*issues, Issue{
@@ -137,7 +137,7 @@ func CheckLeakedErrorArg(pass *analysis.Pass, fset *token.FileSet, arg ast.Expr,
 	// 4. Local variable assigned from err.Error(), pgErr.Detail, or fmt.Sprintf
 	if id, ok := arg.(*ast.Ident); ok {
 		origin := GetErrorOrigin(pass, id, fn)
-		if origin == OriginNonDatabase {
+		if origin != OriginDatabase && origin != OriginGeneric {
 			return
 		}
 
@@ -187,7 +187,8 @@ func IsVarAssignedFromError(pass *analysis.Pass, varName string, body *ast.Block
 				if IsErrorCall(rhs) {
 					call := rhs.(*ast.CallExpr)
 					sel := call.Fun.(*ast.SelectorExpr)
-					if GetErrorOrigin(pass, sel.X, fn) == OriginNonDatabase {
+					origin := GetErrorOrigin(pass, sel.X, fn)
+					if origin != OriginDatabase && origin != OriginGeneric {
 						return false
 					}
 					found = true
