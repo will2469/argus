@@ -62,24 +62,31 @@ Granting `CREATE` on `schema public` to pseudo-role `PUBLIC` allows any authenti
 
 ## 3. How Argus Detects Violations (Static Analysis Architecture)
 
-Argus inspects migration SQL scripts using PostgreSQL AST parsing:
+Argus inspects migration SQL scripts using PostgreSQL AST parsing with strict `RoleSpec` and object-type semantics:
 
 ```mermaid
-flowchart LR
+flowchart TD
     Scan["Scan .up.sql Migrations<br/>(db/migrations)"] --> Parse["grant_ast_walker.go:<br/>pg_query_go AST Inspection"]
-    Parse --> CheckGrant{"GrantStmt Targeting<br/>Runtime App Role or PUBLIC?"}
-    Parse --> CheckOwner{"AlterTableCmd AT_ChangeOwner<br/>Assigning Owner to App Role?"}
-    CheckGrant -->|Yes| PermCheck{"Includes DDL Privileges?<br/>(CREATE, DROP, TRUNCATE, ALL)"}
-    PermCheck -->|Yes| ReportGrant["Report CRITICAL Violation:<br/>Forbidden DDL Grant to App Role"]
-    CheckOwner -->|Yes| ReportOwner["Report CRITICAL Violation:<br/>Forbidden Table Ownership Grant"]
-    PermCheck -->|No (Pure DML)| Pass["Pass (Safe DML Grant)"]
-    CheckOwner -->|No (Admin Owner)| Pass
+    Parse --> Branch{"Statement Type"}
+    
+    Branch -->|GrantStmt| CheckGrantee["Extract Grantees via resolveRoleSpec<br/>(Differentiate Named Roles vs PUBLIC Pseudo-Role)"]
+    CheckGrantee --> EvalPerms{"extractDDLPermissions<br/>(Object-Type Aware)"}
+    EvalPerms -->|ALL on TABLE/SCHEMA/DATABASE or CREATE/DROP/TRUNCATE| ReportGrant["Report CRITICAL Violation:<br/>Forbidden DDL Grant (Distinct App vs PUBLIC Message)"]
+    EvalPerms -->|ALL on SEQUENCE/FUNCTION or Pure DML| PassGrant["Pass (Legitimate DML/Sequence/Execute)"]
+
+    Branch -->|AlterTableStmt AT_ChangeOwner| CheckOwner["Extract Owner via resolveRoleSpec<br/>(app_user vs PUBLIC vs CURRENT_USER)"]
+    CheckOwner -->|New Owner is App Role or PUBLIC| ReportOwner["Report CRITICAL Violation:<br/>Forbidden Table Ownership Grant"]
+    CheckOwner -->|Admin or CURRENT_USER| PassOwner["Pass (Admin Ownership Retained)"]
+
+    Branch -->|GrantRoleStmt| CheckRoleGrant{"Granting Admin/Superuser Role<br/>(superuser, pg_database_owner) to App Role?"}
+    CheckRoleGrant -->|Yes| ReportRole["Report CRITICAL Violation:<br/>Forbidden Administrative Role Inheritance"]
+    CheckRoleGrant -->|No| PassRole["Pass"]
 ```
 
-1. **Grant Statement AST Walker (`grant_ast_walker.go`):** Inspects `GrantStmt` nodes, detecting permissions assigned to runtime roles (`app_user`, `PUBLIC`, etc.).
-2. **Table Owner AST Walker (`grant_ast_walker.go`):** Detects `AlterTableCmd` nodes with subtype `AT_ChangeOwner`.
-3. **Role Registry (`role_registry.go`):** Configurable runtime role identifier registry integrated with `.argus.yaml`.
-4. **Standalone Runner (`standalone_runner.go`):** Direct CLI migration directory scanner for pre-commit verification.
+1. **Object-Type Aware Privilege Extraction (`grant_ast_walker.go`):** In PostgreSQL grammar (`gram.y`), `opt_privileges` returning `NIL` (`len(stmt.Privileges) == 0`) signifies `ALL [PRIVILEGES]`. Argus deterministically evaluates whether `ALL` conveys DDL rights based on the target object type (`TABLE`, `SCHEMA`, `DATABASE` -> DDL; `SEQUENCE`, `FUNCTION`, `PROCEDURE` -> DML/Usage only).
+2. **Explicit `RoleSpec` Resolution (`role_registry.go`):** Resolves `*pg_query.RoleSpec` across all supported variants (`ROLESPEC_PUBLIC`, `ROLESPEC_CSTRING`, `ROLESPEC_CURRENT_USER`, etc.), normalizing identifiers and preventing role-spoofing.
+3. **Decoupled `PUBLIC` Pseudo-Role Policy (`role_registry.go`):** Rejects the conflation of the PostgreSQL cluster-wide `PUBLIC` pseudo-role with specific runtime application roles. Emits tailored, semantically accurate diagnostics for each category.
+4. **Table Ownership & Role Membership AST Walker (`grant_ast_walker.go`):** Traverses `AlterTableCmd` (`AT_ChangeOwner`) and `GrantRoleStmt` to prevent direct table ownership transfers and administrative role inheritance.
 
 ---
 
@@ -180,7 +187,7 @@ GRANT ALL PRIVILEGES ON TABLE mock_data TO app_user;
 
 ## 8. Configuration Reference (`.argus.yaml`)
 
-Configure designated runtime application roles in `.argus.yaml`:
+Configure designated runtime application roles and PUBLIC pseudo-role policy in `.argus.yaml`:
 
 ```yaml
 rules:
@@ -189,5 +196,5 @@ rules:
     runtime_app_roles:
       - app_user
       - web_app
-      - public
+    forbid_public_grants: true
 ```

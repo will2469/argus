@@ -29,15 +29,34 @@ func CheckMigration(filename, content string, dm *directives.DirectiveMap, reg *
 		if grantStmt := rawStmt.Stmt.GetGrantStmt(); grantStmt != nil && grantStmt.IsGrant {
 			grantees := extractGrantees(grantStmt)
 			for _, grantee := range grantees {
-				if reg.IsAppRole(grantee) {
+				var targetViolation bool
+				var isPublicTarget bool
+
+				if grantee.IsPublic && reg.IsPublicForbidden() {
+					targetViolation = true
+					isPublicTarget = true
+				} else if reg.IsAppRole(grantee.Name) {
+					targetViolation = true
+					isPublicTarget = false
+				}
+
+				if targetViolation {
 					isDDL, ddlPerms := extractDDLPermissions(grantStmt)
 					if isDDL {
-						line := migration.FindLineForKeyword(content, grantee)
+						line := migration.FindLineForKeyword(content, grantee.Name)
 						if dm != nil && (dm.IsLineIgnored(filename, line, RuleCode) || dm.IsLineIgnored(filename, line, RuleCode+".DDL-GRANT")) {
 							continue
 						}
-						msg := fmt.Sprintf("Forbidden grant of DDL permission (%s) to runtime role %q; app roles must be DML-only",
-							strings.Join(ddlPerms, ", "), grantee)
+
+						var msg string
+						if isPublicTarget {
+							msg = fmt.Sprintf("Forbidden grant of DDL permission (%s) to PUBLIC pseudo-role; cluster-wide DDL grants violate least-privilege isolation",
+								strings.Join(ddlPerms, ", "))
+						} else {
+							msg = fmt.Sprintf("Forbidden grant of DDL permission (%s) to runtime role %q; app roles must be DML-only",
+								strings.Join(ddlPerms, ", "), grantee.Name)
+						}
+
 						issues = append(issues, migration.Issue{
 							Rule:     RuleCode,
 							Filename: filename,
@@ -55,13 +74,26 @@ func CheckMigration(filename, content string, dm *directives.DirectiveMap, reg *
 			for _, rawCmd := range alterStmt.Cmds {
 				cmd := rawCmd.GetAlterTableCmd()
 				if cmd != nil && cmd.Subtype == pg_query.AlterTableType_AT_ChangeOwner && cmd.Newowner != nil {
-					newOwner := strings.ToLower(cmd.Newowner.Rolename)
-					if reg.IsAppRole(newOwner) {
-						line := migration.FindLineForKeyword(content, newOwner)
+					owner := resolveRoleSpec(cmd.Newowner)
+					if owner == nil {
+						continue
+					}
+
+					var isViolation bool
+					var msg string
+					if owner.IsPublic && reg.IsPublicForbidden() {
+						isViolation = true
+						msg = "Forbidden table ownership grant to PUBLIC pseudo-role; ownership must be retained by admin/migrator"
+					} else if reg.IsAppRole(owner.Name) {
+						isViolation = true
+						msg = fmt.Sprintf("Forbidden table ownership grant to runtime app role %q; ownership must be retained by admin/migrator", owner.Name)
+					}
+
+					if isViolation {
+						line := migration.FindLineForKeyword(content, owner.Name)
 						if dm != nil && (dm.IsLineIgnored(filename, line, RuleCode) || dm.IsLineIgnored(filename, line, RuleCode+".OWNER-TO")) {
 							continue
 						}
-						msg := fmt.Sprintf("Forbidden table ownership grant to runtime app role %q; ownership must be retained by admin/migrator", newOwner)
 						issues = append(issues, migration.Issue{
 							Rule:     RuleCode,
 							Filename: filename,
@@ -73,19 +105,50 @@ func CheckMigration(filename, content string, dm *directives.DirectiveMap, reg *
 				}
 			}
 		}
+
+		// 3. Inspect GRANT <role> TO <grantee> (administrative role membership)
+		if grantRoleStmt := rawStmt.Stmt.GetGrantRoleStmt(); grantRoleStmt != nil && grantRoleStmt.IsGrant {
+			for _, grNode := range grantRoleStmt.GranteeRoles {
+				if roleSpec := grNode.GetRoleSpec(); roleSpec != nil {
+					grantee := resolveRoleSpec(roleSpec)
+					if grantee == nil {
+						continue
+					}
+					if reg.IsAppRole(grantee.Name) || (grantee.IsPublic && reg.IsPublicForbidden()) {
+						for _, gNode := range grantRoleStmt.GrantedRoles {
+							if ap := gNode.GetAccessPriv(); ap != nil {
+								if isAdministrativeRole(ap.PrivName) {
+									line := migration.FindLineForKeyword(content, grantee.Name)
+									if dm != nil && (dm.IsLineIgnored(filename, line, RuleCode) || dm.IsLineIgnored(filename, line, RuleCode+".ROLE-GRANT")) {
+										continue
+									}
+									msg := fmt.Sprintf("Forbidden administrative role grant %q to runtime app role %q; app roles must not inherit administrative privileges",
+										ap.PrivName, grantee.Name)
+									issues = append(issues, migration.Issue{
+										Rule:     RuleCode,
+										Filename: filename,
+										Line:     line,
+										Message:  msg,
+										Severity: "CRITICAL",
+									})
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 
 	return issues
 }
 
-func extractGrantees(stmt *pg_query.GrantStmt) []string {
-	var grantees []string
+func extractGrantees(stmt *pg_query.GrantStmt) []GranteeInfo {
+	var grantees []GranteeInfo
 	for _, g := range stmt.Grantees {
 		if privRole := g.GetRoleSpec(); privRole != nil {
-			if privRole.Roletype == pg_query.RoleSpecType_ROLESPEC_PUBLIC {
-				grantees = append(grantees, "public")
-			} else if privRole.Rolename != "" {
-				grantees = append(grantees, strings.ToLower(privRole.Rolename))
+			if info := resolveRoleSpec(privRole); info != nil {
+				grantees = append(grantees, *info)
 			}
 		}
 	}
@@ -93,9 +156,15 @@ func extractGrantees(stmt *pg_query.GrantStmt) []string {
 }
 
 func extractDDLPermissions(stmt *pg_query.GrantStmt) (bool, []string) {
-	// If Privileges is nil or empty, it represents ALL PRIVILEGES in PostgreSQL AST
+	// In PostgreSQL grammar (gram.y), opt_privileges returning NIL (len == 0) signifies ALL [PRIVILEGES].
+	// Whether ALL PRIVILEGES conveys DDL rights depends on the target object type:
+	// - TABLE, SCHEMA, DATABASE: ALL conveys DDL (TRUNCATE, CREATE).
+	// - SEQUENCE, FUNCTION, PROCEDURE, TYPE: ALL conveys DML/usage/execute only (zero DDL).
 	if len(stmt.Privileges) == 0 {
-		return true, []string{"ALL PRIVILEGES"}
+		if isDDLApplicableObject(stmt.Objtype, stmt.Targtype) {
+			return true, []string{"ALL PRIVILEGES"}
+		}
+		return false, nil
 	}
 
 	var ddlPerms []string
@@ -113,11 +182,39 @@ func extractDDLPermissions(stmt *pg_query.GrantStmt) (bool, []string) {
 		case "CREATE", "DROP", "TRUNCATE", "ALTER":
 			isDDL = true
 			ddlPerms = append(ddlPerms, perm)
-		case "ALL", "":
-			isDDL = true
-			ddlPerms = append(ddlPerms, "ALL PRIVILEGES")
+		case "ALL", "ALL PRIVILEGES", "":
+			if isDDLApplicableObject(stmt.Objtype, stmt.Targtype) {
+				isDDL = true
+				ddlPerms = append(ddlPerms, "ALL PRIVILEGES")
+			}
 		}
 	}
 
 	return isDDL, ddlPerms
+}
+
+func isDDLApplicableObject(objtype pg_query.ObjectType, targtype pg_query.GrantTargetType) bool {
+	if targtype == pg_query.GrantTargetType_ACL_TARGET_ALL_IN_SCHEMA {
+		return objtype != pg_query.ObjectType_OBJECT_SEQUENCE &&
+			objtype != pg_query.ObjectType_OBJECT_FUNCTION &&
+			objtype != pg_query.ObjectType_OBJECT_PROCEDURE
+	}
+
+	switch objtype {
+	case pg_query.ObjectType_OBJECT_TABLE,
+		pg_query.ObjectType_OBJECT_SCHEMA,
+		pg_query.ObjectType_OBJECT_DATABASE,
+		pg_query.ObjectType_OBJECT_FDW,
+		pg_query.ObjectType_OBJECT_FOREIGN_SERVER:
+		return true
+	case pg_query.ObjectType_OBJECT_SEQUENCE,
+		pg_query.ObjectType_OBJECT_FUNCTION,
+		pg_query.ObjectType_OBJECT_PROCEDURE,
+		pg_query.ObjectType_OBJECT_ROUTINE,
+		pg_query.ObjectType_OBJECT_TYPE,
+		pg_query.ObjectType_OBJECT_DOMAIN:
+		return false
+	default:
+		return true
+	}
 }
