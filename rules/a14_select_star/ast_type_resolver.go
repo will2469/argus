@@ -144,20 +144,11 @@ func findTypeSpec(name string, file *ast.File) *ast.TypeSpec {
 	return nil
 }
 
-func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
+func isDBTypeSpec(ts *ast.TypeSpec, _ *ast.File) bool {
 	if ts == nil {
 		return false
 	}
 	switch t := ts.Type.(type) {
-	case *ast.StructType:
-		if t.Fields == nil {
-			return false
-		}
-		for _, field := range t.Fields.List {
-			if isProvenDBASTType(field.Type, file) {
-				return true
-			}
-		}
 	case *ast.InterfaceType:
 		if t.Methods == nil {
 			return false

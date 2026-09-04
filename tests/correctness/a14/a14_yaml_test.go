@@ -73,8 +73,9 @@ import (
 	"database/sql"
 )
 
-type DB struct{ *sql.DB }
-func (DB) Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error) { return nil, nil }
+type DB interface {
+	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
+}
 
 func Run(ctx context.Context, db DB) {
 	_, _ = db.Query(ctx, "SELECT * FROM users")

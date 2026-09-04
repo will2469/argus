@@ -34,8 +34,20 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 		}
 
 		var recvType types.Type
-		if selType, ok := pass.TypesInfo.Selections[sel]; ok && selType.Recv() != nil {
-			recvType = selType.Recv()
+		if selType, ok := pass.TypesInfo.Selections[sel]; ok {
+			if fn, ok := selType.Obj().(*types.Func); ok {
+				if fn.Pkg() != nil && isKnownDBPackagePath(fn.Pkg().Path()) {
+					return true
+				}
+				if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
+					if isKnownDBDriverType(sig.Recv().Type()) {
+						return true
+					}
+				}
+			}
+			if selType.Recv() != nil {
+				recvType = selType.Recv()
+			}
 		} else if tv, ok := pass.TypesInfo.Types[sel.X]; ok && tv.Type != nil {
 			recvType = tv.Type
 		} else if id, ok := sel.X.(*ast.Ident); ok {
@@ -52,9 +64,6 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 				return true
 			}
 			if isProvenDBQuerierType(recvType) {
-				return true
-			}
-			if isStructWithDBField(recvType) {
 				return true
 			}
 			// Compiler has complete type info: if not proven DB, fail closed.
@@ -181,14 +190,6 @@ func isProvenDBQuerierType(t types.Type) bool {
 		}
 	}
 
-	if named, ok := t.(*types.Named); ok {
-		for i := 0; i < named.NumMethods(); i++ {
-			if isDBMethodWithDriverSignature(named.Method(i)) {
-				return true
-			}
-		}
-	}
-
 	return false
 }
 
@@ -223,24 +224,6 @@ func isDBMethodWithDriverSignature(fn *types.Func) bool {
 		}
 	}
 
-	return false
-}
-
-func isStructWithDBField(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	t = unwrapPointer(t)
-	st, ok := t.Underlying().(*types.Struct)
-	if !ok {
-		return false
-	}
-	for i := 0; i < st.NumFields(); i++ {
-		fType := unwrapPointer(st.Field(i).Type())
-		if isKnownDBDriverType(fType) || isProvenDBQuerierType(fType) {
-			return true
-		}
-	}
 	return false
 }
 

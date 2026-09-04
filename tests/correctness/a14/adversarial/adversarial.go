@@ -5,11 +5,10 @@ import (
 	"database/sql"
 )
 
-type DB struct{ *sql.DB }
-
-func (DB) Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error) {
-	return nil, nil
+type DB interface {
+	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
 }
+
 // A1: Branch — conditional SELECT * inside branch.
 func A1_Branch(ctx context.Context, db DB, debug bool) {
 	if debug {

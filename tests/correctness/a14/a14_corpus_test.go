@@ -34,13 +34,13 @@ func TestA14_PositiveCorpus(t *testing.T) {
 
 	t.Logf("=== Positive Corpus Results (%d issues found) ===", len(issues))
 	expectedLines := map[int]string{
-		23: "P1_Obvious",
-		28: "P2_Indirect",
-		33: "P3_Helper",
-		38: "P4_Nested",
-		43: "P5_Alias",
-		52: "P6_ShadowedSelectStar",
-		62: "P7_PackageShadowing",
+		16: "P1_Obvious",
+		21: "P2_Indirect",
+		26: "P3_Helper",
+		31: "P4_Nested",
+		36: "P5_Alias",
+		45: "P6_ShadowedSelectStar",
+		55: "P7_PackageShadowing",
 	}
 
 	foundLines := make(map[int]bool)
@@ -88,14 +88,14 @@ func TestA14_AdversarialCorpus(t *testing.T) {
 		line       int
 		mustDetect bool
 	}{
-		{"A1_Branch", 16, true},
-		{"A2_Reassignment", 25, true},
-		{"A3_Alias", 32, true},
-		{"A4_Wrapper", 41, true},
-		{"A5_NestedFunction", 47, true},
-		{"A6_Generic", 58, true},
-		{"A7_Interface", 67, true},
-		{"A8_UnconventionalDBVarName", 72, true},
+		{"A1_Branch", 15, true},
+		{"A2_Reassignment", 24, true},
+		{"A3_Alias", 31, true},
+		{"A4_Wrapper", 40, true},
+		{"A5_NestedFunction", 46, true},
+		{"A6_Generic", 57, true},
+		{"A7_Interface", 66, true},
+		{"A8_UnconventionalDBVarName", 71, true},
 	}
 
 	for _, a := range assertions {

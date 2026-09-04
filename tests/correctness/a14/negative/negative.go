@@ -5,15 +5,12 @@ import (
 	"database/sql"
 )
 
-type DB struct{ *sql.DB }
-
-func (DB) Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error) {
-	return nil, nil
+type DB interface {
+	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) *sql.Row
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
 }
 
-func (DB) QueryRow(ctx context.Context, sql string, args ...any) *sql.Row {
-	return nil
-}
 
 type Logger struct{}
 
@@ -104,3 +101,18 @@ func N11_RepoNamingNonDB(ctx context.Context, repo Calculator) {
 func N12_StoreNamingNonDB(ctx context.Context, store Calculator) {
 	_, _ = store.Query(ctx, "SELECT * FROM users")
 }
+
+// FakeStore represents a struct containing a DB field that implements non-delegating Query/Exec stubs.
+type FakeStore struct {
+	DB *sql.DB
+}
+
+func (s FakeStore) Query(ctx context.Context, q string) (*sql.Rows, error) {
+	return nil, nil
+}
+
+// N13: Non-delegating wrapper struct with DB field calling Query with SELECT *.
+func N13_NonDelegatingWrapperStruct(ctx context.Context, store FakeStore) {
+	_, _ = store.Query(ctx, "SELECT * FROM users")
+}
+

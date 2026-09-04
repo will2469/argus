@@ -83,8 +83,9 @@ import (
 	"context"
 	"database/sql"
 )
-type DB struct{ *sql.DB }
-func (DB) Query(ctx context.Context, sql string) (*sql.Rows, error) { return nil, nil }
+type DB interface {
+	Query(ctx context.Context, sql string) (*sql.Rows, error)
+}
 
 var packageStarQuery = "SELECT * FROM users"
 
@@ -147,9 +148,18 @@ func TestCalculator(ctx context.Context, engine SearchEngine) {
 	store := Calculator{}
 	store.Query(ctx, "SELECT * FROM users")
 
+	fakeStore := FakeStore{}
+	fakeStore.Query(ctx, "SELECT * FROM users")
+
 	engine.Query(ctx, "SELECT * FROM users")
 	engine.Exec(ctx, "SELECT * FROM users")
 }
+
+type FakeStore struct {
+	DB any
+}
+func (FakeStore) Query(ctx context.Context, q string) (any, error) { return nil, nil }
+
 `
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "test.go", src, 0)

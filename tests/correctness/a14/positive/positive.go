@@ -5,19 +5,12 @@ import (
 	"database/sql"
 )
 
-type DB struct{ *sql.DB }
-
-func (DB) Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error) {
-	return nil, nil
+type DB interface {
+	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) *sql.Row
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
 }
 
-func (DB) QueryRow(ctx context.Context, sql string, args ...any) *sql.Row {
-	return nil
-}
-
-func (DB) Exec(ctx context.Context, sql string, args ...any) (sql.Result, error) {
-	return nil, nil
-}
 // P1: Obvious Violation — direct SELECT * wildcard.
 func P1_Obvious(ctx context.Context, db DB) {
 	_, _ = db.Query(ctx, "SELECT * FROM users") // want `\[ARGUS-A14\] Forbidden 'SELECT \*' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure \(CWE-200\)`
