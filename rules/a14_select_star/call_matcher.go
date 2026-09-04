@@ -10,6 +10,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/will2469/argus/shared/callsite"
+	"github.com/will2469/argus/shared/dbident"
 )
 
 // isDatabaseCall verifies that a call expression targets a genuine database querier.
@@ -27,7 +28,7 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 		// Package-level calls from database packages: sql.Open, pgx.Connect, etc.
 		if id, ok := sel.X.(*ast.Ident); ok {
 			if pkgName, ok := pass.TypesInfo.Uses[id].(*types.PkgName); ok {
-				if isKnownDBPackagePath(pkgName.Imported().Path()) {
+				if dbident.IsKnownDBPackagePath(pkgName.Imported().Path()) {
 					return true
 				}
 			}
@@ -36,11 +37,11 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 		var recvType types.Type
 		if selType, ok := pass.TypesInfo.Selections[sel]; ok {
 			if fn, ok := selType.Obj().(*types.Func); ok {
-				if fn.Pkg() != nil && isKnownDBPackagePath(fn.Pkg().Path()) {
+				if fn.Pkg() != nil && dbident.IsKnownDBPackagePath(fn.Pkg().Path()) {
 					return true
 				}
 				if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
-					if isKnownDBDriverType(sig.Recv().Type()) {
+					if dbident.IsKnownDBDriverType(sig.Recv().Type()) {
 						return true
 					}
 				}
@@ -59,16 +60,16 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 		}
 
 		if recvType != nil && recvType != types.Typ[types.Invalid] {
-			recvType = unwrapPointer(recvType)
-			if isKnownDBDriverType(recvType) {
+			recvType = dbident.UnwrapPointer(recvType)
+			if dbident.IsKnownDBDriverType(recvType) {
 				return true
 			}
-			if isProvenDBQuerierType(recvType) {
+			if dbident.IsProvenDBQuerierType(recvType) {
 				return true
 			}
 			// Compiler has complete type info: if not proven DB, fail closed.
 			// Only fall through if types could not be fully resolved (contain Invalid).
-			if !hasInvalidType(recvType) {
+			if !dbident.HasInvalidType(recvType) {
 				return false
 			}
 		}
@@ -91,139 +92,9 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 		return true
 	}
 
-	if isAssignedFromDBConstructor(sel.X, fn) {
+	if isAssignedFromDBConstructor(sel.X, fn, file) {
 		return true
 	}
 
 	return false
 }
-
-func unwrapPointer(t types.Type) types.Type {
-	for {
-		if ptr, ok := t.(*types.Pointer); ok {
-			t = ptr.Elem()
-		} else {
-			break
-		}
-	}
-	return t
-}
-
-func hasInvalidType(t types.Type) bool {
-	if t == nil {
-		return true
-	}
-	switch x := t.(type) {
-	case *types.Basic:
-		return x.Kind() == types.Invalid
-	case *types.Pointer:
-		return hasInvalidType(x.Elem())
-	case *types.Named:
-		return hasInvalidType(x.Underlying())
-	case *types.Struct:
-		for i := 0; i < x.NumFields(); i++ {
-			if hasInvalidType(x.Field(i).Type()) {
-				return true
-			}
-		}
-	case *types.Interface:
-		for i := 0; i < x.NumMethods(); i++ {
-			if hasInvalidType(x.Method(i).Type()) {
-				return true
-			}
-		}
-	case *types.Signature:
-		if results := x.Results(); results != nil {
-			for i := 0; i < results.Len(); i++ {
-				if hasInvalidType(results.At(i).Type()) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func isKnownDBPackagePath(path string) bool {
-	switch path {
-	case "database/sql", "github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/pgxpool",
-		"github.com/jackc/pgx/v5/pgconn", "github.com/jackc/pgx/v4", "github.com/jackc/pgx/v4/pgxpool",
-		"github.com/jmoiron/sqlx", "github.com/lib/pq":
-		return true
-	}
-	return false
-}
-
-func isKnownDBDriverType(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	t = unwrapPointer(t)
-	if named, ok := t.(*types.Named); ok {
-		if obj := named.Obj(); obj != nil && obj.Pkg() != nil {
-			if isKnownDBPackagePath(obj.Pkg().Path()) {
-				switch obj.Name() {
-				case "DB", "Tx", "Conn", "Pool", "Batch", "Stmt", "Rows", "Row", "Result", "CommandTag":
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func isProvenDBQuerierType(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	t = unwrapPointer(t)
-
-	if isKnownDBDriverType(t) {
-		return true
-	}
-
-	if iface, ok := t.Underlying().(*types.Interface); ok {
-		for i := 0; i < iface.NumMethods(); i++ {
-			if isDBMethodWithDriverSignature(iface.Method(i)) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func isDBMethodWithDriverSignature(fn *types.Func) bool {
-	if fn == nil {
-		return false
-	}
-	switch fn.Name() {
-	case "Query", "QueryRow", "Exec", "ExecContext", "Begin", "BeginTx", "SendBatch":
-	default:
-		return false
-	}
-
-	sig, ok := fn.Type().(*types.Signature)
-	if !ok {
-		return false
-	}
-
-	if results := sig.Results(); results != nil {
-		for i := 0; i < results.Len(); i++ {
-			if isKnownDBDriverType(results.At(i).Type()) {
-				return true
-			}
-		}
-	}
-
-	if params := sig.Params(); params != nil {
-		for i := 0; i < params.Len(); i++ {
-			if isKnownDBDriverType(params.At(i).Type()) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-

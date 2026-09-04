@@ -24,19 +24,16 @@ rules:
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 )
 
-type Tx interface {
-	Exec(ctx context.Context, sql string, args ...any) error
-}
-
 type Pool interface {
-	BeginFunc(ctx context.Context, fn func(Tx) error) error
+	BeginFunc(ctx context.Context, fn func(*sql.Tx) error) error
 }
 
 func TxWithIO(ctx context.Context, pool Pool) error {
-	return pool.BeginFunc(ctx, func(tx Tx) error {
+	return pool.BeginFunc(ctx, func(tx *sql.Tx) error {
 		_, _ = http.Get("https://example.com")
 		return nil
 	})
@@ -78,20 +75,17 @@ rules:
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"time"
 )
 
-type Tx interface {
-	Exec(ctx context.Context, sql string, args ...any) error
-}
-
 type Pool interface {
-	BeginFunc(ctx context.Context, fn func(Tx) error) error
+	BeginFunc(ctx context.Context, fn func(*sql.Tx) error) error
 }
 
 func TxWithIO(ctx context.Context, pool Pool) error {
-	return pool.BeginFunc(ctx, func(tx Tx) error {
+	return pool.BeginFunc(ctx, func(tx *sql.Tx) error {
 		time.Sleep(100 * time.Millisecond)
 		_, _ = http.Get("https://example.com")
 		return nil

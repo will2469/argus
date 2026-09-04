@@ -8,6 +8,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/will2469/argus/shared/callsite"
+	"github.com/will2469/argus/shared/dbident"
 )
 
 // IsSafeCollectionHelper determines if a CallExpr is an official auto-closing helper
@@ -26,19 +27,7 @@ func IsSafeCollectionHelper(call *ast.CallExpr) bool {
 
 // HasDatabaseImports checks if an AST file imports known database packages.
 func HasDatabaseImports(file *ast.File) bool {
-	if file == nil {
-		return true
-	}
-	for _, imp := range file.Imports {
-		if imp.Path == nil {
-			continue
-		}
-		p := strings.Trim(imp.Path.Value, `"`)
-		if strings.Contains(p, "pgx") || strings.Contains(p, "database/sql") || strings.Contains(p, "argus") || strings.Contains(p, "pgconn") {
-			return true
-		}
-	}
-	return false
+	return dbident.HasDatabaseImports(file)
 }
 
 // IsDatabaseRowsReceiver determines if an expression receiver is likely a database pgx.Rows / sql.Rows.

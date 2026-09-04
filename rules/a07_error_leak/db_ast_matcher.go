@@ -8,6 +8,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/will2469/argus/shared/callsite"
+	"github.com/will2469/argus/shared/dbident"
 )
 
 func isKnownDBDriverASTType(expr ast.Expr, file *ast.File, fn *ast.FuncDecl) bool {
@@ -115,5 +116,5 @@ func isDBConstructorCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, 
 	if !isKnownDBPackageIdent(pass, file, fn, id) {
 		return false
 	}
-	return isDBConstructorMethod(sel.Sel.Name)
+	return dbident.IsDBConstructorMethod(sel.Sel.Name)
 }

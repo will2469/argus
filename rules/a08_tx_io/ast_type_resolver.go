@@ -5,7 +5,8 @@ package a08_tx_io
 import (
 	"go/ast"
 	"go/token"
-	"strings"
+
+	"github.com/will2469/argus/shared/dbident"
 )
 
 func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
@@ -82,9 +83,9 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		if xID, ok := sel.X.(*ast.Ident); ok {
 			xType := findASTType(xID, fn, file)
-			structName := getASTTypeName(xType)
+			structName := dbident.GetASTTypeName(xType)
 			if structName != "" && file != nil {
-				ts := findTypeSpec(structName, file)
+				ts := dbident.FindTypeSpec(structName, file)
 				if ts != nil {
 					if st, ok := ts.Type.(*ast.StructType); ok && st.Fields != nil {
 						for _, f := range st.Fields.List {
@@ -121,7 +122,7 @@ func resolveCallReturnTypeAST(call *ast.CallExpr, targetIdx int, fn *ast.FuncDec
 	}
 	if rSel, ok := recvType.(*ast.SelectorExpr); ok {
 		if pkgID, ok := rSel.X.(*ast.Ident); ok {
-			if isImportedDBPackageIdent(file, pkgID.Name) {
+			if dbident.IsImportedDBPackageIdent(file, pkgID.Name) {
 				switch rSel.Sel.Name {
 				case "DB":
 					if (sel.Sel.Name == "Begin" || sel.Sel.Name == "BeginTx") && targetIdx == 0 {
@@ -138,9 +139,9 @@ func resolveCallReturnTypeAST(call *ast.CallExpr, targetIdx int, fn *ast.FuncDec
 		}
 	}
 
-	typeName := getASTTypeName(recvType)
+	typeName := dbident.GetASTTypeName(recvType)
 	if typeName != "" && file != nil {
-		ts := findTypeSpec(typeName, file)
+		ts := dbident.FindTypeSpec(typeName, file)
 		if ts != nil {
 			if iface, ok := ts.Type.(*ast.InterfaceType); ok && iface.Methods != nil {
 				for _, m := range iface.Methods.List {
@@ -172,65 +173,6 @@ func resolveCallReturnTypeAST(call *ast.CallExpr, targetIdx int, fn *ast.FuncDec
 	}
 
 	return nil
-}
-
-func getASTTypeName(expr ast.Expr) string {
-	if expr == nil {
-		return ""
-	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	if id, ok := expr.(*ast.Ident); ok {
-		return id.Name
-	}
-	if idx, ok := expr.(*ast.IndexExpr); ok {
-		return getASTTypeName(idx.X)
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		return sel.Sel.Name
-	}
-	return ""
-}
-
-func findTypeSpec(name string, file *ast.File) *ast.TypeSpec {
-	if file == nil || name == "" {
-		return nil
-	}
-	for _, decl := range file.Decls {
-		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.TYPE {
-			for _, spec := range gen.Specs {
-				if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == name {
-					return ts
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func isImportedDBPackageIdent(file *ast.File, name string) bool {
-	if file == nil || name == "" {
-		return false
-	}
-	for _, imp := range file.Imports {
-		path := strings.Trim(imp.Path.Value, `"`)
-		if isKnownDBPackagePath(path) {
-			localName := defaultPackageName(path)
-			if imp.Name != nil {
-				localName = imp.Name.Name
-			}
-			if localName == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func defaultPackageName(path string) string {
-	parts := strings.Split(path, "/")
-	return parts[len(parts)-1]
 }
 
 func findEnclosingFuncDecl(file *ast.File, pos token.Pos) *ast.FuncDecl {

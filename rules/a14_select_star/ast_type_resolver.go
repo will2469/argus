@@ -4,9 +4,8 @@ package a14_select_star
 
 import (
 	"go/ast"
-	"go/token"
 
-	"github.com/will2469/argus/shared/callsite"
+	"github.com/will2469/argus/shared/dbident"
 )
 
 func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
@@ -67,8 +66,8 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		if xID, ok := sel.X.(*ast.Ident); ok {
 			xType := findASTType(xID, fn, file)
-			structName := getASTTypeName(xType)
-			if ts := findTypeSpec(structName, file); ts != nil {
+			structName := dbident.GetASTTypeName(xType)
+			if ts := dbident.FindTypeSpec(structName, file); ts != nil {
 				if st, ok := ts.Type.(*ast.StructType); ok && st.Fields != nil {
 					for _, f := range st.Fields.List {
 						for _, fnm := range f.Names {
@@ -83,23 +82,6 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 	}
 
 	return nil
-}
-
-func getASTTypeName(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.StarExpr:
-		return getASTTypeName(e.X)
-	case *ast.Ident:
-		return e.Name
-	case *ast.IndexExpr:
-		return getASTTypeName(e.X)
-	case *ast.IndexListExpr:
-		return getASTTypeName(e.X)
-	case *ast.SelectorExpr:
-		return e.Sel.Name
-	default:
-		return ""
-	}
 }
 
 func isProvenDBASTType(expr ast.Expr, file *ast.File) bool {
@@ -121,27 +103,11 @@ func isProvenDBASTType(expr ast.Expr, file *ast.File) bool {
 		}
 	}
 	if id, ok := expr.(*ast.Ident); ok {
-		if ts := findTypeSpec(id.Name, file); ts != nil {
+		if ts := dbident.FindTypeSpec(id.Name, file); ts != nil {
 			return isDBTypeSpec(ts, file)
 		}
 	}
 	return false
-}
-
-func findTypeSpec(name string, file *ast.File) *ast.TypeSpec {
-	if file == nil || name == "" {
-		return nil
-	}
-	for _, decl := range file.Decls {
-		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.TYPE {
-			for _, spec := range gen.Specs {
-				if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == name {
-					return ts
-				}
-			}
-		}
-	}
-	return nil
 }
 
 func isDBTypeSpec(ts *ast.TypeSpec, _ *ast.File) bool {
@@ -183,7 +149,7 @@ func hasDBDriverMethodAST(ft *ast.FuncType) bool {
 	return false
 }
 
-func isAssignedFromDBConstructor(expr ast.Expr, fn *ast.FuncDecl) bool {
+func isAssignedFromDBConstructor(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) bool {
 	id, ok := expr.(*ast.Ident)
 	if !ok || fn == nil || fn.Body == nil {
 		return false
@@ -199,7 +165,7 @@ func isAssignedFromDBConstructor(expr ast.Expr, fn *ast.FuncDecl) bool {
 		}
 		for i, lhs := range as.Lhs {
 			if lid, ok := lhs.(*ast.Ident); ok && lid.Name == id.Name && i < len(as.Rhs) {
-				if call, ok := as.Rhs[i].(*ast.CallExpr); ok && isDBPoolConstructorCall(call) {
+				if call, ok := as.Rhs[i].(*ast.CallExpr); ok && dbident.IsDBPoolConstructorCall(call, file) {
 					isConstructor = true
 					return false
 				}
@@ -208,27 +174,4 @@ func isAssignedFromDBConstructor(expr ast.Expr, fn *ast.FuncDecl) bool {
 		return true
 	})
 	return isConstructor
-}
-
-func isDBPoolConstructorCall(call *ast.CallExpr) bool {
-	if call == nil {
-		return false
-	}
-	sel := callsite.GetCallSelector(call.Fun)
-	if sel == nil {
-		return false
-	}
-	if pkgID, ok := sel.X.(*ast.Ident); ok {
-		switch pkgID.Name {
-		case "sql":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "OpenDB"
-		case "pgx":
-			return sel.Sel.Name == "Connect" || sel.Sel.Name == "ConnectConfig"
-		case "pgxpool":
-			return sel.Sel.Name == "New" || sel.Sel.Name == "NewWithConfig"
-		case "sqlx":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "Connect"
-		}
-	}
-	return false
 }

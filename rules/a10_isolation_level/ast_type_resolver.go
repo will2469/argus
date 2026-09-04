@@ -89,7 +89,7 @@ func isProvenDBPoolASTType(expr ast.Expr, file *ast.File) bool {
 }
 
 func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
-	if ts == nil || isKnownNonDBTypeName(ts.Name.Name) {
+	if ts == nil {
 		return false
 	}
 	switch t := ts.Type.(type) {
@@ -159,9 +159,6 @@ func isProvenDBTxASTType(expr ast.Expr, file *ast.File) bool {
 		}
 	}
 	if id, ok := expr.(*ast.Ident); ok {
-		if isKnownNonDBTypeName(id.Name) {
-			return false
-		}
 		if ts := findTypeSpec(id.Name, file); ts != nil {
 			if iface, ok := ts.Type.(*ast.InterfaceType); ok && iface.Methods != nil {
 				var hasExecOrQuery, hasCommit, hasRollback bool
@@ -193,10 +190,6 @@ func isProvenDBTxASTType(expr ast.Expr, file *ast.File) bool {
 func isProvenClosureTxASTType(expr ast.Expr, file *ast.File) bool {
 	if isProvenDBTxASTType(expr, file) {
 		return true
-	}
-	typeName := getASTTypeName(expr)
-	if isKnownNonDBTypeName(typeName) {
-		return false
 	}
 	if id, ok := expr.(*ast.Ident); ok {
 		if ts := findTypeSpec(id.Name, file); ts != nil {

@@ -3,9 +3,10 @@ package a09_advisory_lock
 
 import (
 	"go/ast"
-	"go/token"
 	"go/types"
 	"strings"
+
+	"github.com/will2469/argus/shared/dbident"
 )
 
 func isArgusPackagePath(path string) bool {
@@ -83,29 +84,11 @@ func checkMethodHasInvalid(mset *types.MethodSet, methodName string) bool {
 }
 
 func hasInvalidType(t types.Type) bool {
-	if t == nil {
-		return true
-	}
-	switch x := t.(type) {
-	case *types.Basic:
-		return x.Kind() == types.Invalid
-	case *types.Pointer:
-		return hasInvalidType(x.Elem())
-	case *types.Named:
-		return hasInvalidType(x.Underlying())
-	}
-	return false
+	return dbident.HasInvalidType(t)
 }
 
 func getTypeName(t types.Type) string {
-	if t == nil {
-		return ""
-	}
-	t = unwrapPointer(t)
-	if named, ok := t.(*types.Named); ok && named.Obj() != nil {
-		return named.Obj().Name()
-	}
-	return ""
+	return dbident.GetTypeName(t)
 }
 
 func isASTContextType(expr ast.Expr) bool {
@@ -140,40 +123,13 @@ func isASTFuncType(expr ast.Expr) bool {
 }
 
 func unwrapPointer(t types.Type) types.Type {
-	if ptr, ok := t.(*types.Pointer); ok {
-		return ptr.Elem()
-	}
-	return t
+	return dbident.UnwrapPointer(t)
 }
 
 func getASTTypeName(expr ast.Expr) string {
-	if expr == nil {
-		return ""
-	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	if id, ok := expr.(*ast.Ident); ok {
-		return id.Name
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		return sel.Sel.Name
-	}
-	return ""
+	return dbident.GetASTTypeName(expr)
 }
 
 func findTypeSpec(name string, file *ast.File) *ast.TypeSpec {
-	if file == nil || name == "" {
-		return nil
-	}
-	for _, decl := range file.Decls {
-		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.TYPE {
-			for _, spec := range gen.Specs {
-				if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == name {
-					return ts
-				}
-			}
-		}
-	}
-	return nil
+	return dbident.FindTypeSpec(name, file)
 }

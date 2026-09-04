@@ -122,14 +122,18 @@ func isProvenTxHelperCall(pass *analysis.Pass, call *ast.CallExpr, fn *ast.FuncD
 		firstParam := closure.Type.Params.List[0]
 		if len(firstParam.Names) > 0 {
 			if obj := pass.TypesInfo.Defs[firstParam.Names[0]]; obj != nil {
-				if !isProvenClosureTxType(obj.Type()) {
+				if isProvenClosureTxType(obj.Type()) {
+					return true
+				}
+				if !hasInvalidType(obj.Type()) {
 					return false
 				}
 			}
 		}
 	}
 
-	return true
+	firstParam := closure.Type.Params.List[0]
+	return isProvenClosureTxASTType(firstParam.Type, file)
 }
 
 func extractClosureArg(call *ast.CallExpr) *ast.FuncLit {

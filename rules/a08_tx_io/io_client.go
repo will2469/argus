@@ -3,7 +3,6 @@ package a08_tx_io
 
 import (
 	"go/ast"
-	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -64,16 +63,6 @@ func isOSFileCall(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	return false
 }
 
-func unwrapPointer(t types.Type) types.Type {
-	for {
-		if ptr, ok := t.(*types.Pointer); ok {
-			t = ptr.Elem()
-		} else {
-			break
-		}
-	}
-	return t
-}
 
 func isImportedPackage(file *ast.File, pkgName, expectedPath string) bool {
 	if file == nil {

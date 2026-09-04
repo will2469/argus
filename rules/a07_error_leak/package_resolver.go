@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
+
+	"github.com/will2469/argus/shared/dbident"
 )
 
 // isPackageCall verifies that a selector call targets a specific package function or constructor.
@@ -69,7 +71,7 @@ func isKnownDBPackageIdent(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl
 	if pass != nil && pass.TypesInfo != nil {
 		if obj := pass.TypesInfo.Uses[id]; obj != nil {
 			if pkg, ok := obj.(*types.PkgName); ok && pkg.Imported() != nil {
-				return isKnownDBPackagePath(pkg.Imported().Path())
+				return dbident.IsKnownDBPackagePath(pkg.Imported().Path())
 			}
 		}
 		return false
@@ -84,7 +86,7 @@ func isKnownDBPackageIdent(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl
 			continue
 		}
 		path := strings.Trim(imp.Path.Value, `"`)
-		if isKnownDBPackagePath(path) {
+		if dbident.IsKnownDBPackagePath(path) {
 			localName := ""
 			if imp.Name != nil {
 				localName = imp.Name.Name
