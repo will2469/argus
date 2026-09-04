@@ -87,3 +87,35 @@ func N7_ProvenHelper(ctx context.Context) {
 	_, _ = pgxpool.NewWithConfig(ctx, cfgProven)
 }
 
+// N8: Reassigned Safe DSN — initial unsafe DSN killed by subsequent safe assignment.
+func N8_ReassignedSafeDSN(ctx context.Context) {
+	dsn := "postgres://bad:5432/db"
+	dsn = "postgres://good:5432/db?pool_max_conns=20"
+	_, _ = pgxpool.New(ctx, dsn)
+}
+
+// N9: Branch Override Safe DSN — branch unsafe DSN killed by post-branch safe assignment.
+func N9_BranchOverrideSafeDSN(ctx context.Context, prod bool) {
+	var dsn string
+	if prod {
+		dsn = "postgres://bad:5432/db"
+	}
+	dsn = "postgres://good:5432/db?pool_max_conns=20"
+	_, _ = pgxpool.New(ctx, dsn)
+}
+
+func ApplyConfigOverride(cfg *Config, bad bool) {
+	if bad {
+		cfg.MaxConns = 500
+	}
+	cfg.MaxConns = 20
+}
+
+// N10: Helper Sequential Override — helper branch setting 500 killed by subsequent 20.
+func N10_HelperSequentialOverride(ctx context.Context, bad bool) {
+	cfg, _ := pgxpool.ParseConfig("postgres://localhost/db")
+	ApplyConfigOverride(cfg, bad)
+	_, _ = pgxpool.NewWithConfig(ctx, cfg)
+}
+
+

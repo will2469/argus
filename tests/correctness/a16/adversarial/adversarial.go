@@ -124,3 +124,31 @@ func A12_MultiHopAlias(ctx context.Context) {
 	_, _ = pgxpool.New(ctx, alias2)
 }
 
+func ApplyConfigPartial(cfg *Config, bad bool) {
+	if bad {
+		cfg.MaxConns = 500
+	}
+}
+
+// A13: Helper Partial Branch — helper only configures in branch and sets invalid limit.
+func A13_HelperPartialBranch(ctx context.Context, bad bool) {
+	cfg, _ := pgxpool.ParseConfig("postgres://localhost/db")
+	ApplyConfigPartial(cfg, bad)
+	_, _ = pgxpool.NewWithConfig(ctx, cfg)
+}
+
+func ApplyConfigUnsafeBranch(cfg *Config, bad bool) {
+	cfg.MaxConns = 20
+	if bad {
+		cfg.MaxConns = 500
+	}
+}
+
+// A14: Helper Unsafe Branch — helper has branch with excessive connection limit.
+func A14_HelperUnsafeBranch(ctx context.Context, bad bool) {
+	cfg, _ := pgxpool.ParseConfig("postgres://localhost/db")
+	ApplyConfigUnsafeBranch(cfg, bad)
+	_, _ = pgxpool.NewWithConfig(ctx, cfg)
+}
+
+

@@ -21,13 +21,7 @@ func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
 		return nil
 	}
 
-	enclosing := findEnclosingFunc(file, call.Pos())
-	var body *ast.BlockStmt
-	if enclosing != nil {
-		body = enclosing.Body
-	}
-
-	results := resolveExprToStrings(dsnArg, body, file, call.Pos(), 0)
+	results := resolveExprToStringsWithFlow(file, dsnArg, call.Pos(), 0)
 	if len(results) == 0 {
 		if s, ok := callsite.ExtractQueryString(call); ok {
 			results = append(results, s)
@@ -37,7 +31,7 @@ func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
 	return deduplicateStrings(results)
 }
 
-func resolveExprToStrings(expr ast.Expr, body *ast.BlockStmt, file *ast.File, maxPos token.Pos, depth int) []string {
+func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, depth int) []string {
 	if expr == nil || depth > 10 {
 		return nil
 	}
@@ -49,8 +43,8 @@ func resolveExprToStrings(expr ast.Expr, body *ast.BlockStmt, file *ast.File, ma
 		}
 	case *ast.BinaryExpr:
 		if e.Op == token.ADD {
-			lefts := resolveExprToStrings(e.X, body, file, maxPos, depth+1)
-			rights := resolveExprToStrings(e.Y, body, file, maxPos, depth+1)
+			lefts := resolveExprToStringsWithFlow(file, e.X, pos, depth+1)
+			rights := resolveExprToStringsWithFlow(file, e.Y, pos, depth+1)
 			var combined []string
 			for _, l := range lefts {
 				for _, r := range rights {
@@ -60,53 +54,120 @@ func resolveExprToStrings(expr ast.Expr, body *ast.BlockStmt, file *ast.File, ma
 			return combined
 		}
 	case *ast.Ident:
-		var found []string
-		if body != nil {
-			// Find reaching assignments in enclosing function strictly prior to maxPos
-			ast.Inspect(body, func(n ast.Node) bool {
-				assign, ok := n.(*ast.AssignStmt)
-				if !ok || assign.Pos() >= maxPos {
-					return true
-				}
-				for i, lhs := range assign.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
-						sub := resolveExprToStrings(assign.Rhs[i], body, file, assign.Pos(), depth+1)
-						found = append(found, sub...)
-					}
-				}
-				return true
-			})
+		enclosing := findEnclosingFunc(file, pos)
+		if enclosing != nil && enclosing.Body != nil {
+			reached, _ := evalDSNBlockFlow(file, enclosing.Body, pos, e.Name, nil, depth+1)
+			if len(reached) > 0 {
+				return reached
+			}
 		}
-		if len(found) > 0 {
-			return found
-		}
+		return findPackageLevelString(file, e.Name)
+	case *ast.ParenExpr:
+		return resolveExprToStringsWithFlow(file, e.X, pos, depth+1)
+	}
 
-		// Fallback to package-level declarations
-		if file != nil {
-			for _, decl := range file.Decls {
-				gen, ok := decl.(*ast.GenDecl)
-				if !ok {
-					continue
-				}
-				for _, spec := range gen.Specs {
-					valSpec, ok := spec.(*ast.ValueSpec)
-					if !ok {
-						continue
-					}
-					for i, name := range valSpec.Names {
-						if name.Name == e.Name && i < len(valSpec.Values) {
-							sub := resolveExprToStrings(valSpec.Values[i], body, file, maxPos, depth+1)
-							found = append(found, sub...)
-						}
-					}
+	return nil
+}
+
+func evalDSNBlockFlow(file *ast.File, block *ast.BlockStmt, targetPos token.Pos, varName string, inSet []string, depth int) ([]string, bool) {
+	if block == nil || depth > 10 {
+		return inSet, false
+	}
+	curr := inSet
+	for _, stmt := range block.List {
+		var reached bool
+		curr, reached = evalDSNStmtFlow(file, stmt, targetPos, varName, curr, depth)
+		if reached {
+			return curr, true
+		}
+	}
+	return curr, false
+}
+
+func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName string, inSet []string, depth int) ([]string, bool) {
+	if stmt == nil {
+		return inSet, false
+	}
+	if targetPos != token.NoPos && targetPos < stmt.Pos() {
+		return inSet, true
+	}
+
+	switch s := stmt.(type) {
+	case *ast.AssignStmt:
+		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
+			return inSet, true
+		}
+		for i, lhs := range s.Lhs {
+			if id, ok := lhs.(*ast.Ident); ok && id.Name == varName && i < len(s.Rhs) {
+				newVals := resolveExprToStringsWithFlow(file, s.Rhs[i], stmt.Pos(), depth+1)
+				if len(newVals) > 0 {
+					inSet = newVals
 				}
 			}
 		}
-		return found
-	case *ast.ParenExpr:
-		return resolveExprToStrings(e.X, body, file, maxPos, depth+1)
+		return inSet, false
+
+	case *ast.IfStmt:
+		if s.Init != nil {
+			var reached bool
+			inSet, reached = evalDSNStmtFlow(file, s.Init, targetPos, varName, inSet, depth)
+			if reached {
+				return inSet, true
+			}
+		}
+		if targetPos != token.NoPos && s.Body != nil && s.Body.Pos() <= targetPos && targetPos <= s.Body.End() {
+			return evalDSNBlockFlow(file, s.Body, targetPos, varName, inSet, depth)
+		}
+		if targetPos != token.NoPos && s.Else != nil && s.Else.Pos() <= targetPos && targetPos <= s.Else.End() {
+			return evalDSNStmtFlow(file, s.Else, targetPos, varName, inSet, depth)
+		}
+
+		thenSet, _ := evalDSNBlockFlow(file, s.Body, targetPos, varName, inSet, depth)
+		thenTerm := isTerminating(s.Body)
+
+		var elseSet []string
+		elseTerm := false
+		if s.Else != nil {
+			elseSet, _ = evalDSNStmtFlow(file, s.Else, targetPos, varName, inSet, depth)
+			elseTerm = isTerminating(s.Else)
+		} else {
+			elseSet = inSet
+		}
+
+		if thenTerm && !elseTerm {
+			return elseSet, false
+		}
+		if elseTerm && !thenTerm {
+			return thenSet, false
+		}
+
+		return deduplicateStrings(append(append([]string{}, thenSet...), elseSet...)), false
 	}
 
+	return inSet, false
+}
+
+func findPackageLevelString(file *ast.File, name string) []string {
+	if file == nil {
+		return nil
+	}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			valSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, ident := range valSpec.Names {
+				if ident.Name == name && i < len(valSpec.Values) {
+					return resolveExprToStringsWithFlow(file, valSpec.Values[i], token.NoPos, 0)
+				}
+			}
+		}
+	}
 	return nil
 }
 

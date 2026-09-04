@@ -98,6 +98,8 @@ func TestA16_AdversarialCorpus(t *testing.T) {
 		{"A10_NonMutatingHelper", 105, true},
 		{"A11_UnverifiedDynamic", 116, true},
 		{"A12_MultiHopAlias", 124, true},
+		{"A13_HelperPartialBranch", 137, true},
+		{"A14_HelperUnsafeBranch", 151, true},
 	}
 
 	for _, a := range assertions {

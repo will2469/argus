@@ -3,6 +3,7 @@ package a16_max_conns
 
 import (
 	"go/ast"
+	"go/token"
 	"strings"
 )
 
@@ -14,11 +15,12 @@ type ConfigEvaluationResult struct {
 	ReportNode  ast.Node
 }
 
-type configState struct {
-	configured bool
-	valid      bool
-	message    string
-	reportNode ast.Node
+// ConfigFlowState holds intermediate lattice state during statement-level CFG tracking.
+type ConfigFlowState struct {
+	Configured bool
+	Valid      bool
+	Message    string
+	ReportNode ast.Node
 }
 
 // TrackConfig evaluates the MaxConns configuration for a pgxpool.Config expression at call site.
@@ -55,9 +57,9 @@ func TrackConfig(cfgExpr ast.Expr, call *ast.CallExpr, file *ast.File, maxSafe i
 		return ConfigEvaluationResult{HasMaxConns: true, Valid: true}
 	}
 
-	finalState, _ := evalBlockStmtFlow(file, fn.Body, call, varName, maxSafe, configState{})
-	if !finalState.configured {
-		msg := finalState.message
+	finalState, _ := EvalBlockFlow(file, fn.Body, call.Pos(), varName, maxSafe, ConfigFlowState{})
+	if !finalState.Configured {
+		msg := finalState.Message
 		if msg == "" {
 			msg = "pgxpool.Config missing explicit MaxConns; set explicit value (e.g. 10-25 per pod) to prevent connection exhaustion"
 		}
@@ -69,26 +71,27 @@ func TrackConfig(cfgExpr ast.Expr, call *ast.CallExpr, file *ast.File, maxSafe i
 		}
 	}
 
-	if !finalState.valid {
+	if !finalState.Valid {
 		return ConfigEvaluationResult{
 			HasMaxConns: true,
 			Valid:       false,
-			Message:     finalState.message,
-			ReportNode:  finalState.reportNode,
+			Message:     finalState.Message,
+			ReportNode:  finalState.ReportNode,
 		}
 	}
 
 	return ConfigEvaluationResult{HasMaxConns: true, Valid: true}
 }
 
-func evalBlockStmtFlow(file *ast.File, block *ast.BlockStmt, call *ast.CallExpr, varName string, maxSafe int32, in configState) (configState, bool) {
+// EvalBlockFlow walks statements in block sequentially up to targetPos (or entire block if targetPos is NoPos).
+func EvalBlockFlow(file *ast.File, block *ast.BlockStmt, targetPos token.Pos, varName string, maxSafe int32, in ConfigFlowState) (ConfigFlowState, bool) {
 	if block == nil {
 		return in, false
 	}
 	curr := in
 	for _, stmt := range block.List {
 		var reached bool
-		curr, reached = evalStmtFlow(file, stmt, call, varName, maxSafe, curr)
+		curr, reached = evalStmtFlow(file, stmt, targetPos, varName, maxSafe, curr)
 		if reached {
 			return curr, true
 		}
@@ -96,23 +99,23 @@ func evalBlockStmtFlow(file *ast.File, block *ast.BlockStmt, call *ast.CallExpr,
 	return curr, false
 }
 
-func evalStmtFlow(file *ast.File, stmt ast.Stmt, call *ast.CallExpr, varName string, maxSafe int32, in configState) (configState, bool) {
+func evalStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName string, maxSafe int32, in ConfigFlowState) (ConfigFlowState, bool) {
 	if stmt == nil {
 		return in, false
 	}
-	if call.Pos() < stmt.Pos() {
+	if targetPos != token.NoPos && targetPos < stmt.Pos() {
 		return in, true
 	}
 
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
-		if s.Pos() <= call.Pos() && call.Pos() <= s.End() {
+		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
 			return in, true
 		}
 		return evalAssignStmt(file, s, varName, maxSafe, in), false
 
 	case *ast.ExprStmt:
-		if s.Pos() <= call.Pos() && call.Pos() <= s.End() {
+		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
 			return in, true
 		}
 		if callExpr, ok := s.X.(*ast.CallExpr); ok {
@@ -122,25 +125,25 @@ func evalStmtFlow(file *ast.File, stmt ast.Stmt, call *ast.CallExpr, varName str
 	case *ast.IfStmt:
 		if s.Init != nil {
 			var reached bool
-			in, reached = evalStmtFlow(file, s.Init, call, varName, maxSafe, in)
+			in, reached = evalStmtFlow(file, s.Init, targetPos, varName, maxSafe, in)
 			if reached {
 				return in, true
 			}
 		}
-		if s.Body != nil && s.Body.Pos() <= call.Pos() && call.Pos() <= s.Body.End() {
-			return evalBlockStmtFlow(file, s.Body, call, varName, maxSafe, in)
+		if targetPos != token.NoPos && s.Body != nil && s.Body.Pos() <= targetPos && targetPos <= s.Body.End() {
+			return EvalBlockFlow(file, s.Body, targetPos, varName, maxSafe, in)
 		}
-		if s.Else != nil && s.Else.Pos() <= call.Pos() && call.Pos() <= s.Else.End() {
-			return evalStmtFlow(file, s.Else, call, varName, maxSafe, in)
+		if targetPos != token.NoPos && s.Else != nil && s.Else.Pos() <= targetPos && targetPos <= s.Else.End() {
+			return evalStmtFlow(file, s.Else, targetPos, varName, maxSafe, in)
 		}
 
-		thenState, _ := evalBlockStmtFlow(file, s.Body, call, varName, maxSafe, in)
+		thenState, _ := EvalBlockFlow(file, s.Body, targetPos, varName, maxSafe, in)
 		thenTerm := isTerminating(s.Body)
 
-		var elseState configState
+		var elseState ConfigFlowState
 		elseTerm := false
 		if s.Else != nil {
-			elseState, _ = evalStmtFlow(file, s.Else, call, varName, maxSafe, in)
+			elseState, _ = evalStmtFlow(file, s.Else, targetPos, varName, maxSafe, in)
 			elseTerm = isTerminating(s.Else)
 		} else {
 			elseState = in
@@ -154,19 +157,19 @@ func evalStmtFlow(file *ast.File, stmt ast.Stmt, call *ast.CallExpr, varName str
 		}
 
 		// Universal Path Completeness: meet operator (all paths must configure MaxConns safely)
-		joined := configState{
-			configured: thenState.configured && elseState.configured,
-			valid:      thenState.valid && elseState.valid,
+		joined := ConfigFlowState{
+			Configured: thenState.Configured && elseState.Configured,
+			Valid:      thenState.Valid && elseState.Valid,
 		}
-		if !joined.configured {
-			joined.message = "pgxpool.Config missing explicit MaxConns on all execution paths; set explicit value to prevent connection exhaustion"
-		} else if !joined.valid {
-			if !thenState.valid {
-				joined.message = thenState.message
-				joined.reportNode = thenState.reportNode
+		if !joined.Configured {
+			joined.Message = "pgxpool.Config missing explicit MaxConns on all execution paths; set explicit value to prevent connection exhaustion"
+		} else if !joined.Valid {
+			if !thenState.Valid {
+				joined.Message = thenState.Message
+				joined.ReportNode = thenState.ReportNode
 			} else {
-				joined.message = elseState.message
-				joined.reportNode = elseState.reportNode
+				joined.Message = elseState.Message
+				joined.ReportNode = elseState.ReportNode
 			}
 		}
 		return joined, false
@@ -175,7 +178,7 @@ func evalStmtFlow(file *ast.File, stmt ast.Stmt, call *ast.CallExpr, varName str
 	return in, false
 }
 
-func evalAssignStmt(file *ast.File, assign *ast.AssignStmt, varName string, maxSafe int32, in configState) configState {
+func evalAssignStmt(file *ast.File, assign *ast.AssignStmt, varName string, maxSafe int32, in ConfigFlowState) ConfigFlowState {
 	curr := in
 	for i, lhs := range assign.Lhs {
 		sel, ok := lhs.(*ast.SelectorExpr)
@@ -188,10 +191,10 @@ func evalAssignStmt(file *ast.File, assign *ast.AssignStmt, varName string, maxS
 		}
 		if i < len(assign.Rhs) {
 			eval := EvaluateExprWithFile(file, assign.Rhs[i], maxSafe)
-			curr.configured = true
-			curr.valid = eval.Valid
-			curr.message = eval.Message
-			curr.reportNode = assign
+			curr.Configured = true
+			curr.Valid = eval.Valid
+			curr.Message = eval.Message
+			curr.ReportNode = assign
 		}
 	}
 
@@ -203,23 +206,19 @@ func evalAssignStmt(file *ast.File, assign *ast.AssignStmt, varName string, maxS
 	return curr
 }
 
-func evalHelperCall(file *ast.File, call *ast.CallExpr, varName string, maxSafe int32, in configState) configState {
+func evalHelperCall(file *ast.File, call *ast.CallExpr, varName string, maxSafe int32, in ConfigFlowState) ConfigFlowState {
 	for idx, arg := range call.Args {
 		if id, ok := arg.(*ast.Ident); ok && id.Name == varName {
 			if mutated, valid := inspectConfigMutatorHelper(file, call, idx, maxSafe); mutated {
-				in.configured = true
-				in.valid = valid
-				in.reportNode = call
+				in.Configured, in.Valid, in.ReportNode = true, valid, call
 				if !valid {
-					in.message = "pgxpool.Config MaxConns assigned invalid bounds inside helper function"
+					in.Message = "pgxpool.Config MaxConns assigned invalid bounds inside helper function"
 				}
 			}
 		}
 	}
 	return in
 }
-
-
 
 func isTerminating(stmt ast.Stmt) bool {
 	if stmt == nil {
@@ -240,10 +239,7 @@ func isTerminating(stmt ast.Stmt) bool {
 			return name == "panic" || name == "Exit" || name == "Fatal" || name == "Fatalf"
 		}
 	case *ast.BlockStmt:
-		if len(s.List) == 0 {
-			return false
-		}
-		return isTerminating(s.List[len(s.List)-1])
+		return len(s.List) > 0 && isTerminating(s.List[len(s.List)-1])
 	}
 	return false
 }

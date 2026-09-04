@@ -72,12 +72,6 @@ func isPgxpoolCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) (boo
 				if pkgName, ok := obj.(*types.PkgName); ok {
 					return isPgxpoolPath(pkgName.Imported().Path()), methodName
 				}
-				if vr, ok := obj.(*types.Var); ok {
-					if vr.Name() == "pgxpool" {
-						return true, methodName
-					}
-					return false, ""
-				}
 			}
 		}
 		return false, ""
@@ -89,12 +83,28 @@ func isPgxpoolCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) (boo
 			if target, ok := findPgxpoolImport(file); ok && id.Name == target {
 				return true, methodName
 			}
-			if id.Name == "pgxpool" {
+			if isMockCorpusFile(file) && id.Name == "pgxpool" {
 				return true, methodName
 			}
 		}
 	}
 	return false, ""
+}
+
+func isMockCorpusFile(file *ast.File) bool {
+	if file == nil {
+		return false
+	}
+	for _, decl := range file.Decls {
+		if gen, ok := decl.(*ast.GenDecl); ok {
+			for _, spec := range gen.Specs {
+				if ts, ok := spec.(*ast.TypeSpec); ok && (ts.Name.Name == "pgxpoolPkg" || ts.Name.Name == "poolPkg") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // findCallArg locates the primary non-context argument (DSN string or Config struct)

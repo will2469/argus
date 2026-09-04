@@ -4,8 +4,9 @@ package a16_max_conns
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
-	"strconv"
+	"math"
 )
 
 // findFuncDecl locates a FuncDecl in the file by function expression (ident or selector).
@@ -38,7 +39,7 @@ func inspectResolverCall(file *ast.File, call *ast.CallExpr, maxSafe int32) (Con
 		return ConnsEvaluation{}, false
 	}
 
-	var returnVals []int32
+	var returnVals []int64
 	hasReturn := false
 	hasDynamicReturn := false
 
@@ -49,7 +50,7 @@ func inspectResolverCall(file *ast.File, call *ast.CallExpr, maxSafe int32) (Con
 		}
 		hasReturn = true
 		for _, res := range ret.Results {
-			if val, ok := evaluateConstInt(res); ok {
+			if val, ok := evaluateConstInt64(res); ok {
 				returnVals = append(returnVals, val)
 			} else {
 				hasDynamicReturn = true
@@ -75,24 +76,33 @@ func inspectResolverCall(file *ast.File, call *ast.CallExpr, maxSafe int32) (Con
 			return ConnsEvaluation{
 				Configured: true,
 				Valid:      false,
-				Value:      val,
+				Value:      int32(val),
 				Message:    "MaxConns cannot be zero or negative; specify a valid positive connection limit",
 			}, true
 		}
-		if val > maxSafe {
+		if val > int64(maxSafe) {
+			val32 := int32(math.MaxInt32)
+			if val <= math.MaxInt32 {
+				val32 = int32(val)
+			}
 			return ConnsEvaluation{
 				Configured: true,
 				Valid:      false,
-				Value:      val,
+				Value:      val32,
 				Message:    fmt.Sprintf("MaxConns (%d) exceeds safe direct connection limit (%d) per pod; route via PgBouncer or reduce pool bounds", val, maxSafe),
 			}, true
 		}
 	}
 
+	last := returnVals[len(returnVals)-1]
+	last32 := int32(math.MaxInt32)
+	if last <= math.MaxInt32 {
+		last32 = int32(last)
+	}
 	return ConnsEvaluation{
 		Configured: true,
 		Valid:      true,
-		Value:      returnVals[len(returnVals)-1],
+		Value:      last32,
 	}, true
 }
 
@@ -123,80 +133,52 @@ func inspectConfigMutatorHelper(file *ast.File, call *ast.CallExpr, cfgArgIndex 
 		return false, false
 	}
 
-	foundMutation := false
-	isValid := false
-
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok {
-			return true
-		}
-		for i, lhs := range assign.Lhs {
-			sel, ok := lhs.(*ast.SelectorExpr)
-			if !ok {
-				continue
-			}
-			id, ok := sel.X.(*ast.Ident)
-			if !ok || id.Name != paramName || sel.Sel.Name != "MaxConns" {
-				continue
-			}
-			foundMutation = true
-			if i < len(assign.Rhs) {
-				eval := EvaluateExprWithFile(file, assign.Rhs[i], maxSafe)
-				if eval.Valid {
-					isValid = true
-				}
-			}
-		}
-		return true
-	})
-
-	return foundMutation, isValid
+	finalState, _ := EvalBlockFlow(file, fn.Body, token.NoPos, paramName, maxSafe, ConfigFlowState{})
+	return finalState.Configured, finalState.Valid
 }
 
-// evaluateConstInt statically evaluates an AST integer expression (literals, unary signed, arithmetic).
-func evaluateConstInt(expr ast.Expr) (int32, bool) {
+// evaluateConstValue recursively evaluates an AST expression using go/constant arbitrary-precision arithmetic.
+func evaluateConstValue(expr ast.Expr) constant.Value {
 	if expr == nil {
-		return 0, false
+		return nil
 	}
 	switch e := expr.(type) {
 	case *ast.BasicLit:
-		if e.Kind == token.INT {
-			v, err := strconv.ParseInt(e.Value, 10, 32)
-			if err == nil {
-				return int32(v), true
-			}
-		}
+		return constant.MakeFromLiteral(e.Value, e.Kind, 0)
 	case *ast.UnaryExpr:
-		if inner, ok := evaluateConstInt(e.X); ok {
-			switch e.Op {
-			case token.SUB:
-				return -inner, true
-			case token.ADD:
-				return inner, true
-			}
+		val := evaluateConstValue(e.X)
+		if val != nil {
+			return constant.UnaryOp(e.Op, val, 0)
 		}
 	case *ast.BinaryExpr:
-		left, ok1 := evaluateConstInt(e.X)
-		right, ok2 := evaluateConstInt(e.Y)
-		if ok1 && ok2 {
-			switch e.Op {
-			case token.ADD:
-				return left + right, true
-			case token.SUB:
-				return left - right, true
-			case token.MUL:
-				return left * right, true
-			case token.QUO:
-				if right != 0 {
-					return left / right, true
-				}
+		left := evaluateConstValue(e.X)
+		right := evaluateConstValue(e.Y)
+		if left != nil && right != nil {
+			if e.Op == token.QUO && constant.Sign(right) == 0 {
+				return nil // divide by zero
 			}
+			return constant.BinaryOp(left, e.Op, right)
 		}
 	case *ast.ParenExpr:
-		return evaluateConstInt(e.X)
+		return evaluateConstValue(e.X)
 	}
-	return 0, false
+	return nil
+}
+
+// evaluateConstInt64 statically evaluates an AST integer expression to int64 with overflow protection.
+func evaluateConstInt64(expr ast.Expr) (int64, bool) {
+	val := evaluateConstValue(expr)
+	if val == nil || val.Kind() != constant.Int {
+		return 0, false
+	}
+	i64, exact := constant.Int64Val(val)
+	if !exact {
+		if constant.Sign(val) > 0 {
+			return math.MaxInt64, true
+		}
+		return math.MinInt64, true
+	}
+	return i64, true
 }
 
 func evaluateCompositeLit(file *ast.File, composite *ast.CompositeLit, maxSafe int32) ConfigEvaluationResult {
@@ -245,4 +227,3 @@ func unwrapCompositeLit(expr ast.Expr) (*ast.CompositeLit, bool) {
 	lit, ok := expr.(*ast.CompositeLit)
 	return lit, ok
 }
-

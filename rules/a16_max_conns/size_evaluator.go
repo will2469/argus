@@ -4,6 +4,7 @@ package a16_max_conns
 import (
 	"fmt"
 	"go/ast"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -97,28 +98,32 @@ func EvaluateExprWithFile(file *ast.File, expr ast.Expr, maxSafe int32) ConnsEva
 		}
 	}
 
-	// 1. Statically evaluate constant integer expressions (literals, unary signed, arithmetic)
-	if val, ok := evaluateConstInt(expr); ok {
-		if val <= 0 {
+	// 1. Statically evaluate constant integer expressions with arbitrary-precision protection
+	if val64, ok := evaluateConstInt64(expr); ok {
+		val32 := int32(math.MaxInt32)
+		if val64 <= math.MaxInt32 && val64 >= math.MinInt32 {
+			val32 = int32(val64)
+		}
+		if val64 <= 0 {
 			return ConnsEvaluation{
 				Configured: true,
 				Valid:      false,
-				Value:      val,
+				Value:      val32,
 				Message:    "MaxConns cannot be zero or negative; specify a valid positive connection limit",
 			}
 		}
-		if val > maxSafe {
+		if val64 > int64(maxSafe) {
 			return ConnsEvaluation{
 				Configured: true,
 				Valid:      false,
-				Value:      val,
-				Message:    fmt.Sprintf("MaxConns (%d) exceeds safe direct connection limit (%d) per pod; route via PgBouncer or reduce pool bounds", val, maxSafe),
+				Value:      val32,
+				Message:    fmt.Sprintf("MaxConns (%d) exceeds safe direct connection limit (%d) per pod; route via PgBouncer or reduce pool bounds", val64, maxSafe),
 			}
 		}
 		return ConnsEvaluation{
 			Configured: true,
 			Valid:      true,
-			Value:      val,
+			Value:      val32,
 		}
 	}
 
@@ -131,27 +136,31 @@ func EvaluateExprWithFile(file *ast.File, expr ast.Expr, maxSafe int32) ConnsEva
 
 	// 3. Identifiers: attempt to resolve constant declaration in the file
 	if id, ok := expr.(*ast.Ident); ok && file != nil {
-		if val, ok := findConstIdentValue(file, id.Name); ok {
-			if val <= 0 {
+		if val64, ok := findConstIdentValue(file, id.Name); ok {
+			val32 := int32(math.MaxInt32)
+			if val64 <= math.MaxInt32 && val64 >= math.MinInt32 {
+				val32 = int32(val64)
+			}
+			if val64 <= 0 {
 				return ConnsEvaluation{
 					Configured: true,
 					Valid:      false,
-					Value:      val,
+					Value:      val32,
 					Message:    "MaxConns cannot be zero or negative; specify a valid positive connection limit",
 				}
 			}
-			if val > maxSafe {
+			if val64 > int64(maxSafe) {
 				return ConnsEvaluation{
 					Configured: true,
 					Valid:      false,
-					Value:      val,
-					Message:    fmt.Sprintf("MaxConns (%d) exceeds safe direct connection limit (%d) per pod; route via PgBouncer or reduce pool bounds", val, maxSafe),
+					Value:      val32,
+					Message:    fmt.Sprintf("MaxConns (%d) exceeds safe direct connection limit (%d) per pod; route via PgBouncer or reduce pool bounds", val64, maxSafe),
 				}
 			}
 			return ConnsEvaluation{
 				Configured: true,
 				Valid:      true,
-				Value:      val,
+				Value:      val32,
 			}
 		}
 	}
@@ -176,7 +185,7 @@ func EvaluateExprWithFile(file *ast.File, expr ast.Expr, maxSafe int32) ConnsEva
 	}
 }
 
-func findConstIdentValue(file *ast.File, name string) (int32, bool) {
+func findConstIdentValue(file *ast.File, name string) (int64, bool) {
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
 		if !ok {
@@ -189,7 +198,7 @@ func findConstIdentValue(file *ast.File, name string) (int32, bool) {
 			}
 			for i, ident := range valSpec.Names {
 				if ident.Name == name && i < len(valSpec.Values) {
-					return evaluateConstInt(valSpec.Values[i])
+					return evaluateConstInt64(valSpec.Values[i])
 				}
 			}
 		}

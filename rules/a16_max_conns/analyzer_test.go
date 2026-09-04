@@ -90,3 +90,37 @@ func TestEvaluateExpr_Arithmetic(t *testing.T) {
 		t.Errorf("expected -10 to be invalid")
 	}
 }
+
+func TestEvaluateExpr_LargeArithmeticOverflow(t *testing.T) {
+	expr, err := parser.ParseExpr("2000000000 * 2")
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	eval := EvaluateExpr(expr, DefaultMaxSafeConns)
+	if eval.Valid {
+		t.Errorf("expected 2000000000 * 2 to be flagged as invalid exceeding maxSafe, got valid=true")
+	}
+	if !strings.Contains(eval.Message, "4000000000") || !strings.Contains(eval.Message, "exceeds safe direct connection limit") {
+		t.Errorf("expected message to mention '4000000000' and 'exceeds', got %q", eval.Message)
+	}
+}
+
+func TestStrictSemanticMatcher(t *testing.T) {
+	src := `package main
+type WorkerPool struct{}
+func (WorkerPool) New(ctx any, s string) {}
+var pgxpool WorkerPool
+func Run() {
+	pgxpool.New(nil, "postgres://bad/db")
+}`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", src, 0)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	issues := InspectFile(nil, fset, file, nil, 100)
+	if len(issues) != 0 {
+		t.Errorf("expected 0 issues for unrelated WorkerPool variable named pgxpool, got %d", len(issues))
+	}
+}
+
