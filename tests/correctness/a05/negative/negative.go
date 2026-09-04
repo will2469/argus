@@ -59,4 +59,3 @@ func N7_DifferentSchemaAuditTable(ctx context.Context, db DBExecutor) error {
 	_, err := db.Exec(ctx, "UPDATE evil_schema.audit_logs SET action = 'SAFE'")
 	return err
 }
-

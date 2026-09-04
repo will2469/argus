@@ -8,7 +8,6 @@ import (
 	mcperrors "github.com/will2469/argus/shared/mcp/errors"
 )
 
-
 // ValidateJSONRPC acts as the single boundary gate for untrusted input lines.
 // It enforces RFC JSON-RPC 2.0 specification conformance before dispatching.
 func ValidateJSONRPC(data []byte) (*ParsedRequest, *mcperrors.JSONRPCResponse) {

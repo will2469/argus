@@ -105,4 +105,3 @@ func P_Ignored(ctx context.Context, db DB, ids []int) {
 		_ = db.QueryRow(ctx, "SELECT * FROM users WHERE id = $1", id)
 	}
 }
-

@@ -80,24 +80,24 @@ const (
 	DefaultMaxConcurrentExpensive = transport.DefaultMaxConcurrentExpensive
 	DefaultShutdownTimeout        = transport.DefaultShutdownTimeout
 
-	CodeParseError           = errorspkg.CodeParseError
-	CodeInvalidRequest       = errorspkg.CodeInvalidRequest
-	CodeMethodNotFound       = errorspkg.CodeMethodNotFound
-	CodeInvalidParams        = errorspkg.CodeInvalidParams
-	CodeInternalError        = errorspkg.CodeInternalError
+	CodeParseError                 = errorspkg.CodeParseError
+	CodeInvalidRequest             = errorspkg.CodeInvalidRequest
+	CodeMethodNotFound             = errorspkg.CodeMethodNotFound
+	CodeInvalidParams              = errorspkg.CodeInvalidParams
+	CodeInternalError              = errorspkg.CodeInternalError
 	CodeServerNotInitialized       = errorspkg.CodeServerNotInitialized
 	CodeUnsupportedProtocolVersion = errorspkg.CodeUnsupportedProtocolVersion
 	CodeCancelled                  = errorspkg.CodeCancelled
 )
 
 var (
-	ProtocolError                  = errorspkg.ProtocolError
-	InvalidParamsError             = errorspkg.InvalidParamsError
-	MethodNotFoundError            = errorspkg.MethodNotFoundError
+	ProtocolError                   = errorspkg.ProtocolError
+	InvalidParamsError              = errorspkg.InvalidParamsError
+	MethodNotFoundError             = errorspkg.MethodNotFoundError
 	UnsupportedProtocolVersionError = errorspkg.UnsupportedProtocolVersionError
-	CancelledError                 = errorspkg.CancelledError
-	ToolSuccess                    = errorspkg.ToolSuccess
-	ToolError                      = errorspkg.ToolError
+	CancelledError                  = errorspkg.CancelledError
+	ToolSuccess                     = errorspkg.ToolSuccess
+	ToolError                       = errorspkg.ToolError
 
 	ValidateJSONRPC       = transport.ValidateJSONRPC
 	NewDispatcher         = transport.NewDispatcher

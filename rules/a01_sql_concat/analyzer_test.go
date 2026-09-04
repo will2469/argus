@@ -241,4 +241,3 @@ func TestCustomNIK(ctx context.Context, db DB, nik string) {
 		t.Fatalf("expected 1 issue with custom source nik, got %d", len(issues))
 	}
 }
-

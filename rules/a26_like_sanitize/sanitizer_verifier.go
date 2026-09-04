@@ -180,4 +180,3 @@ func extractTypeNameFromType(t types.Type) string {
 	}
 	return ""
 }
-

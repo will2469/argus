@@ -32,9 +32,9 @@ func TestMutation_ResilienceHarness(t *testing.T) {
 	mutations := []MutationTestCase{
 		// Mutator A: Operator Inversion & Logic Tampering (ARGUS-A24)
 		{
-			Name:        "MutatorA1_ConjunctionToDisjunction",
-			Category:    "Operator Inversion",
-			Description: "Flip AND to OR in tenant filter (WHERE tenant_id = $1 OR status = 'ACTIVE')",
+			Name:           "MutatorA1_ConjunctionToDisjunction",
+			Category:       "Operator Inversion",
+			Description:    "Flip AND to OR in tenant filter (WHERE tenant_id = $1 OR status = 'ACTIVE')",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				sql := "SELECT id, name FROM users WHERE tenant_id = $1 OR status = 'ACTIVE'"
@@ -43,9 +43,9 @@ func TestMutation_ResilienceHarness(t *testing.T) {
 			},
 		},
 		{
-			Name:        "MutatorA2_EqualityToInequality",
-			Category:    "Operator Inversion",
-			Description: "Flip = to != in tenant predicate (WHERE tenant_id != $1 AND status = 'ACTIVE')",
+			Name:           "MutatorA2_EqualityToInequality",
+			Category:       "Operator Inversion",
+			Description:    "Flip = to != in tenant predicate (WHERE tenant_id != $1 AND status = 'ACTIVE')",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				sql := "SELECT id, name FROM users WHERE tenant_id != $1 AND status = 'ACTIVE'"
@@ -54,9 +54,9 @@ func TestMutation_ResilienceHarness(t *testing.T) {
 			},
 		},
 		{
-			Name:        "MutatorA3_NullTestEvasion",
-			Category:    "Operator Inversion",
-			Description: "Attempt tenant bypass with IS NOT NULL (WHERE tenant_id IS NOT NULL)",
+			Name:           "MutatorA3_NullTestEvasion",
+			Category:       "Operator Inversion",
+			Description:    "Attempt tenant bypass with IS NOT NULL (WHERE tenant_id IS NOT NULL)",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				sql := "SELECT id, name FROM users WHERE tenant_id IS NOT NULL"
@@ -67,9 +67,9 @@ func TestMutation_ResilienceHarness(t *testing.T) {
 
 		// Mutator B: Comment & Literal Spoofing (ARGUS-A24 & Directives)
 		{
-			Name:        "MutatorB1_SQLCommentSpoofing",
-			Category:    "Lexical Spoofing",
-			Description: "Inject fake tenant clause in SQL comment (-- tenant_id = 1)",
+			Name:           "MutatorB1_SQLCommentSpoofing",
+			Category:       "Lexical Spoofing",
+			Description:    "Inject fake tenant clause in SQL comment (-- tenant_id = 1)",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				sql := "SELECT id, email FROM users WHERE status = 'ACTIVE' -- tenant_id = $1"
@@ -78,9 +78,9 @@ func TestMutation_ResilienceHarness(t *testing.T) {
 			},
 		},
 		{
-			Name:        "MutatorB2_StringLiteralSpoofing",
-			Category:    "Lexical Spoofing",
-			Description: "Conceal tenant predicate in string constant (notes = 'tenant_id = 1')",
+			Name:           "MutatorB2_StringLiteralSpoofing",
+			Category:       "Lexical Spoofing",
+			Description:    "Conceal tenant predicate in string constant (notes = 'tenant_id = 1')",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				sql := "SELECT id, email FROM users WHERE notes = 'tenant_id = 1'"
@@ -89,9 +89,9 @@ func TestMutation_ResilienceHarness(t *testing.T) {
 			},
 		},
 		{
-			Name:        "MutatorB3_SingleWordDirectiveRejection",
-			Category:    "Directive Spoofing",
-			Description: "Reject single-word ignore comment without explanation (// argus:ignore ARGUS-A24 bypass)",
+			Name:           "MutatorB3_SingleWordDirectiveRejection",
+			Category:       "Directive Spoofing",
+			Description:    "Reject single-word ignore comment without explanation (// argus:ignore ARGUS-A24 bypass)",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				src := "package test\n// argus:ignore ARGUS-A24 bypass\nfunc run() {}\n"
@@ -109,9 +109,9 @@ func TestMutation_ResilienceHarness(t *testing.T) {
 
 		// Mutator C: Receiver & Method Identity Masquerading (ARGUS-A17 & A26)
 		{
-			Name:        "MutatorC1_FakeSanitizerMethodSpoofing",
-			Category:    "Identity Masquerading",
-			Description: "Reject fake sanitizer on untrusted struct (evil.SanitizeLikePattern)",
+			Name:           "MutatorC1_FakeSanitizerMethodSpoofing",
+			Category:       "Identity Masquerading",
+			Description:    "Reject fake sanitizer on untrusted struct (evil.SanitizeLikePattern)",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				src := `package test
@@ -134,9 +134,9 @@ func Search(ctx context.Context, evil Evil, input string) {
 			},
 		},
 		{
-			Name:        "MutatorC2_ReceiverCollisionInLoop",
-			Category:    "Identity Masquerading",
-			Description: "Differentiate MemoryCache.Get (safe) vs DBRepo.Get (N+1 query)",
+			Name:           "MutatorC2_ReceiverCollisionInLoop",
+			Category:       "Identity Masquerading",
+			Description:    "Differentiate MemoryCache.Get (safe) vs DBRepo.Get (N+1 query)",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				src := `package test
@@ -168,9 +168,9 @@ func DBLoop(ctx context.Context, repo DBRepo, ids []int) {
 
 		// Mutator D: Pathological Literals & Fail-Closed Invariant (ARGUS-A26 & A24)
 		{
-			Name:        "MutatorD1_PureWildcardLiteralDoS",
-			Category:    "Pathological Literals",
-			Description: "Detect standalone pure wildcard '%' as CWE-400 table scan DoS",
+			Name:           "MutatorD1_PureWildcardLiteralDoS",
+			Category:       "Pathological Literals",
+			Description:    "Detect standalone pure wildcard '%' as CWE-400 table scan DoS",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				src := `package test
@@ -191,9 +191,9 @@ func WildcardQuery(ctx context.Context) {
 			},
 		},
 		{
-			Name:        "MutatorD2_FailClosedUnparseableQueryOnTenantTable",
-			Category:    "Fail-Closed Invariant",
-			Description: "Reject unparseable query referencing multi-tenant table without falling back to weak heuristics",
+			Name:           "MutatorD2_FailClosedUnparseableQueryOnTenantTable",
+			Category:       "Fail-Closed Invariant",
+			Description:    "Reject unparseable query referencing multi-tenant table without falling back to weak heuristics",
 			ExpectedKilled: true,
 			Execute: func(t *testing.T) (bool, string) {
 				unparseableSQL := "SELECT * FROM users WHERE [unparseable broken syntax ???]"

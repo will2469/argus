@@ -129,6 +129,3 @@ func TestSafeStat_KernelContainment(t *testing.T) {
 		t.Fatalf("expected SafeStat to reject traversal, got: %v", err)
 	}
 }
-
-
-

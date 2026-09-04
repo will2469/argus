@@ -9,7 +9,6 @@ import (
 	"sync"
 )
 
-
 // NewRequestTracker creates a new thread-safe RequestTracker.
 func NewRequestTracker() *RequestTracker {
 	return &RequestTracker{

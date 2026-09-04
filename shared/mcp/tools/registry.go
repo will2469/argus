@@ -116,7 +116,6 @@ func (r *Registry) Dispatch(ctx context.Context, name string, id any, args json.
 	return tool.Execute(ctx, id, args)
 }
 
-
 // RegisterTool registers a tool into the default registry.
 func RegisterTool(t Tool) {
 	DefaultRegistry.Register(t)

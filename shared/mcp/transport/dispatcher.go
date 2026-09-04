@@ -11,7 +11,6 @@ import (
 	mcperrors "github.com/will2469/argus/shared/mcp/errors"
 )
 
-
 // NewSynchronizedWriter creates a thread-safe JSON-RPC response writer.
 func NewSynchronizedWriter(w io.Writer) *SynchronizedWriter {
 	return &SynchronizedWriter{w: w}
@@ -37,7 +36,6 @@ func (sw *SynchronizedWriter) WriteResponse(resp mcperrors.JSONRPCResponse) erro
 	_, err = fmt.Fprintf(sw.w, "%s\n", data)
 	return err
 }
-
 
 // NewDispatcher initializes a Dispatcher with dual semaphore pools and synchronized output.
 func NewDispatcher(w io.Writer, maxExpensive int, maxCheap int) *Dispatcher {

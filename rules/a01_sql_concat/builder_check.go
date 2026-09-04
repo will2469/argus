@@ -9,7 +9,6 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
-
 // IsBuilderString checks if an expression is a call to strings.Builder.String().
 func IsBuilderString(call *ast.CallExpr) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)

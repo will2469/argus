@@ -142,7 +142,7 @@ type instrumentedPipelineTool struct {
 	executeInvoked bool
 }
 
-func (m *instrumentedPipelineTool) reset() { m.policyInvoked = false; m.executeInvoked = false }
+func (m *instrumentedPipelineTool) reset()       { m.policyInvoked = false; m.executeInvoked = false }
 func (m *instrumentedPipelineTool) Name() string { return m.name }
 func (m *instrumentedPipelineTool) Definition() ToolDef {
 	return ToolDef{
@@ -219,8 +219,8 @@ func (b *brokenMockTool) Name() string { return b.name }
 func (b *brokenMockTool) Definition() ToolDef {
 	return ToolDef{Name: b.defName, InputSchema: security.Schema{Type: b.schemaType}}
 }
-func (b *brokenMockTool) Cost() ResourceCost                                             { return b.cost }
-func (b *brokenMockTool) ValidatePolicy(raw json.RawMessage) error                       { return nil }
+func (b *brokenMockTool) Cost() ResourceCost                       { return b.cost }
+func (b *brokenMockTool) ValidatePolicy(raw json.RawMessage) error { return nil }
 func (b *brokenMockTool) Execute(ctx context.Context, id any, raw json.RawMessage) *errors.JSONRPCResponse {
 	return nil
 }

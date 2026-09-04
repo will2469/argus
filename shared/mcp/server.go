@@ -202,7 +202,7 @@ func handleRequest(ctx context.Context, req ParsedRequest) *jsonrpcResponse {
 			Result: map[string]any{
 				"protocolVersion": NegotiateProtocolVersion(params.ProtocolVersion),
 				"capabilities":    map[string]any{"tools": map[string]any{}, "extensions": map[string]any{}},
-				"serverInfo":       map[string]any{"name": "argus", "version": version.Get()},
+				"serverInfo":      map[string]any{"name": "argus", "version": version.Get()},
 			},
 		}
 

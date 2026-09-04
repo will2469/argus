@@ -2,11 +2,11 @@ package errors
 
 // Standard JSON-RPC 2.0 and MCP Protocol Error Codes
 const (
-	CodeParseError           = -32700
-	CodeInvalidRequest       = -32600
-	CodeMethodNotFound       = -32601
-	CodeInvalidParams        = -32602
-	CodeInternalError        = -32603
+	CodeParseError                 = -32700
+	CodeInvalidRequest             = -32600
+	CodeMethodNotFound             = -32601
+	CodeInvalidParams              = -32602
+	CodeInternalError              = -32603
 	CodeServerNotInitialized       = -32002 // MCP and LSP standard: Server not initialized
 	CodeUnsupportedProtocolVersion = -32022 // MCP 2026-07-28 standard: Unsupported protocol version
 	CodeCancelled                  = -32800 // MCP RequestCancelled specification

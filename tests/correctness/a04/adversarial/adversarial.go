@@ -123,4 +123,3 @@ func A10_DirectionUnsafeFallback(ctx context.Context, db DBExecutor, userDir str
 	_, err := db.Query(ctx, q)
 	return err
 }
-

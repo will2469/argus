@@ -79,4 +79,3 @@ func N6_ReceiverCollisionSafety(cache MemoryCache, ids []int) {
 		_ = cache.Get(id)
 	}
 }
-

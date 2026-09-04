@@ -17,10 +17,12 @@ import (
 
 type sleepTool struct{}
 
-func (s *sleepTool) Name() string                                              { return "sleep_tool" }
-func (s *sleepTool) Definition() tools.ToolDef                                { return tools.ToolDef{Name: "sleep_tool", InputSchema: security.Schema{Type: "object"}} }
-func (s *sleepTool) ValidatePolicy(raw json.RawMessage) error                  { return nil }
-func (s *sleepTool) Cost() tools.ResourceCost                                  { return tools.CostExpensive }
+func (s *sleepTool) Name() string { return "sleep_tool" }
+func (s *sleepTool) Definition() tools.ToolDef {
+	return tools.ToolDef{Name: "sleep_tool", InputSchema: security.Schema{Type: "object"}}
+}
+func (s *sleepTool) ValidatePolicy(raw json.RawMessage) error { return nil }
+func (s *sleepTool) Cost() tools.ResourceCost                 { return tools.CostExpensive }
 func (s *sleepTool) Execute(ctx context.Context, id any, raw json.RawMessage) *mcperrors.JSONRPCResponse {
 	time.Sleep(150 * time.Millisecond)
 	return &mcperrors.JSONRPCResponse{JSONRPC: "2.0", ID: id, Result: map[string]any{"status": "sleep_done"}}
@@ -78,10 +80,12 @@ type slowCancelTool struct {
 	started chan struct{}
 }
 
-func (s *slowCancelTool) Name() string                                              { return "slow_cancel_tool" }
-func (s *slowCancelTool) Definition() tools.ToolDef                                { return tools.ToolDef{Name: "slow_cancel_tool", Description: "test tool that blocks until cancelled", InputSchema: security.Schema{Type: "object"}} }
-func (s *slowCancelTool) ValidatePolicy(raw json.RawMessage) error                  { return nil }
-func (s *slowCancelTool) Cost() tools.ResourceCost                                  { return tools.CostCheap }
+func (s *slowCancelTool) Name() string { return "slow_cancel_tool" }
+func (s *slowCancelTool) Definition() tools.ToolDef {
+	return tools.ToolDef{Name: "slow_cancel_tool", Description: "test tool that blocks until cancelled", InputSchema: security.Schema{Type: "object"}}
+}
+func (s *slowCancelTool) ValidatePolicy(raw json.RawMessage) error { return nil }
+func (s *slowCancelTool) Cost() tools.ResourceCost                 { return tools.CostCheap }
 func (s *slowCancelTool) Execute(ctx context.Context, id any, raw json.RawMessage) *mcperrors.JSONRPCResponse {
 	close(s.started)
 	<-ctx.Done()

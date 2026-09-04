@@ -125,7 +125,6 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 		},
 	}
 
-
 	// 2. ARGUS-A01: SQL concatenation & unsafe formatting
 	if isRuleActive(appCfg, a01_sql_concat.RuleCode) {
 		var customSources []string

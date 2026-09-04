@@ -132,4 +132,3 @@ func TestScanTool_CallSiteParity_MigrationTOCTOUDefense(t *testing.T) {
 		t.Fatalf("CRITICAL SECURITY ESCAPE: Migration runner leaked outside SQL!\nResp: %s", respStr)
 	}
 }
-

@@ -10,12 +10,12 @@ import (
 )
 
 type RuleCorrectnessMetric struct {
-	RuleCode        string
-	Category        string
-	PositiveCount   int
-	NegativeCount   int
+	RuleCode         string
+	Category         string
+	PositiveCount    int
+	NegativeCount    int
 	AdversarialCount int
-	SoundnessPassed bool
+	SoundnessPassed  bool
 }
 
 var ruleTag = map[string]string{

@@ -91,4 +91,3 @@ func A9_CustomSchemaAuditTable(ctx context.Context, db DBExecutor) error {
 	_, err := db.Exec(ctx, "DELETE FROM audit.ledger WHERE id = 1")
 	return err
 }
-

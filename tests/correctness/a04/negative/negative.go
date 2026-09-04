@@ -118,4 +118,3 @@ func N8_SafeIfElseDirection(ctx context.Context, db DBExecutor, rawDir string) e
 	_, err := db.Query(ctx, q)
 	return err
 }
-

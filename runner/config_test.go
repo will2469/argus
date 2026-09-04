@@ -227,4 +227,3 @@ GRANT ALL PRIVILEGES ON TABLE test TO app_user;
 		t.Errorf("expected ARGUS-A15 violation when enabled, got issues: %+v", resEnabled.Issues)
 	}
 }
-

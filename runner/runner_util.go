@@ -15,7 +15,6 @@ func isRuleActive(cfg *config.Config, code string) bool {
 	return cfg == nil || cfg.IsRuleEnabled(code)
 }
 
-
 func findFilesWithExt(root, ext string) []string {
 	var files []string
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {

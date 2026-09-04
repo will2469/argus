@@ -37,7 +37,6 @@ func TestIsRuleEnabled_PrefixAndCaseResilience(t *testing.T) {
 	}
 }
 
-
 func TestLoadConfigFallback(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg, err := LoadConfig(tempDir)

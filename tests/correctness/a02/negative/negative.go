@@ -106,4 +106,3 @@ func N7_SearchQueryAPI(ctx context.Context, es ElasticsearchClient) error {
 	_ = res
 	return nil
 }
-

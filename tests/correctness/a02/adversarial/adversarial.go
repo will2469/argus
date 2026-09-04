@@ -132,4 +132,3 @@ func A9_AliasReassignmentLeak(ctx context.Context, db DBExecutor, dummy Rows) er
 	_ = other
 	return nil
 }
-

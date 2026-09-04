@@ -129,12 +129,12 @@ func TestBuildDynamicRuleAuditInfo_AnalyzerMetaAndScannerNameMapping(t *testing.
 
 func TestIssue_DisplayTagAndRuleCode(t *testing.T) {
 	tests := []struct {
-		rawRule     string
-		file        string
-		wantCode    string
-		wantDesc    string
-		wantTag     string
-		wantIgnore  string
+		rawRule    string
+		file       string
+		wantCode   string
+		wantDesc   string
+		wantTag    string
+		wantIgnore string
 	}{
 		{
 			rawRule:    "UNSAFE_SQL_CONCATENATION",
@@ -231,4 +231,3 @@ func TestGetRuleMetadata(t *testing.T) {
 		t.Errorf("unexpected meta for a18: %+v", metaA18)
 	}
 }
-

@@ -144,4 +144,3 @@ func TestScanDirectory_AsymmetricTargetMismatch(t *testing.T) {
 		t.Errorf("unexpected message: %s", issues[0].Message)
 	}
 }
-
