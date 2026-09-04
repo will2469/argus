@@ -222,3 +222,40 @@ func TestScanDirectory_RenameColumn_Symmetry(t *testing.T) {
 	}
 }
 
+func TestScanDirectory_TableDropInvertsIndexOnCreatedTable(t *testing.T) {
+	tempDir := t.TempDir()
+
+	upSQL := `
+CREATE TABLE articles (id uuid PRIMARY KEY, title text);
+CREATE INDEX idx_articles_title ON articles (title);
+`
+	downSQL := `
+DROP TABLE IF EXISTS articles CASCADE;
+`
+	_ = os.WriteFile(filepath.Join(tempDir, "001_articles.up.sql"), []byte(upSQL), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_articles.down.sql"), []byte(downSQL), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues when table drop cascades to newly created index, got %d: %v", len(issues), issues)
+	}
+}
+
+func TestScanDirectory_IndexOnExistingTableRequiresDropIndex(t *testing.T) {
+	tempDir := t.TempDir()
+
+	upSQL := `
+CREATE INDEX idx_articles_title ON articles (title);
+`
+	downSQL := `
+DROP TABLE articles;
+`
+	_ = os.WriteFile(filepath.Join(tempDir, "001_articles.up.sql"), []byte(upSQL), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_articles.down.sql"), []byte(downSQL), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) == 0 {
+		t.Fatalf("expected issues when dropping table instead of index on existing table, got 0")
+	}
+}
+

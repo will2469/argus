@@ -37,6 +37,7 @@ const (
 type SchemaOp struct {
 	Kind      OpKind
 	Target    QualifiedIdent    // Primary object (table, index, view, etc.)
+	Table     QualifiedIdent    // Parent table (for index, column, constraint)
 	SubTarget string            // Secondary object name (column, constraint)
 	AuxTarget string            // Tertiary object name (new name or new type)
 	NewTable  QualifiedIdent    // For OpRenameTable: target table

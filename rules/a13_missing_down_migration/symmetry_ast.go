@@ -87,6 +87,20 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp, cat *Sche
 	}
 
 	// 1. Forward symmetry: For every DDL operation in UP, require a matching inverse in DOWN
+	// In PostgreSQL, dropping a newly created table automatically cascade-drops
+	// all indexes, columns, and constraints created on that table in the same migration.
+	droppedCreatedTables := make(map[QualifiedIdent]bool)
+	for _, up := range upOps {
+		if up.Kind == OpCreateTable {
+			for _, down := range downOps {
+				if down.Kind == OpDropTable && up.Target.Equal(down.Target) {
+					droppedCreatedTables[up.Target] = true
+					break
+				}
+			}
+		}
+	}
+
 	for _, upOp := range upOps {
 		if upOp.Kind == OpDML {
 			continue
@@ -97,6 +111,12 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp, cat *Sche
 				matched = true
 				break
 			}
+		}
+		if !matched && upOp.Kind == OpCreateIndex && !upOp.Table.IsEmpty() && (droppedCreatedTables[upOp.Table] || tableSetContains(droppedCreatedTables, upOp.Table)) {
+			matched = true
+		}
+		if !matched && (upOp.Kind == OpAddColumn || upOp.Kind == OpAddConstraint) && (droppedCreatedTables[upOp.Target] || tableSetContains(droppedCreatedTables, upOp.Target)) {
+			matched = true
 		}
 		if !matched {
 			if upOp.Kind == OpAlterColumnType {
@@ -177,4 +197,16 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp, cat *Sche
 	}
 
 	return nil
+}
+
+func tableSetContains(set map[QualifiedIdent]bool, target QualifiedIdent) bool {
+	if set[target] {
+		return true
+	}
+	for tbl := range set {
+		if tbl.Equal(target) {
+			return true
+		}
+	}
+	return false
 }

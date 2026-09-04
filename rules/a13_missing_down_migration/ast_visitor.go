@@ -61,7 +61,15 @@ func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
 		}
 
 		if idx := stmt.GetIndexStmt(); idx != nil {
-			ops = append(ops, SchemaOp{Kind: OpCreateIndex, Target: NewQualifiedIdent("", idx.Idxname)})
+			var tbl QualifiedIdent
+			if idx.Relation != nil {
+				tbl = extractRangeVarIdent(idx.Relation)
+			}
+			ops = append(ops, SchemaOp{
+				Kind:   OpCreateIndex,
+				Target: NewQualifiedIdent("", idx.Idxname),
+				Table:  tbl,
+			})
 			continue
 		}
 
