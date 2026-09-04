@@ -2,14 +2,14 @@ package adversarial
 
 import (
 	"context"
+	"database/sql"
 )
 
-type DB struct{}
+type DB struct{ *sql.DB }
 
-func (DB) Query(ctx context.Context, sql string, args ...any) (any, error) {
+func (DB) Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error) {
 	return nil, nil
 }
-
 // A1: Branch — conditional SELECT * inside branch.
 func A1_Branch(ctx context.Context, db DB, debug bool) {
 	if debug {
@@ -60,7 +60,7 @@ func (s Service[T]) Fetch(ctx context.Context) {
 
 // A7: Interface — interface method call executing SELECT *.
 type Querier interface {
-	Query(ctx context.Context, sql string, args ...any) (any, error)
+	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
 }
 
 func A7_Interface(ctx context.Context, q Querier) {

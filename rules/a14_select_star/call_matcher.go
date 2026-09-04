@@ -48,7 +48,7 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 
 		if recvType != nil && recvType != types.Typ[types.Invalid] {
 			recvType = unwrapPointer(recvType)
-			if callsite.IsPgxOrSQLType(recvType) {
+			if isKnownDBDriverType(recvType) {
 				return true
 			}
 			if isProvenDBQuerierType(recvType) {
@@ -57,8 +57,11 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) boo
 			if isStructWithDBField(recvType) {
 				return true
 			}
-			// Compiler has complete type info: if not proven DB, fail closed
-			return false
+			// Compiler has complete type info: if not proven DB, fail closed.
+			// Only fall through if types could not be fully resolved (contain Invalid).
+			if !hasInvalidType(recvType) {
+				return false
+			}
 		}
 	}
 
@@ -97,6 +100,41 @@ func unwrapPointer(t types.Type) types.Type {
 	return t
 }
 
+func hasInvalidType(t types.Type) bool {
+	if t == nil {
+		return true
+	}
+	switch x := t.(type) {
+	case *types.Basic:
+		return x.Kind() == types.Invalid
+	case *types.Pointer:
+		return hasInvalidType(x.Elem())
+	case *types.Named:
+		return hasInvalidType(x.Underlying())
+	case *types.Struct:
+		for i := 0; i < x.NumFields(); i++ {
+			if hasInvalidType(x.Field(i).Type()) {
+				return true
+			}
+		}
+	case *types.Interface:
+		for i := 0; i < x.NumMethods(); i++ {
+			if hasInvalidType(x.Method(i).Type()) {
+				return true
+			}
+		}
+	case *types.Signature:
+		if results := x.Results(); results != nil {
+			for i := 0; i < results.Len(); i++ {
+				if hasInvalidType(results.At(i).Type()) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func isKnownDBPackagePath(path string) bool {
 	switch path {
 	case "database/sql", "github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/pgxpool",
@@ -107,41 +145,85 @@ func isKnownDBPackagePath(path string) bool {
 	return false
 }
 
+func isKnownDBDriverType(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	t = unwrapPointer(t)
+	if named, ok := t.(*types.Named); ok {
+		if obj := named.Obj(); obj != nil && obj.Pkg() != nil {
+			if isKnownDBPackagePath(obj.Pkg().Path()) {
+				switch obj.Name() {
+				case "DB", "Tx", "Conn", "Pool", "Batch", "Stmt", "Rows", "Row", "Result", "CommandTag":
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func isProvenDBQuerierType(t types.Type) bool {
 	if t == nil {
 		return false
 	}
 	t = unwrapPointer(t)
 
-	var hasQuery, hasExec, hasQueryRow bool
-	checkFunc := func(fn *types.Func) {
-		switch fn.Name() {
-		case "Query":
-			hasQuery = true
-		case "QueryRow":
-			hasQueryRow = true
-		case "Exec", "ExecContext", "Begin", "BeginTx", "SendBatch":
-			hasExec = true
+	if isKnownDBDriverType(t) {
+		return true
+	}
+
+	if iface, ok := t.Underlying().(*types.Interface); ok {
+		for i := 0; i < iface.NumMethods(); i++ {
+			if isDBMethodWithDriverSignature(iface.Method(i)) {
+				return true
+			}
 		}
 	}
 
 	if named, ok := t.(*types.Named); ok {
 		for i := 0; i < named.NumMethods(); i++ {
-			checkFunc(named.Method(i))
-		}
-		typeName := named.Obj().Name()
-		if typeName == "DB" || typeName == "Querier" || typeName == "DBTX" || typeName == "Tx" || typeName == "Pool" {
-			return hasQuery || hasQueryRow || hasExec
+			if isDBMethodWithDriverSignature(named.Method(i)) {
+				return true
+			}
 		}
 	}
 
-	if iface, ok := t.Underlying().(*types.Interface); ok {
-		for i := 0; i < iface.NumMethods(); i++ {
-			checkFunc(iface.Method(i))
+	return false
+}
+
+func isDBMethodWithDriverSignature(fn *types.Func) bool {
+	if fn == nil {
+		return false
+	}
+	switch fn.Name() {
+	case "Query", "QueryRow", "Exec", "ExecContext", "Begin", "BeginTx", "SendBatch":
+	default:
+		return false
+	}
+
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return false
+	}
+
+	if results := sig.Results(); results != nil {
+		for i := 0; i < results.Len(); i++ {
+			if isKnownDBDriverType(results.At(i).Type()) {
+				return true
+			}
 		}
 	}
 
-	return (hasQuery && hasExec) || (hasQuery && hasQueryRow)
+	if params := sig.Params(); params != nil {
+		for i := 0; i < params.Len(); i++ {
+			if isKnownDBDriverType(params.At(i).Type()) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func isStructWithDBField(t types.Type) bool {
@@ -155,7 +237,7 @@ func isStructWithDBField(t types.Type) bool {
 	}
 	for i := 0; i < st.NumFields(); i++ {
 		fType := unwrapPointer(st.Field(i).Type())
-		if callsite.IsPgxOrSQLType(fType) || isProvenDBQuerierType(fType) {
+		if isKnownDBDriverType(fType) || isProvenDBQuerierType(fType) {
 			return true
 		}
 	}

@@ -79,9 +79,12 @@ func TestCheckDynamicQueryRisk(t *testing.T) {
 
 func TestInspectFile_ScopeResolution(t *testing.T) {
 	src := `package test
-import "context"
-type DB struct{}
-func (DB) Query(ctx context.Context, sql string) (any, error) { return nil, nil }
+import (
+	"context"
+	"database/sql"
+)
+type DB struct{ *sql.DB }
+func (DB) Query(ctx context.Context, sql string) (*sql.Rows, error) { return nil, nil }
 
 var packageStarQuery = "SELECT * FROM users"
 
@@ -129,7 +132,12 @@ func (Calculator) Query(ctx context.Context, formula string) (any, error) {
 	return nil, nil
 }
 
-func TestCalculator(ctx context.Context) {
+type SearchEngine interface {
+	Query(ctx context.Context, q string) (any, error)
+	Exec(ctx context.Context, q string) (int, error)
+}
+
+func TestCalculator(ctx context.Context, engine SearchEngine) {
 	calculator := Calculator{}
 	calculator.Query(ctx, "SELECT * FROM users")
 
@@ -138,6 +146,9 @@ func TestCalculator(ctx context.Context) {
 
 	store := Calculator{}
 	store.Query(ctx, "SELECT * FROM users")
+
+	engine.Query(ctx, "SELECT * FROM users")
+	engine.Exec(ctx, "SELECT * FROM users")
 }
 `
 	fset := token.NewFileSet()
@@ -148,7 +159,7 @@ func TestCalculator(ctx context.Context) {
 
 	issues := InspectFile(nil, fset, file, nil)
 	if len(issues) != 0 {
-		t.Fatalf("expected 0 issues for non-DB Calculator receiver, got %d: %v", len(issues), issues)
+		t.Fatalf("expected 0 issues for non-DB receivers, got %d: %v", len(issues), issues)
 	}
 }
 

@@ -2,15 +2,16 @@ package negative
 
 import (
 	"context"
+	"database/sql"
 )
 
-type DB struct{}
+type DB struct{ *sql.DB }
 
-func (DB) Query(ctx context.Context, sql string, args ...any) (any, error) {
+func (DB) Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error) {
 	return nil, nil
 }
 
-func (DB) QueryRow(ctx context.Context, sql string, args ...any) any {
+func (DB) QueryRow(ctx context.Context, sql string, args ...any) *sql.Row {
 	return nil
 }
 
@@ -18,10 +19,9 @@ type Logger struct{}
 
 func (Logger) Info(msg string) {}
 
-type SearchEngine struct{}
-
-func (SearchEngine) Query(ctx context.Context, q string) (any, error) {
-	return nil, nil
+type SearchEngine interface {
+	Query(ctx context.Context, q string) (any, error)
+	Exec(ctx context.Context, q string) (int, error)
 }
 
 // N1: Obvious Safe — explicit column projection.
@@ -68,9 +68,10 @@ func N7_PackageShadowedSafe(ctx context.Context, db DB) {
 	_, _ = db.Query(ctx, packageBadQuery)
 }
 
-// N8: Unrelated Search Engine — non-DB receiver calling Query method with SELECT *.
+// N8: Unrelated Search Engine — non-DB receiver calling Query and Exec methods with SELECT *.
 func N8_UnrelatedSearchEngine(ctx context.Context, engine SearchEngine) {
 	_, _ = engine.Query(ctx, "SELECT * FROM index")
+	_, _ = engine.Exec(ctx, "SELECT * FROM index")
 }
 
 // N9: Outer Scope Safe — inner scope defines SELECT * on shadowed var, but outer query is safe.

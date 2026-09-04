@@ -15,20 +15,19 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 	}
 
 	if id, ok := expr.(*ast.Ident); ok {
-		if fn != nil && fn.Type != nil && fn.Type.Params != nil {
-			for _, field := range fn.Type.Params.List {
-				for _, name := range field.Names {
-					if name.Name == id.Name {
-						return field.Type
-					}
-				}
+		if fn != nil {
+			fieldLists := []*ast.FieldList{fn.Recv}
+			if fn.Type != nil {
+				fieldLists = append(fieldLists, fn.Type.Params)
 			}
-		}
-		if fn != nil && fn.Recv != nil {
-			for _, field := range fn.Recv.List {
-				for _, name := range field.Names {
-					if name.Name == id.Name {
-						return field.Type
+			for _, fl := range fieldLists {
+				if fl != nil {
+					for _, field := range fl.List {
+						for _, name := range field.Names {
+							if name.Name == id.Name {
+								return field.Type
+							}
+						}
 					}
 				}
 			}
@@ -69,20 +68,12 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 		if xID, ok := sel.X.(*ast.Ident); ok {
 			xType := findASTType(xID, fn, file)
 			structName := getASTTypeName(xType)
-			if structName != "" && file != nil {
-				for _, decl := range file.Decls {
-					if gen, ok := decl.(*ast.GenDecl); ok {
-						for _, spec := range gen.Specs {
-							if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == structName {
-								if st, ok := ts.Type.(*ast.StructType); ok && st.Fields != nil {
-									for _, f := range st.Fields.List {
-										for _, fnm := range f.Names {
-											if fnm.Name == sel.Sel.Name {
-												return f.Type
-											}
-										}
-									}
-								}
+			if ts := findTypeSpec(structName, file); ts != nil {
+				if st, ok := ts.Type.(*ast.StructType); ok && st.Fields != nil {
+					for _, f := range st.Fields.List {
+						for _, fnm := range f.Names {
+							if fnm.Name == sel.Sel.Name {
+								return f.Type
 							}
 						}
 					}
@@ -95,25 +86,20 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 }
 
 func getASTTypeName(expr ast.Expr) string {
-	if expr == nil {
+	switch e := expr.(type) {
+	case *ast.StarExpr:
+		return getASTTypeName(e.X)
+	case *ast.Ident:
+		return e.Name
+	case *ast.IndexExpr:
+		return getASTTypeName(e.X)
+	case *ast.IndexListExpr:
+		return getASTTypeName(e.X)
+	case *ast.SelectorExpr:
+		return e.Sel.Name
+	default:
 		return ""
 	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	if id, ok := expr.(*ast.Ident); ok {
-		return id.Name
-	}
-	if idx, ok := expr.(*ast.IndexExpr); ok {
-		return getASTTypeName(idx.X)
-	}
-	if idxList, ok := expr.(*ast.IndexListExpr); ok {
-		return getASTTypeName(idxList.X)
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		return sel.Sel.Name
-	}
-	return ""
 }
 
 func isProvenDBASTType(expr ast.Expr, file *ast.File) bool {
@@ -128,17 +114,13 @@ func isProvenDBASTType(expr ast.Expr, file *ast.File) bool {
 			switch pkgID.Name {
 			case "sql", "pgx", "pgxpool", "sqlx", "pq":
 				switch sel.Sel.Name {
-				case "DB", "Pool", "Conn", "Tx", "Rows", "Row", "Batch", "Stmt":
+				case "DB", "Pool", "Conn", "Tx", "Rows", "Row", "Batch", "Stmt", "Result", "CommandTag":
 					return true
 				}
 			}
 		}
 	}
 	if id, ok := expr.(*ast.Ident); ok {
-		switch id.Name {
-		case "DB", "Querier", "DBTX", "Tx", "Pool":
-			return true
-		}
 		if ts := findTypeSpec(id.Name, file); ts != nil {
 			return isDBTypeSpec(ts, file)
 		}
@@ -167,18 +149,6 @@ func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
 		return false
 	}
 	switch t := ts.Type.(type) {
-	case *ast.InterfaceType:
-		if t.Methods == nil {
-			return false
-		}
-		for _, m := range t.Methods.List {
-			for _, name := range m.Names {
-				switch name.Name {
-				case "Query", "QueryRow", "Exec", "ExecContext", "Begin", "BeginTx":
-					return true
-				}
-			}
-		}
 	case *ast.StructType:
 		if t.Fields == nil {
 			return false
@@ -186,6 +156,36 @@ func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
 		for _, field := range t.Fields.List {
 			if isProvenDBASTType(field.Type, file) {
 				return true
+			}
+		}
+	case *ast.InterfaceType:
+		if t.Methods == nil {
+			return false
+		}
+		for _, m := range t.Methods.List {
+			if ft, ok := m.Type.(*ast.FuncType); ok && hasDBDriverMethodAST(ft) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasDBDriverMethodAST(ft *ast.FuncType) bool {
+	if ft == nil || ft.Results == nil {
+		return false
+	}
+	for _, f := range ft.Results.List {
+		typ := f.Type
+		if star, ok := typ.(*ast.StarExpr); ok {
+			typ = star.X
+		}
+		if sel, ok := typ.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok {
+				switch id.Name {
+				case "sql", "pgx", "pgconn", "sqlx", "pq":
+					return true
+				}
 			}
 		}
 	}

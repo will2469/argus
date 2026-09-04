@@ -22,10 +22,13 @@ rules:
 
 	goSrc := `package testpkg
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
 
-type DB struct{}
-func (DB) Query(ctx context.Context, sql string, args ...any) (any, error) { return nil, nil }
+type DB struct{ *sql.DB }
+func (DB) Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error) { return nil, nil }
 
 func Run(ctx context.Context, db DB) {
 	_, _ = db.Query(ctx, "SELECT * FROM users")
@@ -65,10 +68,13 @@ rules:
 
 	goSrc := `package testpkg
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
 
-type DB struct{}
-func (DB) Query(ctx context.Context, sql string, args ...any) (any, error) { return nil, nil }
+type DB struct{ *sql.DB }
+func (DB) Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error) { return nil, nil }
 
 func Run(ctx context.Context, db DB) {
 	_, _ = db.Query(ctx, "SELECT * FROM users")
