@@ -78,8 +78,50 @@ func GenerateMarkdownReport(result *AuditResult, rootDir string) string {
 
 		for _, rule := range sortedRules {
 			issues := groupedByRule[rule]
-			desc := GetRuleDescription(rule)
-			sb.WriteString(fmt.Sprintf("### %s (%s)\n\n", rule, desc))
+			meta := GetRuleMetadata(rule)
+			sb.WriteString(fmt.Sprintf("### %s (%s)\n\n", meta.Identifier, meta.Code))
+			sb.WriteString(fmt.Sprintf("- **Severity:** %s\n", meta.Severity))
+			sb.WriteString(fmt.Sprintf("- **Category:** %s\n", meta.Category))
+			sb.WriteString(fmt.Sprintf("- **Description:** %s\n", meta.Description))
+
+			allSameMessage := true
+			firstMsg := ""
+			if len(issues) > 0 {
+				firstMsg = issues[0].Message
+				for _, it := range issues[1:] {
+					if it.Message != firstMsg {
+						allSameMessage = false
+						break
+					}
+				}
+			}
+			if allSameMessage && firstMsg != "" {
+				sb.WriteString(fmt.Sprintf("- **Message:** %s\n", firstMsg))
+			}
+
+			if meta.WikiURL != "" {
+				sb.WriteString(fmt.Sprintf("- **Wiki:** [%s Documentation](%s)\n", meta.Code, meta.WikiURL))
+			}
+
+			hasSQL := false
+			hasGo := false
+			for _, it := range issues {
+				if strings.HasSuffix(strings.ToLower(it.File), ".sql") {
+					hasSQL = true
+				} else {
+					hasGo = true
+				}
+			}
+			shortID := strings.TrimPrefix(meta.Code, "ARGUS-")
+			if hasGo && hasSQL {
+				sb.WriteString(fmt.Sprintf("- **Suppression:** `// argus:ignore %s <reason (min 2 words)>` or `-- argus:ignore %s ...`\n", shortID, shortID))
+			} else if hasSQL {
+				sb.WriteString(fmt.Sprintf("- **Suppression:** `-- argus:ignore %s <reason (min 2 words)>`\n", shortID))
+			} else {
+				sb.WriteString(fmt.Sprintf("- **Suppression:** `// argus:ignore %s <reason (min 2 words)>`\n", shortID))
+			}
+			sb.WriteString("\n")
+
 			for _, item := range issues {
 				relPath := item.File
 				absPath := item.File
@@ -93,17 +135,12 @@ func GenerateMarkdownReport(result *AuditResult, rootDir string) string {
 
 				linkPath := "/" + strings.TrimPrefix(filepath.ToSlash(absPath), "/")
 				sb.WriteString(fmt.Sprintf("- **[%s:%d](file://%s#L%d)**\n", relPath, item.Line, linkPath, item.Line))
-				sb.WriteString(fmt.Sprintf("  - *Rule:* %s\n", item.DisplayTag()))
-				sb.WriteString(fmt.Sprintf("  - *Message:* %s\n", item.Message))
+				if !allSameMessage && item.Message != "" {
+					sb.WriteString(fmt.Sprintf("  - *Message:* %s\n", item.Message))
+				}
 				if item.Snippet != "" {
 					sb.WriteString(fmt.Sprintf("  - *Snippet:* `%s`\n", item.Snippet))
 				}
-				directivePrefix := "//"
-				if strings.HasSuffix(strings.ToLower(item.File), ".sql") {
-					directivePrefix = "--"
-				}
-				shortID := strings.TrimPrefix(item.RuleCode(), "ARGUS-")
-				sb.WriteString(fmt.Sprintf("  - *Suppression:* `%s argus:ignore %s <reason (min 2 words)>`\n", directivePrefix, shortID))
 			}
 			sb.WriteString("\n")
 		}

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -112,12 +113,12 @@ func TestBuildDynamicRuleAuditInfo_AnalyzerMetaAndScannerNameMapping(t *testing.
 	}
 	report := GenerateMarkdownReport(res, "/test/root")
 	expectedHeaders := []string{
-		"### ARGUS-A18 (MISSING_ROWS_ERR_CHECK)",
-		"### ARGUS-A20 (PARAM_LIMIT_65535)",
-		"### ARGUS-A21 (UNBOUNDED_ROW_LOCK_BLOCKING)",
-		"### ARGUS-A23 (TRANSACTION_TIMEOUT_CONFIG)",
-		"### ARGUS-A25 (EXPENSIVE_CPU_IN_TRANSACTION)",
-		"### ARGUS-A26 (LIKE_WILDCARD_INJECTION)",
+		"### MISSING_ROWS_ERR_CHECK (ARGUS-A18)",
+		"### PARAM_LIMIT_65535 (ARGUS-A20)",
+		"### UNBOUNDED_ROW_LOCK_BLOCKING (ARGUS-A21)",
+		"### TRANSACTION_TIMEOUT_CONFIG (ARGUS-A23)",
+		"### EXPENSIVE_CPU_IN_TRANSACTION (ARGUS-A25)",
+		"### LIKE_WILDCARD_INJECTION (ARGUS-A26)",
 	}
 	for _, h := range expectedHeaders {
 		if !strings.Contains(report, h) {
@@ -194,12 +195,40 @@ func TestIssue_DisplayTagAndRuleCode(t *testing.T) {
 
 		res := &AuditResult{Issues: []Issue{iss}}
 		md := GenerateMarkdownReport(res, "/root")
-		if !strings.Contains(md, tc.wantTag) {
-			t.Errorf("GenerateMarkdownReport for %q should contain tag %q", tc.rawRule, tc.wantTag)
+		expectedHeader := fmt.Sprintf("### %s (%s)", tc.wantDesc, tc.wantCode)
+		if !strings.Contains(md, expectedHeader) {
+			t.Errorf("GenerateMarkdownReport for %q should contain header %q", tc.rawRule, expectedHeader)
+		}
+		if !strings.Contains(md, "- **Severity:**") {
+			t.Errorf("GenerateMarkdownReport for %q should contain Severity metadata", tc.rawRule)
+		}
+		if !strings.Contains(md, "- **Category:**") {
+			t.Errorf("GenerateMarkdownReport for %q should contain Category metadata", tc.rawRule)
+		}
+		if !strings.Contains(md, "- **Description:**") {
+			t.Errorf("GenerateMarkdownReport for %q should contain Description metadata", tc.rawRule)
+		}
+		if !strings.Contains(md, "- **Message:**") {
+			t.Errorf("GenerateMarkdownReport for %q should contain Message metadata", tc.rawRule)
 		}
 		if !strings.Contains(md, tc.wantIgnore) {
 			t.Errorf("GenerateMarkdownReport for %q should contain suppression hint %q", tc.rawRule, tc.wantIgnore)
 		}
+	}
+}
+
+func TestGetRuleMetadata(t *testing.T) {
+	metaA01 := GetRuleMetadata("ARGUS-A01")
+	if metaA01.Severity != "CRITICAL" || metaA01.Identifier != "UNSAFE_SQL_CONCATENATION" {
+		t.Errorf("unexpected meta for A01: %+v", metaA01)
+	}
+	if !strings.Contains(metaA01.WikiURL, "ARGUS-A01") {
+		t.Errorf("expected wiki url to contain ARGUS-A01, got %s", metaA01.WikiURL)
+	}
+
+	metaA18 := GetRuleMetadata("a18")
+	if metaA18.Severity != "HIGH" || metaA18.Identifier != "MISSING_ROWS_ERR_CHECK" {
+		t.Errorf("unexpected meta for a18: %+v", metaA18)
 	}
 }
 
