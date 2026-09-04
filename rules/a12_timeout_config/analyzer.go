@@ -81,32 +81,26 @@ func inspectCall(pass *analysis.Pass, fset *token.FileSet, call *ast.CallExpr, f
 	case "NewWithConfig":
 		arg, _ := findCallArg(call, pass)
 		if arg != nil {
-			checkNewWithConfigCall(fset, call, arg, file, dm, issues)
+			checkNewWithConfigCall(pass, fset, call, arg, file, dm, issues)
 		}
 	}
 }
 
-func checkNewWithConfigCall(fset *token.FileSet, call *ast.CallExpr, cfgArg ast.Expr, file *ast.File, dm *directives.DirectiveMap, issues *[]Issue) {
+func checkNewWithConfigCall(pass *analysis.Pass, fset *token.FileSet, call *ast.CallExpr, cfgArg ast.Expr, file *ast.File, dm *directives.DirectiveMap, issues *[]Issue) {
 	if fset != nil && dm != nil && dm.IsIgnored(fset, call.Pos(), RuleCode) {
 		return
 	}
 
-	id, ok := cfgArg.(*ast.Ident)
-	if !ok {
-		return
-	}
-
-	enclosingFunc := findEnclosingFunc(file, call.Pos())
-	if enclosingFunc == nil || enclosingFunc.Body == nil {
-		return
-	}
-
-	status := EvalBlockAssignments(enclosingFunc.Body, id.Name)
+	status := EvalConfigFlow(pass, file, cfgArg, call)
 	reportConfigStatus(fset, call.Pos(), status, dm, issues)
 }
 
 func inspectCompositeLit(pass *analysis.Pass, fset *token.FileSet, lit *ast.CompositeLit, file *ast.File, dm *directives.DirectiveMap, issues *[]Issue) {
-	if !isPgxpoolConfigType(pass, file, lit.Type) {
+	expr := lit.Type
+	if expr == nil {
+		expr = lit
+	}
+	if !isPgxpoolConfigType(pass, file, expr) {
 		return
 	}
 	if enclosing := findEnclosingFunc(file, lit.Pos()); enclosing != nil {

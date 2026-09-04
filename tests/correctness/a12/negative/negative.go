@@ -107,3 +107,33 @@ func N7_UnrelatedPackageNew(ctx context.Context) {
 	_ = otherpkg.New(ctx, "postgres://user:pass@localhost:5432/db")
 }
 
+// N8: Branch Both Safe — config is safely initialized along all reachable paths.
+func N8_BranchBothSafe(ctx context.Context, condition bool) {
+	var cfg *Config
+	if condition {
+		cfg = &Config{
+			MaxConnIdleTime: 5 * time.Minute,
+			MaxConnLifetime: 1 * time.Hour,
+			ConnConfig: ConnConfig{
+				RuntimeParams: map[string]string{
+					"statement_timeout":                   "10s",
+					"lock_timeout":                        "2s",
+					"idle_in_transaction_session_timeout": "5s",
+				},
+			},
+		}
+	} else {
+		cfg = &Config{
+			MaxConnIdleTime: 10 * time.Minute,
+			MaxConnLifetime: 2 * time.Hour,
+			ConnConfig: ConnConfig{
+				RuntimeParams: map[string]string{
+					"statement_timeout":                   "5s",
+					"lock_timeout":                        "1s",
+					"idle_in_transaction_session_timeout": "10s",
+				},
+			},
+		}
+	}
+	_, _ = pgxpool.NewWithConfig(ctx, cfg)
+}

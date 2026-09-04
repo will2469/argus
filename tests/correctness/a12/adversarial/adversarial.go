@@ -83,3 +83,62 @@ func (Connector[T]) Connect(ctx context.Context) (*Pool, error) {
 func A7_BareStructLiteral() {
 	_ = Config{}
 }
+
+// A8: Shadowing — outer config is safe, but inner shadowed config is incomplete.
+func A8_Shadowing(ctx context.Context) {
+	cfg := &Config{
+		MaxConnIdleTime: 5 * time.Minute,
+		MaxConnLifetime: 1 * time.Hour,
+		ConnConfig: ConnConfig{
+			RuntimeParams: map[string]string{
+				"statement_timeout":                   "10s",
+				"lock_timeout":                        "2s",
+				"idle_in_transaction_session_timeout": "5s",
+			},
+		},
+	}
+	_ = cfg
+
+	{
+		cfg := &Config{}
+		_, _ = pgxpool.NewWithConfig(ctx, cfg)
+	}
+}
+
+// A9: Branch Reassignment — good config reassigned to bad config on condition.
+func A9_BranchReassignment(ctx context.Context, condition bool) {
+	cfg := &Config{
+		MaxConnIdleTime: 5 * time.Minute,
+		MaxConnLifetime: 1 * time.Hour,
+		ConnConfig: ConnConfig{
+			RuntimeParams: map[string]string{
+				"statement_timeout":                   "10s",
+				"lock_timeout":                        "2s",
+				"idle_in_transaction_session_timeout": "5s",
+			},
+		},
+	}
+	if condition {
+		cfg = &Config{}
+	}
+	_, _ = pgxpool.NewWithConfig(ctx, cfg)
+}
+
+// A10: Branch Zero Timeout — good config mutated to zero statement_timeout in branch.
+func A10_BranchZeroTimeout(ctx context.Context, condition bool) {
+	cfg := &Config{
+		MaxConnIdleTime: 5 * time.Minute,
+		MaxConnLifetime: 1 * time.Hour,
+		ConnConfig: ConnConfig{
+			RuntimeParams: map[string]string{
+				"statement_timeout":                   "10s",
+				"lock_timeout":                        "2s",
+				"idle_in_transaction_session_timeout": "5s",
+			},
+		},
+	}
+	if condition {
+		cfg.ConnConfig.RuntimeParams["statement_timeout"] = "0"
+	}
+	_, _ = pgxpool.NewWithConfig(ctx, cfg)
+}

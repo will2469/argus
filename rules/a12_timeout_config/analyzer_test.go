@@ -1,6 +1,7 @@
 package a12_timeout_config
 
 import (
+	"go/ast"
 	"path/filepath"
 	"testing"
 
@@ -39,5 +40,76 @@ func TestCheckDSN_Unit(t *testing.T) {
 		if len(res.Zero) != tc.wantZero {
 			t.Errorf("for DSN %q, expected %d zero, got %d (%v)", tc.dsn, tc.wantZero, len(res.Zero), res.Zero)
 		}
+	}
+}
+
+func TestMeetStatus_Lattice(t *testing.T) {
+	good := ConfigStatus{
+		HasStatementTimeout:  true,
+		HasLockTimeout:       true,
+		HasIdleInTransaction: true,
+		HasMaxConnIdleTime:   true,
+		HasMaxConnLifetime:   true,
+	}
+	bad := ConfigStatus{
+		HasStatementTimeout:  true,
+		HasLockTimeout:       false,
+		HasIdleInTransaction: true,
+	}
+	zero := ConfigStatus{
+		HasStatementTimeout:  true,
+		HasLockTimeout:       true,
+		HasIdleInTransaction: true,
+		HasMaxConnIdleTime:   true,
+		HasMaxConnLifetime:   true,
+		HasZeroTimeout:       true,
+		ZeroTimeoutParam:     "statement_timeout",
+	}
+
+	// 1. Meet of good and bad must fail-closed (lacks lock_timeout, maxconn)
+	m1 := meetStatus(good, bad)
+	if m1.HasLockTimeout || m1.HasMaxConnIdleTime || m1.HasMaxConnLifetime {
+		t.Errorf("meetStatus failed: expected missing timeouts when joined with incomplete path, got %+v", m1)
+	}
+	if !m1.HasStatementTimeout || !m1.HasIdleInTransaction {
+		t.Errorf("meetStatus failed: expected shared timeouts preserved, got %+v", m1)
+	}
+
+	// 2. Meet of good and zero must fail-closed with zero timeout
+	m2 := meetStatus(good, zero)
+	if !m2.HasZeroTimeout || m2.ZeroTimeoutParam != "statement_timeout" {
+		t.Errorf("meetStatus failed: expected zero timeout inherited, got %+v", m2)
+	}
+
+	// 3. Meet of good and good must stay compliant
+	m3 := meetStatus(good, good)
+	if !m3.HasStatementTimeout || !m3.HasLockTimeout || !m3.HasIdleInTransaction || !m3.HasMaxConnIdleTime || !m3.HasMaxConnLifetime || m3.HasZeroTimeout {
+		t.Errorf("meetStatus failed: expected fully compliant status, got %+v", m3)
+	}
+}
+
+func TestIsTerminating_Unit(t *testing.T) {
+	retStmt := &ast.ReturnStmt{}
+	if !isTerminating(retStmt) {
+		t.Errorf("expected return statement to be terminating")
+	}
+
+	blockWithRet := &ast.BlockStmt{
+		List: []ast.Stmt{
+			&ast.ExprStmt{X: &ast.Ident{Name: "noop"}},
+			&ast.ReturnStmt{},
+		},
+	}
+	if !isTerminating(blockWithRet) {
+		t.Errorf("expected block ending in return to be terminating")
+	}
+
+	normalBlock := &ast.BlockStmt{
+		List: []ast.Stmt{
+			&ast.ExprStmt{X: &ast.Ident{Name: "noop"}},
+		},
+	}
+	if isTerminating(normalBlock) {
+		t.Errorf("expected normal block not to be terminating")
 	}
 }

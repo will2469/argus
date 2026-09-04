@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"net/url"
 	"strings"
 
@@ -111,15 +112,34 @@ func extractAllDSNStrings(call *ast.CallExpr, file *ast.File, pass *analysis.Pas
 	case *ast.Ident:
 		enclosing := findEnclosingFunc(file, call.Pos())
 		if enclosing != nil && enclosing.Body != nil {
+			var targetObj types.Object
+			if pass != nil && pass.TypesInfo != nil {
+				targetObj = pass.TypesInfo.Uses[e]
+				if targetObj == nil {
+					targetObj = pass.TypesInfo.Defs[e]
+				}
+			}
 			ast.Inspect(enclosing.Body, func(n ast.Node) bool {
 				assign, ok := n.(*ast.AssignStmt)
 				if !ok || assign.Pos() >= call.Pos() {
 					return true
 				}
 				for i, lhs := range assign.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
-						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							results = append(results, strings.Trim(lit.Value, "`\""))
+					if id, ok := lhs.(*ast.Ident); ok && i < len(assign.Rhs) {
+						match := false
+						if pass != nil && pass.TypesInfo != nil && targetObj != nil {
+							if obj := pass.TypesInfo.Defs[id]; obj != nil && obj == targetObj {
+								match = true
+							} else if obj := pass.TypesInfo.Uses[id]; obj != nil && obj == targetObj {
+								match = true
+							}
+						} else if id.Name == e.Name {
+							match = true
+						}
+						if match {
+							if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+								results = append(results, strings.Trim(lit.Value, "`\""))
+							}
 						}
 					}
 				}

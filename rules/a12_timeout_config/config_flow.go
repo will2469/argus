@@ -3,187 +3,222 @@ package a12_timeout_config
 
 import (
 	"go/ast"
-	"go/token"
+	"go/types"
 	"strings"
+
+	"golang.org/x/tools/go/analysis"
 )
 
-// ConfigStatus tracks presence of required timeout configurations.
-type ConfigStatus struct {
-	HasStatementTimeout  bool
-	HasLockTimeout       bool
-	HasIdleInTransaction bool
-	HasMaxConnIdleTime   bool
-	HasMaxConnLifetime   bool
-	HasZeroTimeout       bool
-	ZeroTimeoutParam     string
-}
+// EvalConfigFlow tracks reaching definitions and flow of cfgArg up to call.Pos().
+func EvalConfigFlow(pass *analysis.Pass, file *ast.File, cfgArg ast.Expr, call *ast.CallExpr) ConfigStatus {
+	var zeroStatus ConfigStatus
+	if call == nil || cfgArg == nil {
+		return zeroStatus
+	}
 
-// EvalCompositeLit evaluates a pgxpool.Config composite literal.
-func EvalCompositeLit(lit *ast.CompositeLit) ConfigStatus {
-	var status ConfigStatus
-
-	for _, elt := range lit.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		key, ok := kv.Key.(*ast.Ident)
-		if !ok {
-			continue
-		}
-
-		switch key.Name {
-		case "MaxConnIdleTime":
-			status.HasMaxConnIdleTime = true
-		case "MaxConnLifetime":
-			status.HasMaxConnLifetime = true
-		case "ConnConfig":
-			evalConnConfigComposite(kv.Value, &status)
+	if lit, ok := cfgArg.(*ast.CompositeLit); ok {
+		return EvalCompositeLit(lit)
+	}
+	if unary, ok := cfgArg.(*ast.UnaryExpr); ok {
+		if lit, ok := unary.X.(*ast.CompositeLit); ok {
+			return EvalCompositeLit(lit)
 		}
 	}
 
-	return status
-}
-
-func evalConnConfigComposite(expr ast.Expr, status *ConfigStatus) {
-	lit, ok := expr.(*ast.CompositeLit)
+	cfgIdent, ok := cfgArg.(*ast.Ident)
 	if !ok {
-		return
+		return zeroStatus
 	}
 
-	for _, elt := range lit.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		key, ok := kv.Key.(*ast.Ident)
-		if !ok {
-			continue
-		}
+	enclosingFunc := findEnclosingFunc(file, call.Pos())
+	if enclosingFunc == nil || enclosingFunc.Body == nil {
+		return zeroStatus
+	}
 
-		if key.Name == "RuntimeParams" || key.Name == "Config" {
-			evalRuntimeParamsExpr(kv.Value, status)
+	var targetObj types.Object
+	if pass != nil && pass.TypesInfo != nil {
+		targetObj = pass.TypesInfo.Uses[cfgIdent]
+		if targetObj == nil {
+			targetObj = pass.TypesInfo.Defs[cfgIdent]
 		}
 	}
+
+	rootBlock := enclosingFunc.Body
+	if pass == nil {
+		rootBlock = findDominatingBlock(enclosingFunc.Body, cfgIdent.Pos(), cfgIdent.Name)
+	}
+
+	finalState, _ := evalBlockStmtFlow(pass, file, rootBlock, call, targetObj, cfgIdent.Name, zeroStatus)
+	return finalState
 }
 
-func evalRuntimeParamsExpr(expr ast.Expr, status *ConfigStatus) {
-	lit, ok := expr.(*ast.CompositeLit)
-	if !ok {
-		return
+func evalStmtFlow(pass *analysis.Pass, file *ast.File, stmt ast.Stmt, call *ast.CallExpr, targetObj types.Object, varName string, inState ConfigStatus) (ConfigStatus, bool) {
+	if stmt == nil {
+		return inState, false
+	}
+	if call.Pos() < stmt.Pos() {
+		return inState, true
 	}
 
-	for _, elt := range lit.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
+	switch s := stmt.(type) {
+	case *ast.AssignStmt:
+		if s.Pos() <= call.Pos() && call.Pos() <= s.End() {
+			return inState, true
 		}
-		paramKey := extractLitString(kv.Key)
-		paramVal := extractLitString(kv.Value)
+		evalAssignStmt(pass, file, s, targetObj, varName, &inState)
+		return inState, false
 
-		switch paramKey {
-		case "statement_timeout":
-			status.HasStatementTimeout = true
-			if isZeroValue(paramVal) {
-				status.HasZeroTimeout = true
-				status.ZeroTimeoutParam = "statement_timeout"
-			}
-		case "lock_timeout":
-			status.HasLockTimeout = true
-			if isZeroValue(paramVal) {
-				status.HasZeroTimeout = true
-				status.ZeroTimeoutParam = "lock_timeout"
-			}
-		case "idle_in_transaction_session_timeout", "idle_in_transaction":
-			status.HasIdleInTransaction = true
-			if isZeroValue(paramVal) {
-				status.HasZeroTimeout = true
-				status.ZeroTimeoutParam = "idle_in_transaction_session_timeout"
+	case *ast.ExprStmt:
+		if s.Pos() <= call.Pos() && call.Pos() <= s.End() {
+			return inState, true
+		}
+		if callExpr, ok := s.X.(*ast.CallExpr); ok {
+			checkHelperCall(callExpr, pass, targetObj, varName, &inState)
+		}
+		return inState, false
+
+	case *ast.IfStmt:
+		if s.Init != nil {
+			var reached bool
+			inState, reached = evalStmtFlow(pass, file, s.Init, call, targetObj, varName, inState)
+			if reached {
+				return inState, true
 			}
 		}
-	}
-}
+		if s.Body != nil && s.Body.Pos() <= call.Pos() && call.Pos() <= s.Body.End() {
+			return evalBlockStmtFlow(pass, file, s.Body, call, targetObj, varName, inState)
+		}
+		if s.Else != nil && s.Else.Pos() <= call.Pos() && call.Pos() <= s.Else.End() {
+			return evalStmtFlow(pass, file, s.Else, call, targetObj, varName, inState)
+		}
 
-// EvalBlockAssignments inspects statements in a block/function for assignments to configVar.
-func EvalBlockAssignments(body *ast.BlockStmt, configVarName string) ConfigStatus {
-	var status ConfigStatus
-	if body == nil || configVarName == "" {
-		return status
-	}
+		thenState, _ := evalBlockStmtFlow(pass, file, s.Body, call, targetObj, varName, inState)
+		thenTerm := isTerminating(s.Body)
 
-	for _, stmt := range body.List {
-		switch s := stmt.(type) {
-		case *ast.AssignStmt:
-			for i, lhs := range s.Lhs {
-				checkAssignment(lhs, i, s.Rhs, configVarName, &status)
+		if s.Else != nil {
+			elseState, _ := evalStmtFlow(pass, file, s.Else, call, targetObj, varName, inState)
+			elseTerm := isTerminating(s.Else)
+
+			if thenTerm && !elseTerm {
+				return elseState, false
 			}
-			for _, rhsExpr := range s.Rhs {
-				if call, ok := rhsExpr.(*ast.CallExpr); ok {
-					checkHelperCall(call, configVarName, &status)
+			if elseTerm && !thenTerm {
+				return thenState, false
+			}
+			return meetStatus(thenState, elseState), false
+		}
+
+		if thenTerm {
+			return inState, false
+		}
+		return meetStatus(inState, thenState), false
+
+	case *ast.BlockStmt:
+		return evalBlockStmtFlow(pass, file, s, call, targetObj, varName, inState)
+
+	case *ast.DeclStmt:
+		if gen, ok := s.Decl.(*ast.GenDecl); ok {
+			for _, spec := range gen.Specs {
+				if valSpec, ok := spec.(*ast.ValueSpec); ok {
+					for i, name := range valSpec.Names {
+						if isSameTarget(pass, name, targetObj, varName) && i < len(valSpec.Values) {
+							inState = evalConfigRHS(valSpec.Values[i])
+						}
+					}
 				}
 			}
-		case *ast.ExprStmt:
-			if call, ok := s.X.(*ast.CallExpr); ok {
-				checkHelperCall(call, configVarName, &status)
+		}
+		return inState, false
+	}
+
+	return inState, false
+}
+
+func evalBlockStmtFlow(pass *analysis.Pass, file *ast.File, block *ast.BlockStmt, call *ast.CallExpr, targetObj types.Object, varName string, inState ConfigStatus) (ConfigStatus, bool) {
+	if block == nil {
+		return inState, false
+	}
+	currState := inState
+	for _, stmt := range block.List {
+		var reached bool
+		currState, reached = evalStmtFlow(pass, file, stmt, call, targetObj, varName, currState)
+		if reached {
+			return currState, true
+		}
+	}
+	return currState, false
+}
+
+func evalAssignStmt(pass *analysis.Pass, file *ast.File, assign *ast.AssignStmt, targetObj types.Object, varName string, status *ConfigStatus) {
+	for i, lhs := range assign.Lhs {
+		if !isSameTarget(pass, lhs, targetObj, varName) {
+			continue
+		}
+		var rhsExpr ast.Expr
+		if i < len(assign.Rhs) {
+			rhsExpr = assign.Rhs[i]
+		}
+
+		if _, isIdent := lhs.(*ast.Ident); isIdent {
+			if rhsExpr != nil {
+				*status = evalConfigRHS(rhsExpr)
 			}
-		case *ast.IfStmt:
-			if s.Body != nil {
-				mergeStatus(&status, EvalBlockAssignments(s.Body, configVarName))
-			}
+			continue
+		}
+
+		lhsStr := exprToString(lhs)
+		if strings.HasSuffix(lhsStr, ".MaxConnIdleTime") {
+			status.HasMaxConnIdleTime = true
+		}
+		if strings.HasSuffix(lhsStr, ".MaxConnLifetime") {
+			status.HasMaxConnLifetime = true
+		}
+
+		rhsVal := extractLitString(rhsExpr)
+
+		if idxExpr, ok := lhs.(*ast.IndexExpr); ok {
+			paramKey := extractLitString(idxExpr.Index)
+			applyRuntimeParamMutation(paramKey, rhsVal, status)
+		} else if strings.Contains(lhsStr, "statement_timeout") {
+			applyRuntimeParamMutation("statement_timeout", rhsVal, status)
+		} else if strings.Contains(lhsStr, "lock_timeout") {
+			applyRuntimeParamMutation("lock_timeout", rhsVal, status)
+		} else if strings.Contains(lhsStr, "idle_in_transaction") {
+			applyRuntimeParamMutation("idle_in_transaction_session_timeout", rhsVal, status)
+		}
+
+		if rhsExpr != nil {
+			evalRuntimeParamsExpr(rhsExpr, status)
 		}
 	}
 
+	for _, rhsExpr := range assign.Rhs {
+		if call, ok := rhsExpr.(*ast.CallExpr); ok {
+			checkHelperCall(call, pass, targetObj, varName, status)
+		}
+	}
+}
+
+func evalConfigRHS(expr ast.Expr) ConfigStatus {
+	var status ConfigStatus
+	switch e := expr.(type) {
+	case *ast.CompositeLit:
+		return EvalCompositeLit(e)
+	case *ast.UnaryExpr:
+		if lit, ok := e.X.(*ast.CompositeLit); ok {
+			return EvalCompositeLit(lit)
+		}
+	case *ast.CallExpr:
+		return evalConfigCallExpr(e)
+	case *ast.ParenExpr:
+		return evalConfigRHS(e.X)
+	}
 	return status
 }
 
-func checkAssignment(lhs ast.Expr, idx int, rhs []ast.Expr, varName string, status *ConfigStatus) {
-	lhsStr := exprToString(lhs)
-	if !strings.HasPrefix(lhsStr, varName+".") && !strings.HasPrefix(lhsStr, varName+"[") {
-		return
-	}
-
-	if strings.Contains(lhsStr, "MaxConnIdleTime") {
-		status.HasMaxConnIdleTime = true
-	}
-	if strings.Contains(lhsStr, "MaxConnLifetime") {
-		status.HasMaxConnLifetime = true
-	}
-
-	var rhsVal string
-	if idx < len(rhs) {
-		rhsVal = extractLitString(rhs[idx])
-	}
-
-	if strings.Contains(lhsStr, "statement_timeout") {
-		status.HasStatementTimeout = true
-		if isZeroValue(rhsVal) {
-			status.HasZeroTimeout = true
-			status.ZeroTimeoutParam = "statement_timeout"
-		}
-	}
-	if strings.Contains(lhsStr, "lock_timeout") {
-		status.HasLockTimeout = true
-		if isZeroValue(rhsVal) {
-			status.HasZeroTimeout = true
-			status.ZeroTimeoutParam = "lock_timeout"
-		}
-	}
-	if strings.Contains(lhsStr, "idle_in_transaction") {
-		status.HasIdleInTransaction = true
-		if isZeroValue(rhsVal) {
-			status.HasZeroTimeout = true
-			status.ZeroTimeoutParam = "idle_in_transaction_session_timeout"
-		}
-	}
-
-	if idx < len(rhs) {
-		evalRuntimeParamsExpr(rhs[idx], status)
-	}
-}
-
-func checkHelperCall(call *ast.CallExpr, varName string, status *ConfigStatus) {
+func checkHelperCall(call *ast.CallExpr, pass *analysis.Pass, targetObj types.Object, varName string, status *ConfigStatus) {
 	for _, arg := range call.Args {
-		if id, ok := arg.(*ast.Ident); ok && id.Name == varName {
+		if isSameTarget(pass, arg, targetObj, varName) {
 			fnName := exprToString(call.Fun)
 			if strings.Contains(fnName, "configurePostgresPool") || strings.Contains(fnName, "Configure") {
 				status.HasStatementTimeout = true
@@ -194,51 +229,8 @@ func checkHelperCall(call *ast.CallExpr, varName string, status *ConfigStatus) {
 			}
 			if strings.Contains(fnName, "setRuntimeParam") && len(call.Args) >= 2 {
 				paramName := extractLitString(call.Args[1])
-				switch paramName {
-				case "statement_timeout":
-					status.HasStatementTimeout = true
-				case "lock_timeout":
-					status.HasLockTimeout = true
-				case "idle_in_transaction_session_timeout", "idle_in_transaction":
-					status.HasIdleInTransaction = true
-				}
+				applyRuntimeParamMutation(paramName, "1000", status)
 			}
 		}
-	}
-}
-
-func mergeStatus(dst *ConfigStatus, src ConfigStatus) {
-	dst.HasStatementTimeout = dst.HasStatementTimeout || src.HasStatementTimeout
-	dst.HasLockTimeout = dst.HasLockTimeout || src.HasLockTimeout
-	dst.HasIdleInTransaction = dst.HasIdleInTransaction || src.HasIdleInTransaction
-	dst.HasMaxConnIdleTime = dst.HasMaxConnIdleTime || src.HasMaxConnIdleTime
-	dst.HasMaxConnLifetime = dst.HasMaxConnLifetime || src.HasMaxConnLifetime
-	if src.HasZeroTimeout {
-		dst.HasZeroTimeout = true
-		dst.ZeroTimeoutParam = src.ZeroTimeoutParam
-	}
-}
-
-func extractLitString(expr ast.Expr) string {
-	if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-		return strings.Trim(lit.Value, "`\"")
-	}
-	return ""
-}
-
-func exprToString(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.SelectorExpr:
-		return exprToString(e.X) + "." + e.Sel.Name
-	case *ast.IndexExpr:
-		idxStr := ""
-		if lit, ok := e.Index.(*ast.BasicLit); ok {
-			idxStr = strings.Trim(lit.Value, "`\"")
-		}
-		return exprToString(e.X) + "[" + idxStr + "]"
-	default:
-		return ""
 	}
 }
