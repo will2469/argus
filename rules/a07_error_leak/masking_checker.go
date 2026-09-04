@@ -38,6 +38,17 @@ func IsCompileTimeString(pass *analysis.Pass, expr ast.Expr) bool {
 		if e.Obj != nil && e.Obj.Kind == ast.Con {
 			return true
 		}
+	case *ast.SelectorExpr:
+		if pass != nil && pass.TypesInfo != nil {
+			if obj := pass.TypesInfo.Uses[e.Sel]; obj != nil {
+				if _, isConst := obj.(*types.Const); isConst {
+					return true
+				}
+			}
+		}
+		if e.Sel != nil && e.Sel.Obj != nil && e.Sel.Obj.Kind == ast.Con {
+			return true
+		}
 	}
 
 	return false

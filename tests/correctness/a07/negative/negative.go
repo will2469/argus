@@ -197,3 +197,11 @@ func N18_ShadowedPackageName(w http.ResponseWriter) {
 	http.Error(w, err.Error(), http.StatusBadRequest)
 }
 
+// N19: Non-Error Parameters — string or byte slice parameters passed to factory or response writer.
+func N19_NonErrorParameters(w http.ResponseWriter, expected string, payload []byte, code string, msg string) {
+	NewNotFound(code, "Not found: "+expected)
+	_, _ = w.Write(payload)
+	fmt.Fprintf(w, `{"code":"%s","message":"%s"}`, code, msg)
+}
+
+
