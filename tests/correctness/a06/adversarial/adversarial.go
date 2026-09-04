@@ -2,12 +2,13 @@ package adversarial
 
 import (
 	"context"
+	"database/sql"
 )
 
 // DBExecutor represents a database query engine interface.
 type DBExecutor interface {
-	Exec(ctx context.Context, sql string, args ...any) (any, error)
-	Query(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
+	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
 }
 
 // A1: Branch — conditional DDL execution inside branch.
@@ -97,16 +98,14 @@ func A9_BranchReassignment(ctx context.Context, db DBExecutor, cond bool) error 
 	return err
 }
 
-// A10: Non-DB Type Spoofing — Calculator type with Exec method should NOT be flagged as DB call.
-type Calculator struct{}
-
-func (c Calculator) Exec(ctx context.Context, q string) (any, error) {
-	return nil, nil
+// A10: Non-DB Type Spoofing — SearchEngine type with Query AND Exec methods should NOT be flagged as DB call.
+type SearchEngine interface {
+	Query(ctx context.Context, q string) (any, error)
+	Exec(ctx context.Context, q string) (any, error)
 }
 
-func A10_NonDBTypeSpoofing(ctx context.Context) error {
-	calc := Calculator{}
-	_, err := calc.Exec(ctx, "CREATE TABLE spoofed (id int)")
+func A10_NonDBTypeSpoofing(ctx context.Context, engine SearchEngine) error {
+	_, err := engine.Exec(ctx, "CREATE TABLE spoofed (id int)")
 	return err
 }
 
@@ -124,3 +123,14 @@ func A11_CustomBuilderTypeSpoofing(ctx context.Context, db DBExecutor) error {
 	return err
 }
 
+// A12: Unconventional Receiver Name — receiver named client should still be proven via DBExecutor type.
+func A12_UnconventionalReceiverName(ctx context.Context, client DBExecutor) error {
+	_, err := client.Exec(ctx, "CREATE TABLE custom_receiver (id int)")
+	return err
+}
+
+// A13: Fake DB Receiver Name — receiver named db but with non-DB SearchEngine type must NOT be flagged.
+func A13_FakeDBReceiverName(ctx context.Context, db SearchEngine) error {
+	_, err := db.Exec(ctx, "CREATE TABLE fake_db (id int)")
+	return err
+}

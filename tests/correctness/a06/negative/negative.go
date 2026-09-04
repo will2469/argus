@@ -2,13 +2,14 @@ package negative
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
 // DBExecutor represents a standard database interface for queries.
 type DBExecutor interface {
-	Exec(ctx context.Context, sql string, args ...any) (any, error)
-	Query(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
+	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
 }
 
 // N1: Obvious Safe — standard DML SELECT query.
@@ -90,3 +91,13 @@ func N10_UnrelatedWriteString(ctx context.Context, db DBExecutor) error {
 	return err
 }
 
+// N11: Non-DB Querier — non-database client with Query & Exec methods returning non-driver types.
+type SearchEngine interface {
+	Query(ctx context.Context, q string) (any, error)
+	Exec(ctx context.Context, q string) (int, error)
+}
+
+func N11_NonDBQuerier(ctx context.Context, engine SearchEngine) error {
+	_, err := engine.Exec(ctx, "CREATE TABLE index_data (id int)")
+	return err
+}

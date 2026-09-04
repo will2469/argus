@@ -87,9 +87,12 @@ func TestMatchDDLCommand(t *testing.T) {
 
 func TestDDLLatticeJoin_Branching(t *testing.T) {
 	src := `package test
-import "context"
-type DB struct{}
-func (DB) Exec(ctx context.Context, query string) (any, error) { return nil, nil }
+import (
+	"context"
+	"database/sql"
+)
+type DB struct{ *sql.DB }
+func (DB) Exec(ctx context.Context, query string) (sql.Result, error) { return nil, nil }
 
 func BranchDivergence(ctx context.Context, db DB, cond bool) {
 	var query string
@@ -118,9 +121,12 @@ func BranchDivergence(ctx context.Context, db DB, cond bool) {
 
 func TestDDLTracker_UnrelatedWriteString(t *testing.T) {
 	src := `package test
-import "context"
-type DB struct{}
-func (DB) Exec(ctx context.Context, query string) (any, error) { return nil, nil }
+import (
+	"context"
+	"database/sql"
+)
+type DB struct{ *sql.DB }
+func (DB) Exec(ctx context.Context, query string) (sql.Result, error) { return nil, nil }
 
 type Calculator struct{}
 func (c *Calculator) WriteString(s string) {}

@@ -29,21 +29,19 @@ func parseAndInspect(t *testing.T, relPath string) ([]a06_runtime_ddl.Issue, *to
 	return issues, fset
 }
 
-
-
 func TestA06_PositiveCorpus(t *testing.T) {
 	issues, fset := parseAndInspect(t, "positive/positive.go")
 
 	t.Logf("=== Positive Corpus Results (%d issues found) ===", len(issues))
 	expectedLines := map[int]string{
-		17: "P1_Obvious",
-		24: "P2_Indirect",
-		34: "P3_Helper",
-		40: "P4_Nested",
-		47: "P5_Alias",
-		54: "P6_DynamicConcat",
-		60: "P7_InlineConcat",
-		69: "P8_StringBuilder",
+		18: "P1_Obvious",
+		25: "P2_Indirect",
+		35: "P3_Helper",
+		41: "P4_Nested",
+		48: "P5_Alias",
+		55: "P6_DynamicConcat",
+		61: "P7_InlineConcat",
+		70: "P8_StringBuilder",
 	}
 
 	foundLines := make(map[int]bool)
@@ -95,18 +93,20 @@ func TestA06_AdversarialCorpus(t *testing.T) {
 		mustDetect bool
 		note       string
 	}{
-		{"A1_Branch", 16, true, "Direct DB call"},
-		{"A2_Reassignment", 27, true, "Direct DB call"},
-		{"A3_Alias", 35, true, "Direct DB call"},
-		{"A4_Wrapper", 45, false, "Requires type info for interface detection"},
-		{"A5_NestedFunction", 52, true, "Direct DB call"},
-		{"A6_Generic", 64, false, "Requires type info for interface detection"},
-		{"A7_Interface", 71, false, "Requires type info for interface detection"},
-		{"A8_ShadowedInner", 82, true, "Direct DB call"},
-		{"A8_ShadowedOuter", 86, false, "Safe SELECT query"},
-		{"A9_BranchReassignment", 96, true, "Direct DB call"},
-		{"A10_NonDBTypeSpoofing", 107, false, "No DB-like interface (fail-closed)"},
-		{"A11_CustomBuilderTypeSpoofing", 122, false, "No DB-like interface (fail-closed)"},
+		{"A1_Branch", 17, true, "Direct DB call"},
+		{"A2_Reassignment", 28, true, "Direct DB call"},
+		{"A3_Alias", 36, true, "Direct DB call"},
+		{"A4_Wrapper", 46, true, "Repository struct wrapping DB"},
+		{"A5_NestedFunction", 53, true, "Closure wrapping DB"},
+		{"A6_Generic", 65, true, "Generic struct wrapping DB"},
+		{"A7_Interface", 72, true, "Type asserted interface"},
+		{"A8_ShadowedInner", 83, true, "Direct DB call"},
+		{"A8_ShadowedOuter", 87, false, "Safe SELECT query"},
+		{"A9_BranchReassignment", 97, true, "Direct DB call"},
+		{"A10_NonDBTypeSpoofing", 108, false, "Non-DB interface with Query & Exec methods"},
+		{"A11_CustomBuilderTypeSpoofing", 122, false, "Non-builder type with safe string"},
+		{"A12_UnconventionalReceiverName", 128, true, "Receiver named client with proven DBExecutor type"},
+		{"A13_FakeDBReceiverName", 134, false, "Receiver named db but with non-DB SearchEngine type"},
 	}
 
 	for _, a := range assertions {

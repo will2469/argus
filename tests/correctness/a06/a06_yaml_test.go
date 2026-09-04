@@ -71,13 +71,18 @@ rules:
 		t.Fatalf("failed to write .argus.yaml: %v", err)
 	}
 
-	// Use known DB receiver name to ensure detection in standalone mode
 	goSrc := `package testpkg
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
 
-func KnownDBReceiverQuery(ctx context.Context, db interface{}) error {
-	_, err := db.(interface{ Exec(context.Context, string, ...any) (any, error) }).Exec(ctx, "TRUNCATE TABLE logs")
+type DB struct{ *sql.DB }
+func (DB) Exec(ctx context.Context, sql string, args ...any) (sql.Result, error) { return nil, nil }
+
+func Run(ctx context.Context, db DB) error {
+	_, err := db.Exec(ctx, "TRUNCATE TABLE logs")
 	return err
 }
 `
@@ -94,7 +99,13 @@ func KnownDBReceiverQuery(ctx context.Context, db interface{}) error {
 		t.Fatalf("RunAuditWithConfig failed: %v", err)
 	}
 
-	// Just verify the rule doesn't crash when enabled via YAML
-	// Violation count may vary due to fail-closed behavior
-	t.Logf("A06 enabled via YAML, audit completed successfully with %d total issues", len(res.Issues))
+	foundCount := 0
+	for _, issue := range res.Issues {
+		if issue.Rule == "RUNTIME_DDL" || issue.Rule == "RUNTIME_DDL_EXECUTION" || issue.Rule == "ARGUS-A06" {
+			foundCount++
+		}
+	}
+	if foundCount != 1 {
+		t.Errorf("expected 1 A06 violation when enabled via YAML, got %d", foundCount)
+	}
 }

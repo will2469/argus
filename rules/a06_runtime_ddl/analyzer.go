@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -66,12 +65,7 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 				return true
 			}
 
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
-				return true
-			}
-
-			if !isDatabaseCall(pass, call, sel) {
+			if !isDatabaseCall(pass, file, fn, call) {
 				return true
 			}
 
@@ -112,90 +106,6 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 
 	return issues
 }
-
-func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr, sel *ast.SelectorExpr) bool {
-	if call == nil || sel == nil {
-		return false
-	}
-
-	if pass != nil && pass.TypesInfo != nil {
-		var recv types.Type
-		if selType, ok := pass.TypesInfo.Selections[sel]; ok && selType.Recv() != nil {
-			recv = selType.Recv()
-		} else if tv, ok := pass.TypesInfo.Types[sel.X]; ok && tv.Type != nil {
-			recv = tv.Type
-		}
-		if recv != nil {
-			// Fail-closed: only check if we can PROVE it's a DB type
-			if callsite.IsPgxOrSQLType(recv) {
-				return true
-			}
-			// Check if it's a database-like interface (has Query/Exec methods)
-			if hasDBMethodSet(recv) {
-				return true
-			}
-			// Cannot prove DB - be conservative (fail-closed)
-			return false
-		}
-	}
-
-	// Fallback to lexical analysis (standalone mode)
-	recvName := ""
-	if id, ok := sel.X.(*ast.Ident); ok {
-		recvName = strings.ToLower(id.Name)
-	}
-
-	// Fail-closed: only check if receiver name is KNOWN DB identifier
-	// Known DB identifiers are limited to common patterns
-	if isKnownDatabaseReceiverName(recvName) {
-		return true
-	}
-
-	// If we cannot prove it's a DB receiver, don't check (fail-closed)
-	return false
-}
-
-func hasDBMethodSet(t types.Type) bool {
-	var hasQuery, hasExec bool
-
-	checkFunc := func(fn *types.Func) {
-		name := fn.Name()
-		switch name {
-		case "Query", "QueryRow":
-			hasQuery = true
-		case "Exec", "ExecContext", "Begin", "BeginTx", "SendBatch":
-			hasExec = true
-		}
-	}
-
-	if named, ok := t.(*types.Named); ok {
-		for i := 0; i < named.NumMethods(); i++ {
-			checkFunc(named.Method(i))
-		}
-	}
-
-	if iface, ok := t.Underlying().(*types.Interface); ok {
-		for i := 0; i < iface.NumMethods(); i++ {
-			if method := iface.Method(i); method != nil {
-				checkFunc(method)
-			}
-		}
-	}
-
-	return hasQuery && hasExec
-}
-
-func isKnownDatabaseReceiverName(name string) bool {
-	// Only check known database receiver patterns (fail-closed whitelist)
-	switch name {
-	case "db", "database", "conn", "connection", "tx", "transaction",
-		"pool", "dbpool", "pgxpool", "sql", "sqldb":
-		return true
-	}
-	return false
-}
-
-
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	cfg := pass.ResultOf[config.Analyzer].(*config.Config)

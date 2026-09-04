@@ -19,11 +19,11 @@ func parseSnippet(t *testing.T, src string) (*token.FileSet, *ast.File) {
 
 func TestLattice_BranchingConditionalDDL(t *testing.T) {
 	src := `package main
-import "context"
+import "database/sql"
 type DB interface {
-	Exec(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx any, sql string, args ...any) (sql.Result, error)
 }
-func BranchTest(ctx context.Context, db DB, cond bool) {
+func BranchTest(ctx any, db DB, cond bool) {
 	query := "SELECT 1"
 	if cond {
 		query = "CREATE TABLE users (id int)"
@@ -43,11 +43,11 @@ func BranchTest(ctx context.Context, db DB, cond bool) {
 
 func TestLattice_BranchingConditionalClean(t *testing.T) {
 	src := `package main
-import "context"
+import "database/sql"
 type DB interface {
-	Exec(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx any, sql string, args ...any) (sql.Result, error)
 }
-func BranchTest(ctx context.Context, db DB, cond bool) {
+func BranchTest(ctx any, db DB, cond bool) {
 	query := "CREATE TABLE users (id int)"
 	if cond {
 		query = "SELECT 1"
@@ -67,11 +67,11 @@ func BranchTest(ctx context.Context, db DB, cond bool) {
 
 func TestLattice_SequentialCleanOverride(t *testing.T) {
 	src := `package main
-import "context"
+import "database/sql"
 type DB interface {
-	Exec(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx any, sql string, args ...any) (sql.Result, error)
 }
-func CleanOverride(ctx context.Context, db DB) {
+func CleanOverride(ctx any, db DB) {
 	query := "CREATE TABLE users (id int)"
 	query = "SELECT 1"
 	db.Exec(ctx, query)
@@ -85,11 +85,11 @@ func CleanOverride(ctx context.Context, db DB) {
 
 func TestLattice_VariableShadowing_InnerDDLOuterSafe(t *testing.T) {
 	src := `package main
-import "context"
+import "database/sql"
 type DB interface {
-	Exec(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx any, sql string, args ...any) (sql.Result, error)
 }
-func ShadowTest(ctx context.Context, db DB) {
+func ShadowTest(ctx any, db DB) {
 	query := "SELECT 1"
 	{
 		query := "CREATE TABLE users (id int)"
@@ -110,11 +110,11 @@ func ShadowTest(ctx context.Context, db DB) {
 
 func TestLattice_VariableShadowing_OuterDDLInnerSafe(t *testing.T) {
 	src := `package main
-import "context"
+import "database/sql"
 type DB interface {
-	Exec(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx any, sql string, args ...any) (sql.Result, error)
 }
-func ShadowTest(ctx context.Context, db DB) {
+func ShadowTest(ctx any, db DB) {
 	query := "CREATE TABLE users (id int)"
 	{
 		query := "SELECT 1"
@@ -135,14 +135,14 @@ func ShadowTest(ctx context.Context, db DB) {
 
 func TestLattice_SemanticBuilder_NonBuilderIgnored(t *testing.T) {
 	src := `package main
-import "context"
+import "database/sql"
 type CustomLogger struct{}
 func (c *CustomLogger) WriteString(s string) {}
 func (c *CustomLogger) Reset() {}
 type DB interface {
-	Exec(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx any, sql string, args ...any) (sql.Result, error)
 }
-func NonBuilderTest(ctx context.Context, db DB, logger *CustomLogger) {
+func NonBuilderTest(ctx any, db DB, logger *CustomLogger) {
 	logger.WriteString("CREATE TABLE evil (id int)")
 	db.Exec(ctx, "SELECT 1")
 }`

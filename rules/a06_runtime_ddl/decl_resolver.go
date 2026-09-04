@@ -74,4 +74,19 @@ func findDeclPos(id *ast.Ident, fn *ast.FuncDecl, file *ast.File) token.Pos {
 	return token.NoPos
 }
 
+func findEnclosingFunc(file *ast.File, pos token.Pos) *ast.FuncDecl {
+	if file == nil {
+		return nil
+	}
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			if fn.Pos() <= pos && pos <= fn.End() {
+				return fn
+			}
+		}
+	}
+	return nil
+}
+
+
 

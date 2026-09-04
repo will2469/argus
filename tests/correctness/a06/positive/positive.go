@@ -2,14 +2,15 @@ package positive
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 )
 
 // DBExecutor represents a standard database interface for queries.
 type DBExecutor interface {
-	Exec(ctx context.Context, sql string, args ...any) (any, error)
-	Query(ctx context.Context, sql string, args ...any) (any, error)
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
+	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
 }
 
 // P1: Obvious Violation — direct inline CREATE TABLE statement.
