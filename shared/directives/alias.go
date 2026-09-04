@@ -77,6 +77,11 @@ var (
 		"UNINDEXED-FK":                      "ARGUS-A29",
 		"TIMESTAMP-WITHOUT-TIMEZONE":        "ARGUS-A30",
 		"TIMESTAMPTZ":                       "ARGUS-A30",
+
+		// A31
+		"UNGUARDED-MUTATION-WITHOUT-AUDIT": "ARGUS-A31",
+		"MUTATION-AUDIT-TRAIL":             "ARGUS-A31",
+		"TX-AUDIT-TRAIL":                   "ARGUS-A31",
 	}
 )
 

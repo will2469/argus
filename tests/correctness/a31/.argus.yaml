@@ -1,0 +1,12 @@
+rules:
+  ARGUS-A31:
+    enabled: true
+    audit_methods:
+      - "SaveTx"
+      - "RecordTx"
+      - "LogAuditEvent"
+      - "Save"
+    exempt_tables:
+      - "sessions"
+      - "cache"
+      - "temporary_tokens"

@@ -34,6 +34,7 @@ import (
 	"github.com/will2469/argus/rules/a28_constraint_lock"
 	"github.com/will2469/argus/rules/a29_unindexed_fk"
 	"github.com/will2469/argus/rules/a30_timestamptz"
+	"github.com/will2469/argus/rules/a31_mutation_audit_trail"
 )
 
 // AllAnalyzers returns all currently registered and active analyzers.
@@ -68,4 +69,5 @@ var AllAnalyzers = []*analysis.Analyzer{
 	a28_constraint_lock.Analyzer,
 	a29_unindexed_fk.Analyzer,
 	a30_timestamptz.Analyzer,
+	a31_mutation_audit_trail.Analyzer,
 }

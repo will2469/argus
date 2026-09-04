@@ -86,12 +86,12 @@ Argus ships with a built-in [Model Context Protocol](https://modelcontextprotoco
 
 **Exposed Tools:**
 
-| Tool | Description |
-|:-----|:------------|
-| `argus_scan` | Full audit of Go source files and SQL migrations against all 30 rules |
-| `argus_check_migration` | Instant safety check for raw SQL DDL/DML snippets |
-| `argus_explain_rule` | Retrieve documentation and fix patterns for any rule (A01–A30) |
-| `argus_report_issue` | Two-phase Human-in-the-Loop (HITL) reporter for false positives & feedback |
+| Tool                    | Description                                                                |
+| :---------------------- | :------------------------------------------------------------------------- |
+| `argus_scan`            | Full audit of Go source files and SQL migrations against all 30 rules      |
+| `argus_check_migration` | Instant safety check for raw SQL DDL/DML snippets                          |
+| `argus_explain_rule`    | Retrieve documentation and fix patterns for any rule (A01–A30)             |
+| `argus_report_issue`    | Two-phase Human-in-the-Loop (HITL) reporter for false positives & feedback |
 
 > 💡 The `argus_scan` tool description instructs AI models to **automatically invoke it** after writing or modifying database queries — no `.cursorrules` or prompt engineering needed.
 
@@ -114,42 +114,42 @@ export ARGUS_TELEMETRY=false
 
 ---
 
-## The 30 Argus Rules Matrix
+## The Argus Rules Matrix (A01–A31)
 
 > 📖 **Full Documentation:** Every rule is thoroughly documented in the [Argus Wiki](https://github.com/will2469/argus/wiki). Click on any rule code or identifier below to open its dedicated specification, failure modes, and code fix examples.
 
-| Rule | Identifier | Severity | Category | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| [`A01`](https://github.com/will2469/argus/wiki/ARGUS-A01) | [`UNSAFE_SQL_CONCATENATION`](https://github.com/will2469/argus/wiki/ARGUS-A01) | **CRITICAL** | Security (CWE-89) | Forbids raw string concatenation in queries; mandates `$1, $2` bind parameters. |
-| [`A02`](https://github.com/will2469/argus/wiki/ARGUS-A02) | [`MISSING_DEFER_CLOSE`](https://github.com/will2469/argus/wiki/ARGUS-A02) | **HIGH** | Reliability | Mandates `defer rows.Close()` immediately after query execution to prevent pool leaks. |
-| [`A03`](https://github.com/will2469/argus/wiki/ARGUS-A03) | [`UNBOUNDED_CONTEXT`](https://github.com/will2469/argus/wiki/ARGUS-A03) | **HIGH** | Resilience | Prohibits raw `context.Background()` or `context.TODO()` in query calls. |
-| [`A04`](https://github.com/will2469/argus/wiki/ARGUS-A04) | [`UNSAFE_ORDER_BY`](https://github.com/will2469/argus/wiki/ARGUS-A04) | **HIGH** | Security (CWE-89) | Dynamic `ORDER BY` / `GROUP BY` must be validated against compile-time static allowlists. |
-| [`A05`](https://github.com/will2469/argus/wiki/ARGUS-A05) | [`AUDIT_LOG_IMMUTABILITY`](https://github.com/will2469/argus/wiki/ARGUS-A05) | **CRITICAL** | Compliance | Prohibits `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, or `DROP` on append-only audit ledger tables. |
-| [`A06`](https://github.com/will2469/argus/wiki/ARGUS-A06) | [`RUNTIME_DDL`](https://github.com/will2469/argus/wiki/ARGUS-A06) | **CRITICAL** | Security | Blocks DDL execution in application runtime code; runtime roles must be DML-only. |
-| [`A07`](https://github.com/will2469/argus/wiki/ARGUS-A07) | [`ERROR_LEAK`](https://github.com/will2469/argus/wiki/ARGUS-A07) | **HIGH** | Privacy (CWE-200) | Forbids leaking raw database error messages or PII details to external clients. |
-| [`A08`](https://github.com/will2469/argus/wiki/ARGUS-A08) | [`TX_EXTERNAL_IO`](https://github.com/will2469/argus/wiki/ARGUS-A08) | **HIGH** | Performance | Forbids blocking network/disk I/O (HTTP, gRPC, disk) inside active database transactions. |
-| [`A09`](https://github.com/will2469/argus/wiki/ARGUS-A09) | [`ADVISORY_LOCK`](https://github.com/will2469/argus/wiki/ARGUS-A09) | **HIGH** | Concurrency | Mandates transaction-level advisory locks; forbids session locks in pooled connections. |
-| [`A10`](https://github.com/will2469/argus/wiki/ARGUS-A10) | [`ISOLATION_LEVEL`](https://github.com/will2469/argus/wiki/ARGUS-A10) | **HIGH** | Integrity | Critical financial/inventory mutations must declare explicit `Serializable` or `FOR UPDATE`. |
-| [`A11`](https://github.com/will2469/argus/wiki/ARGUS-A11) | [`DESTRUCTIVE_MIGRATION`](https://github.com/will2469/argus/wiki/ARGUS-A11) | **CRITICAL** | Zero-Downtime | Prohibits destructive DDL (`DROP COLUMN`, `RENAME`) in single releases without expand-contract. |
-| [`A12`](https://github.com/will2469/argus/wiki/ARGUS-A12) | [`TIMEOUT_CONFIG`](https://github.com/will2469/argus/wiki/ARGUS-A12) | **HIGH** | Availability | Mandates 4-tier timeout settings (`statement_timeout`, `lock_timeout`, idle timeouts). |
-| [`A13`](https://github.com/will2469/argus/wiki/ARGUS-A13) | [`MISSING_DOWN_MIGRATION`](https://github.com/will2469/argus/wiki/ARGUS-A13) | **HIGH** | Rollback Safety | Every `.up.sql` migration must have a non-empty, deterministic symmetric `.down.sql`. |
-| [`A14`](https://github.com/will2469/argus/wiki/ARGUS-A14) | [`FORBIDDEN_SELECT_STAR`](https://github.com/will2469/argus/wiki/ARGUS-A14) | **HIGH** | Performance | Prohibits wildcard `SELECT *`; mandates explicit column projection to avoid TOAST bloat. |
-| [`A15`](https://github.com/will2469/argus/wiki/ARGUS-A15) | [`FORBIDDEN_DDL_APP_ROLE_GRANT`](https://github.com/will2469/argus/wiki/ARGUS-A15) | **CRITICAL** | Security (CWE-250) | Prohibits granting DDL/ALL privileges or table ownership to application runtime roles. |
-| [`A16`](https://github.com/will2469/argus/wiki/ARGUS-A16) | [`MAX_CONNS_CONFIG`](https://github.com/will2469/argus/wiki/ARGUS-A16) | **HIGH** | Scalability | Enforces mathematically bounded `MaxConns` on connection pools to prevent process thrashing. |
-| [`A17`](https://github.com/will2469/argus/wiki/ARGUS-A17) | [`FORBIDDEN_QUERY_IN_LOOP`](https://github.com/will2469/argus/wiki/ARGUS-A17) | **HIGH** | Performance | Eliminates N+1 query patterns inside loops in favor of `WHERE id = ANY($1)` or `pgx.Batch`. |
-| [`A18`](https://github.com/will2469/argus/wiki/ARGUS-A18) | [`MISSING_ROWS_ERR_CHECK`](https://github.com/will2469/argus/wiki/ARGUS-A18) | **HIGH** | Integrity (CWE-391) | Mandates `rows.Err()` check after `rows.Next()` loops to catch silent network truncations. |
-| [`A19`](https://github.com/will2469/argus/wiki/ARGUS-A19) | [`UNBOUNDED_QUERY_LIMIT`](https://github.com/will2469/argus/wiki/ARGUS-A19) | **HIGH** | Resilience (CWE-400) | Queries on high-cardinality tables must have an explicit `LIMIT` or keyset pagination. |
-| [`A20`](https://github.com/will2469/argus/wiki/ARGUS-A20) | [`PARAM_LIMIT_65535`](https://github.com/will2469/argus/wiki/ARGUS-A20) | **HIGH** | Protocol Limits | Prevents exceeding PostgreSQL's 65,535 wire parameter ceiling; recommends `pgx.CopyFrom`. |
-| [`A21`](https://github.com/will2469/argus/wiki/ARGUS-A21) | [`UNBOUNDED_ROW_LOCK_BLOCKING`](https://github.com/will2469/argus/wiki/ARGUS-A21) | **HIGH** | Concurrency | Queue queries (`SELECT ... FOR UPDATE`) must use `SKIP LOCKED` or `NOWAIT`. |
-| [`A22`](https://github.com/will2469/argus/wiki/ARGUS-A22) | [`SERIALIZATION_FAILURE_RETRY`](https://github.com/will2469/argus/wiki/ARGUS-A22) | **HIGH** | Fault Tolerance | `Serializable` transactions must be wrapped in automated retry loops catching SQLSTATE `40001`. |
-| [`A23`](https://github.com/will2469/argus/wiki/ARGUS-A23) | [`TRANSACTION_TIMEOUT_CONFIG`](https://github.com/will2469/argus/wiki/ARGUS-A23) | **HIGH** | Modern PG17/18 | Enforces `transaction_timeout` cap on connection pools to prevent XID horizon freezing. |
-| [`A24`](https://github.com/will2469/argus/wiki/ARGUS-A24) | [`TENANT_ISOLATION_LEAK`](https://github.com/will2469/argus/wiki/ARGUS-A24) | **CRITICAL** | Multi-Tenancy | Mandates explicit tenant predicates (`WHERE tenant_id = $1`) or verified RLS context. |
-| [`A25`](https://github.com/will2469/argus/wiki/ARGUS-A25) | [`EXPENSIVE_CPU_IN_TRANSACTION`](https://github.com/will2469/argus/wiki/ARGUS-A25) | **HIGH** | Performance | Prohibits CPU-heavy tasks (`bcrypt`, `argon2`, RSA keygen, PDF rendering) inside transactions. |
-| [`A26`](https://github.com/will2469/argus/wiki/ARGUS-A26) | [`LIKE_WILDCARD_INJECTION`](https://github.com/will2469/argus/wiki/ARGUS-A26) | **HIGH** | Security (CWE-89) | Mandates escaping wildcard characters (`\`, `%`, `_`) on user input bound to `LIKE`/`ILIKE`. |
-| [`A27`](https://github.com/will2469/argus/wiki/ARGUS-A27) | [`NON_CONCURRENT_INDEX_CREATION`](https://github.com/will2469/argus/wiki/ARGUS-A27) | **CRITICAL** | Zero-Downtime | Indexes on existing tables must use `CREATE INDEX CONCURRENTLY` to avoid write lockouts. |
-| [`A28`](https://github.com/will2469/argus/wiki/ARGUS-A28) | [`TABLE_LOCKING_CONSTRAINT_ADDITION`](https://github.com/will2469/argus/wiki/ARGUS-A28) | **CRITICAL** | Zero-Downtime | FK and CHECK constraints must use 2-phase `NOT VALID` followed by `VALIDATE CONSTRAINT`. |
-| [`A29`](https://github.com/will2469/argus/wiki/ARGUS-A29) | [`UNINDEXED_FOREIGN_KEY`](https://github.com/will2469/argus/wiki/ARGUS-A29) | **HIGH** | Performance | Every foreign key on child tables must have a supporting B-tree index (anti-table scan). |
-| [`A30`](https://github.com/will2469/argus/wiki/ARGUS-A30) | [`TIMESTAMP_WITHOUT_TIMEZONE`](https://github.com/will2469/argus/wiki/ARGUS-A30) | **CRITICAL** | Temporal Hygiene | Prohibits bare `TIMESTAMP`; mandates `TIMESTAMPTZ` (UTC-normalized) for temporal determinism. |
+| Rule                                                      | Identifier                                                                              | Severity     | Category             | Description                                                                                      |
+| :-------------------------------------------------------- | :-------------------------------------------------------------------------------------- | :----------- | :------------------- | :----------------------------------------------------------------------------------------------- |
+| [`A01`](https://github.com/will2469/argus/wiki/ARGUS-A01) | [`UNSAFE_SQL_CONCATENATION`](https://github.com/will2469/argus/wiki/ARGUS-A01)          | **CRITICAL** | Security (CWE-89)    | Forbids raw string concatenation in queries; mandates `$1, $2` bind parameters.                  |
+| [`A02`](https://github.com/will2469/argus/wiki/ARGUS-A02) | [`MISSING_DEFER_CLOSE`](https://github.com/will2469/argus/wiki/ARGUS-A02)               | **HIGH**     | Reliability          | Mandates `defer rows.Close()` immediately after query execution to prevent pool leaks.           |
+| [`A03`](https://github.com/will2469/argus/wiki/ARGUS-A03) | [`UNBOUNDED_CONTEXT`](https://github.com/will2469/argus/wiki/ARGUS-A03)                 | **HIGH**     | Resilience           | Prohibits raw `context.Background()` or `context.TODO()` in query calls.                         |
+| [`A04`](https://github.com/will2469/argus/wiki/ARGUS-A04) | [`UNSAFE_ORDER_BY`](https://github.com/will2469/argus/wiki/ARGUS-A04)                   | **HIGH**     | Security (CWE-89)    | Dynamic `ORDER BY` / `GROUP BY` must be validated against compile-time static allowlists.        |
+| [`A05`](https://github.com/will2469/argus/wiki/ARGUS-A05) | [`AUDIT_LOG_IMMUTABILITY`](https://github.com/will2469/argus/wiki/ARGUS-A05)            | **CRITICAL** | Compliance           | Prohibits `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, or `DROP` on append-only audit ledger tables. |
+| [`A06`](https://github.com/will2469/argus/wiki/ARGUS-A06) | [`RUNTIME_DDL`](https://github.com/will2469/argus/wiki/ARGUS-A06)                       | **CRITICAL** | Security             | Blocks DDL execution in application runtime code; runtime roles must be DML-only.                |
+| [`A07`](https://github.com/will2469/argus/wiki/ARGUS-A07) | [`ERROR_LEAK`](https://github.com/will2469/argus/wiki/ARGUS-A07)                        | **HIGH**     | Privacy (CWE-200)    | Forbids leaking raw database error messages or PII details to external clients.                  |
+| [`A08`](https://github.com/will2469/argus/wiki/ARGUS-A08) | [`TX_EXTERNAL_IO`](https://github.com/will2469/argus/wiki/ARGUS-A08)                    | **HIGH**     | Performance          | Forbids blocking network/disk I/O (HTTP, gRPC, disk) inside active database transactions.        |
+| [`A09`](https://github.com/will2469/argus/wiki/ARGUS-A09) | [`ADVISORY_LOCK`](https://github.com/will2469/argus/wiki/ARGUS-A09)                     | **HIGH**     | Concurrency          | Mandates transaction-level advisory locks; forbids session locks in pooled connections.          |
+| [`A10`](https://github.com/will2469/argus/wiki/ARGUS-A10) | [`ISOLATION_LEVEL`](https://github.com/will2469/argus/wiki/ARGUS-A10)                   | **HIGH**     | Integrity            | Critical financial/inventory mutations must declare explicit `Serializable` or `FOR UPDATE`.     |
+| [`A11`](https://github.com/will2469/argus/wiki/ARGUS-A11) | [`DESTRUCTIVE_MIGRATION`](https://github.com/will2469/argus/wiki/ARGUS-A11)             | **CRITICAL** | Zero-Downtime        | Prohibits destructive DDL (`DROP COLUMN`, `RENAME`) in single releases without expand-contract.  |
+| [`A12`](https://github.com/will2469/argus/wiki/ARGUS-A12) | [`TIMEOUT_CONFIG`](https://github.com/will2469/argus/wiki/ARGUS-A12)                    | **HIGH**     | Availability         | Mandates 4-tier timeout settings (`statement_timeout`, `lock_timeout`, idle timeouts).           |
+| [`A13`](https://github.com/will2469/argus/wiki/ARGUS-A13) | [`MISSING_DOWN_MIGRATION`](https://github.com/will2469/argus/wiki/ARGUS-A13)            | **HIGH**     | Rollback Safety      | Every `.up.sql` migration must have a non-empty, deterministic symmetric `.down.sql`.            |
+| [`A14`](https://github.com/will2469/argus/wiki/ARGUS-A14) | [`FORBIDDEN_SELECT_STAR`](https://github.com/will2469/argus/wiki/ARGUS-A14)             | **HIGH**     | Performance          | Prohibits wildcard `SELECT *`; mandates explicit column projection to avoid TOAST bloat.         |
+| [`A15`](https://github.com/will2469/argus/wiki/ARGUS-A15) | [`FORBIDDEN_DDL_APP_ROLE_GRANT`](https://github.com/will2469/argus/wiki/ARGUS-A15)      | **CRITICAL** | Security (CWE-250)   | Prohibits granting DDL/ALL privileges or table ownership to application runtime roles.           |
+| [`A16`](https://github.com/will2469/argus/wiki/ARGUS-A16) | [`MAX_CONNS_CONFIG`](https://github.com/will2469/argus/wiki/ARGUS-A16)                  | **HIGH**     | Scalability          | Enforces mathematically bounded `MaxConns` on connection pools to prevent process thrashing.     |
+| [`A17`](https://github.com/will2469/argus/wiki/ARGUS-A17) | [`FORBIDDEN_QUERY_IN_LOOP`](https://github.com/will2469/argus/wiki/ARGUS-A17)           | **HIGH**     | Performance          | Eliminates N+1 query patterns inside loops in favor of `WHERE id = ANY($1)` or `pgx.Batch`.      |
+| [`A18`](https://github.com/will2469/argus/wiki/ARGUS-A18) | [`MISSING_ROWS_ERR_CHECK`](https://github.com/will2469/argus/wiki/ARGUS-A18)            | **HIGH**     | Integrity (CWE-391)  | Mandates `rows.Err()` check after `rows.Next()` loops to catch silent network truncations.       |
+| [`A19`](https://github.com/will2469/argus/wiki/ARGUS-A19) | [`UNBOUNDED_QUERY_LIMIT`](https://github.com/will2469/argus/wiki/ARGUS-A19)             | **HIGH**     | Resilience (CWE-400) | Queries on high-cardinality tables must have an explicit `LIMIT` or keyset pagination.           |
+| [`A20`](https://github.com/will2469/argus/wiki/ARGUS-A20) | [`PARAM_LIMIT_65535`](https://github.com/will2469/argus/wiki/ARGUS-A20)                 | **HIGH**     | Protocol Limits      | Prevents exceeding PostgreSQL's 65,535 wire parameter ceiling; recommends `pgx.CopyFrom`.        |
+| [`A21`](https://github.com/will2469/argus/wiki/ARGUS-A21) | [`UNBOUNDED_ROW_LOCK_BLOCKING`](https://github.com/will2469/argus/wiki/ARGUS-A21)       | **HIGH**     | Concurrency          | Queue queries (`SELECT ... FOR UPDATE`) must use `SKIP LOCKED` or `NOWAIT`.                      |
+| [`A22`](https://github.com/will2469/argus/wiki/ARGUS-A22) | [`SERIALIZATION_FAILURE_RETRY`](https://github.com/will2469/argus/wiki/ARGUS-A22)       | **HIGH**     | Fault Tolerance      | `Serializable` transactions must be wrapped in automated retry loops catching SQLSTATE `40001`.  |
+| [`A23`](https://github.com/will2469/argus/wiki/ARGUS-A23) | [`TRANSACTION_TIMEOUT_CONFIG`](https://github.com/will2469/argus/wiki/ARGUS-A23)        | **HIGH**     | Modern PG17/18       | Enforces `transaction_timeout` cap on connection pools to prevent XID horizon freezing.          |
+| [`A24`](https://github.com/will2469/argus/wiki/ARGUS-A24) | [`TENANT_ISOLATION_LEAK`](https://github.com/will2469/argus/wiki/ARGUS-A24)             | **CRITICAL** | Multi-Tenancy        | Mandates explicit tenant predicates (`WHERE tenant_id = $1`) or verified RLS context.            |
+| [`A25`](https://github.com/will2469/argus/wiki/ARGUS-A25) | [`EXPENSIVE_CPU_IN_TRANSACTION`](https://github.com/will2469/argus/wiki/ARGUS-A25)      | **HIGH**     | Performance          | Prohibits CPU-heavy tasks (`bcrypt`, `argon2`, RSA keygen, PDF rendering) inside transactions.   |
+| [`A26`](https://github.com/will2469/argus/wiki/ARGUS-A26) | [`LIKE_WILDCARD_INJECTION`](https://github.com/will2469/argus/wiki/ARGUS-A26)           | **HIGH**     | Security (CWE-89)    | Mandates escaping wildcard characters (`\`, `%`, `_`) on user input bound to `LIKE`/`ILIKE`.     |
+| [`A27`](https://github.com/will2469/argus/wiki/ARGUS-A27) | [`NON_CONCURRENT_INDEX_CREATION`](https://github.com/will2469/argus/wiki/ARGUS-A27)     | **CRITICAL** | Zero-Downtime        | Indexes on existing tables must use `CREATE INDEX CONCURRENTLY` to avoid write lockouts.         |
+| [`A28`](https://github.com/will2469/argus/wiki/ARGUS-A28) | [`TABLE_LOCKING_CONSTRAINT_ADDITION`](https://github.com/will2469/argus/wiki/ARGUS-A28) | **CRITICAL** | Zero-Downtime        | FK and CHECK constraints must use 2-phase `NOT VALID` followed by `VALIDATE CONSTRAINT`.         |
+| [`A29`](https://github.com/will2469/argus/wiki/ARGUS-A29) | [`UNINDEXED_FOREIGN_KEY`](https://github.com/will2469/argus/wiki/ARGUS-A29)             | **HIGH**     | Performance          | Every foreign key on child tables must have a supporting B-tree index (anti-table scan).         |
+| [`A30`](https://github.com/will2469/argus/wiki/ARGUS-A30) | [`TIMESTAMP_WITHOUT_TIMEZONE`](https://github.com/will2469/argus/wiki/ARGUS-A30)        | **CRITICAL** | Temporal Hygiene     | Prohibits bare `TIMESTAMP`; mandates `TIMESTAMPTZ` (UTC-normalized) for temporal determinism.    |
 
 ---
 

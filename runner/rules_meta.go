@@ -42,6 +42,7 @@ var CanonicalDescriptions = map[string]string{
 	"A28":  "TABLE_LOCKING_CONSTRAINT_ADDITION",
 	"A29":  "UNINDEXED_FOREIGN_KEY",
 	"A30":  "TIMESTAMP_WITHOUT_TIMEZONE",
+	"A31":  "UNGUARDED_MUTATION_WITHOUT_AUDIT",
 	"E001": "UNABLE_TO_ANALYZE_MIGRATION",
 }
 
@@ -98,6 +99,7 @@ var RuleAliases = map[string]string{
 	"TABLE_LOCKING_CONSTRAINT_ADDITION": "ARGUS-A28",
 	"UNINDEXED_FOREIGN_KEY":             "ARGUS-A29",
 	"TIMESTAMP_WITHOUT_TIMEZONE":        "ARGUS-A30",
+	"UNGUARDED_MUTATION_WITHOUT_AUDIT":  "ARGUS-A31",
 	"UNABLE_TO_ANALYZE_MIGRATION":       "ARGUS-E001",
 }
 
@@ -106,7 +108,7 @@ func CalculateCheckedComponents(id string, querySites, migrationFiles, totalFile
 	switch id {
 	case "A11", "A13", "A15", "A27", "A28", "A29", "A30", "E001":
 		return migrationFiles
-	case "A05", "A06", "A08", "A09", "A10", "A12", "A16", "A22", "A23", "A25":
+	case "A05", "A06", "A08", "A09", "A10", "A12", "A16", "A22", "A23", "A25", "A31":
 		return totalFiles
 	default:
 		if querySites > 0 {

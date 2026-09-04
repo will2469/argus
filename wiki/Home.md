@@ -61,6 +61,7 @@ All 30 inspection rules are categorized by architectural concerns:
 | [`ARGUS-A28`](ARGUS-A28.md) | `TABLE_LOCKING_CONSTRAINT_ADDITION` | **CRITICAL** | Prohibits exclusive table-locking constraint additions in migrations      | `enabled` |
 | [`ARGUS-A29`](ARGUS-A29.md) | `UNINDEXED_FOREIGN_KEY`             | **HIGH**     | Detects foreign keys lacking supporting indexes                           | `enabled` |
 | [`ARGUS-A30`](ARGUS-A30.md) | `TIMESTAMP_WITHOUT_TIMEZONE`        | **CRITICAL** | Enforces `TIMESTAMPTZ` instead of bare `TIMESTAMP` in column definitions  | `enabled` |
+| [`ARGUS-A31`](ARGUS-A31.md) | `UNGUARDED_MUTATION_WITHOUT_AUDIT`  | **HIGH**     | Enforces audit trail logging for database mutations in transactions       | `opt-in`  |
 
 ---
 

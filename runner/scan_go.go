@@ -37,6 +37,7 @@ import (
 	"github.com/will2469/argus/rules/a24_tenant_leak"
 	"github.com/will2469/argus/rules/a25_expensive_cpu"
 	"github.com/will2469/argus/rules/a26_like_sanitize"
+	"github.com/will2469/argus/rules/a31_mutation_audit_trail"
 	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/directives"
@@ -486,5 +487,26 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 				Category: "performance",
 			})
 		})
+	}
+
+	// 25. ARGUS-A31: Unguarded database mutation without audit trail
+	if isRuleActive(appCfg, a31_mutation_audit_trail.RuleCode) {
+		var auditMethods []string
+		var exemptTables []string
+		if appCfg != nil {
+			auditMethods = appCfg.GetStringSlice(a31_mutation_audit_trail.RuleCode, "audit_methods", []string{"SaveTx", "RecordTx", "LogAuditEvent", "Save"})
+			exemptTables = appCfg.GetStringSlice(a31_mutation_audit_trail.RuleCode, "exempt_tables", []string{"sessions", "cache", "temporary_tokens"})
+		}
+		a31Issues := a31_mutation_audit_trail.InspectFile(pass, fset, node, dm, auditMethods, exemptTables)
+		for _, issue := range a31Issues {
+			pos := fset.Position(issue.Pos)
+			tracker.AddIssue(Issue{
+				File:     relPath,
+				Line:     pos.Line,
+				Rule:     "UNGUARDED_MUTATION_WITHOUT_AUDIT",
+				Message:  issue.Message,
+				Category: "security",
+			})
+		}
 	}
 }

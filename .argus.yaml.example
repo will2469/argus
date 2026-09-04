@@ -124,3 +124,14 @@ rules:
     enabled: true
   ARGUS-A30:
     enabled: true
+  ARGUS-A31:
+    enabled: false # opt-in rule for compliance (SOC 2, ISO 27001)
+    audit_methods:
+      - "SaveTx"
+      - "RecordTx"
+      - "LogAuditEvent"
+      - "Save"
+    exempt_tables:
+      - "sessions"
+      - "cache"
+      - "temporary_tokens"

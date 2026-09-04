@@ -68,6 +68,15 @@ func DefaultConfig() *Config {
 		}
 	}
 
+	// ARGUS-A31 is an opt-in compliance rule (disabled by default)
+	cfg.Rules["ARGUS-A31"] = RuleConfig{
+		Enabled: false,
+		Options: map[string]interface{}{
+			"audit_methods": []string{"SaveTx", "RecordTx", "LogAuditEvent", "Save"},
+			"exempt_tables": []string{"sessions", "cache", "temporary_tokens"},
+		},
+	}
+
 	return cfg
 }
 
