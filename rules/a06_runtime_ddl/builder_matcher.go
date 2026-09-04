@@ -4,7 +4,7 @@ package a06_runtime_ddl
 
 import (
 	"go/ast"
-	"strings"
+	"go/token"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -24,7 +24,7 @@ func isSemanticBuilderCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl
 		return "", nil, false
 	}
 
-	// 1. Pass mode with types.Info
+	// 1. Pass mode with types.Info (exact type verification)
 	if pass != nil && pass.TypesInfo != nil {
 		if selType, okSel := pass.TypesInfo.Selections[sel]; okSel {
 			if isStringBuilderType(selType.Recv()) {
@@ -43,7 +43,7 @@ func isSemanticBuilderCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl
 		}
 	}
 
-	// 2. Standalone mode (pass == nil)
+	// 2. Standalone mode (pass == nil) - exact AST type verification only
 	if isDeclaredAsBuilder(file, fn, targetIdent) {
 		return sel.Sel.Name, targetIdent, true
 	}
@@ -67,6 +67,9 @@ func isDeclaredAsBuilder(file *ast.File, fn *ast.FuncDecl, id *ast.Ident) bool {
 	if id == nil {
 		return false
 	}
+
+	// Fail-closed: only accept EXACT type matches, not heuristic name patterns
+	// We only check for proven *strings.Builder or *bytes.Buffer declarations
 
 	if fn != nil && fn.Body != nil {
 		blocks := getEnclosingBlocks(fn.Body, id.Pos())
@@ -128,8 +131,9 @@ func isDeclaredAsBuilder(file *ast.File, fn *ast.FuncDecl, id *ast.Ident) bool {
 		}
 	}
 
-	lower := strings.ToLower(id.Name)
-	return lower == "sb" || lower == "builder" || strings.HasSuffix(lower, "builder")
+	// Fail-closed: removed weak heuristic fallbacks (sb, builder, *builder suffix)
+	// Only accept proven *strings.Builder or *bytes.Buffer types
+	return false
 }
 
 func isBuilderTypeExpr(t ast.Expr) bool {
@@ -164,4 +168,21 @@ func isBuilderExprAST(expr ast.Expr) bool {
 		}
 	}
 	return false
+}
+
+func getEnclosingBlocks(root ast.Node, pos token.Pos) []*ast.BlockStmt {
+	if root == nil {
+		return nil
+	}
+	var blocks []*ast.BlockStmt
+	ast.Inspect(root, func(n ast.Node) bool {
+		if n == nil || n.Pos() > pos || n.End() < pos {
+			return false
+		}
+		if b, ok := n.(*ast.BlockStmt); ok {
+			blocks = append(blocks, b)
+		}
+		return true
+	})
+	return blocks
 }

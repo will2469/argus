@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -173,12 +172,9 @@ func isStringBuilderType(t types.Type) bool {
 		if pkg := named.Obj().Pkg(); pkg != nil {
 			p := pkg.Path()
 			n := named.Obj().Name()
-			if (p == "strings" && n == "Builder") || (p == "bytes" && n == "Buffer") {
-				return true
-			}
+			// Fail-closed: only accept EXACT package/type matches
+			return (p == "strings" && n == "Builder") || (p == "bytes" && n == "Buffer")
 		}
-		lower := strings.ToLower(named.Obj().Name())
-		return strings.Contains(lower, "builder") || strings.Contains(lower, "buffer")
 	}
 	return false
 }

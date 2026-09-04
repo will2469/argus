@@ -97,3 +97,30 @@ func A9_BranchReassignment(ctx context.Context, db DBExecutor, cond bool) error 
 	return err
 }
 
+// A10: Non-DB Type Spoofing — Calculator type with Exec method should NOT be flagged as DB call.
+type Calculator struct{}
+
+func (c Calculator) Exec(ctx context.Context, q string) (any, error) {
+	return nil, nil
+}
+
+func A10_NonDBTypeSpoofing(ctx context.Context) error {
+	calc := Calculator{}
+	_, err := calc.Exec(ctx, "CREATE TABLE spoofed (id int)")
+	return err
+}
+
+// A11: Custom Builder Type — SQLBuilder type with "builder" in name should NOT be treated as strings.Builder.
+type SQLBuilder struct{}
+
+func (s *SQLBuilder) String() string {
+	return "SELECT 1"
+}
+
+func A11_CustomBuilderTypeSpoofing(ctx context.Context, db DBExecutor) error {
+	sb := SQLBuilder{}
+	query := sb.String()
+	_, err := db.Exec(ctx, query)
+	return err
+}
+

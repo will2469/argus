@@ -74,19 +74,4 @@ func findDeclPos(id *ast.Ident, fn *ast.FuncDecl, file *ast.File) token.Pos {
 	return token.NoPos
 }
 
-func getEnclosingBlocks(root ast.Node, pos token.Pos) []*ast.BlockStmt {
-	if root == nil {
-		return nil
-	}
-	var blocks []*ast.BlockStmt
-	ast.Inspect(root, func(n ast.Node) bool {
-		if n == nil || n.Pos() > pos || n.End() < pos {
-			return false
-		}
-		if b, ok := n.(*ast.BlockStmt); ok {
-			blocks = append(blocks, b)
-		}
-		return true
-	})
-	return blocks
-}
+

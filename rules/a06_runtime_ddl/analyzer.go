@@ -126,39 +126,76 @@ func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr, sel *ast.SelectorEx
 			recv = tv.Type
 		}
 		if recv != nil {
+			// Fail-closed: only check if we can PROVE it's a DB type
 			if callsite.IsPgxOrSQLType(recv) {
 				return true
 			}
-			if isNonDatabaseReceiverName(strings.ToLower(recv.String())) {
-				return false
+			// Check if it's a database-like interface (has Query/Exec methods)
+			if hasDBMethodSet(recv) {
+				return true
 			}
+			// Cannot prove DB - be conservative (fail-closed)
+			return false
 		}
 	}
 
+	// Fallback to lexical analysis (standalone mode)
 	recvName := ""
 	if id, ok := sel.X.(*ast.Ident); ok {
 		recvName = strings.ToLower(id.Name)
 	}
 
-	if isNonDatabaseReceiverName(recvName) {
-		return false
+	// Fail-closed: only check if receiver name is KNOWN DB identifier
+	// Known DB identifiers are limited to common patterns
+	if isKnownDatabaseReceiverName(recvName) {
+		return true
 	}
 
-	return true
+	// If we cannot prove it's a DB receiver, don't check (fail-closed)
+	return false
 }
 
-func isNonDatabaseReceiverName(name string) bool {
-	switch {
-	case strings.Contains(name, "logger"), strings.Contains(name, "log"),
-		strings.Contains(name, "slog"), strings.Contains(name, "zap"),
-		strings.Contains(name, "http"), strings.Contains(name, "client"),
-		strings.Contains(name, "queue"), strings.Contains(name, "search"),
-		strings.Contains(name, "searchengine"), strings.Contains(name, "cmd"),
-		strings.Contains(name, "runner"), strings.Contains(name, "cache"):
+func hasDBMethodSet(t types.Type) bool {
+	var hasQuery, hasExec bool
+
+	checkFunc := func(fn *types.Func) {
+		name := fn.Name()
+		switch name {
+		case "Query", "QueryRow":
+			hasQuery = true
+		case "Exec", "ExecContext", "Begin", "BeginTx", "SendBatch":
+			hasExec = true
+		}
+	}
+
+	if named, ok := t.(*types.Named); ok {
+		for i := 0; i < named.NumMethods(); i++ {
+			checkFunc(named.Method(i))
+		}
+	}
+
+	if iface, ok := t.Underlying().(*types.Interface); ok {
+		for i := 0; i < iface.NumMethods(); i++ {
+			if method := iface.Method(i); method != nil {
+				checkFunc(method)
+			}
+		}
+	}
+
+	return hasQuery && hasExec
+}
+
+func isKnownDatabaseReceiverName(name string) bool {
+	// Only check known database receiver patterns (fail-closed whitelist)
+	switch name {
+	case "db", "database", "conn", "connection", "tx", "transaction",
+		"pool", "dbpool", "pgxpool", "sql", "sqldb":
 		return true
 	}
 	return false
 }
+
+
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	cfg := pass.ResultOf[config.Analyzer].(*config.Config)
