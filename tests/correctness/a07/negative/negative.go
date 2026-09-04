@@ -1,8 +1,10 @@
 package negative
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 )
@@ -64,4 +66,62 @@ func N5_StaticConstant(w http.ResponseWriter) {
 		Code:    "ERR_NOT_FOUND",
 	}
 	_ = json.NewEncoder(w).Encode(res)
+}
+
+func validateUser(name string) error {
+	if name == "" {
+		return errors.New("name is required")
+	}
+	return nil
+}
+
+// N6: Validation Error — non-database validation error message emitted to client.
+func N6_ValidationErrorMessage(w http.ResponseWriter) {
+	validationErr := validateUser("")
+	if validationErr != nil {
+		userFacingErr := validationErr.Error()
+		http.Error(w, userFacingErr, http.StatusBadRequest)
+	}
+}
+
+// N7: Local Buffer Write — writing error string to in-memory bytes.Buffer, not HTTP response.
+func N7_BufferWrite(err error) {
+	var buf bytes.Buffer
+	_, _ = buf.Write([]byte(err.Error()))
+}
+
+// N8: Local Buffer Fprintf — formatting error into memory buffer via fmt.Fprintf.
+func N8_BufferFprintf(err error) {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "internal log: %s", err.Error())
+}
+
+// N9: Local Buffer JSON Encode — encoding error into bytes.Buffer, not HTTP response.
+func N9_BufferJsonEncode(err error) {
+	var buf bytes.Buffer
+	_ = json.NewEncoder(&buf).Encode(err.Error())
+}
+
+// N10: JSON Decode Error — standard library decoder error emitted as client bad request.
+func N10_JSONDecodeError(w http.ResponseWriter, r *http.Request) {
+	var payload struct{ Name string }
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
+}
+
+// N11: Static Constant 404 — static constant string emitted to 404 response.
+func N11_StaticConstant_404(w http.ResponseWriter) {
+	http.Error(w, "resource not found", http.StatusNotFound)
+}
+
+type FactoryOption func()
+
+func WithCause(err error) FactoryOption { return func() {} }
+
+func NewNotFound(code string, msg string, opts ...FactoryOption) {}
+
+// N12: Masked Factory With Cause — static domain message with internal cause wrapping.
+func N12_MaskedFactoryWithCause(err error) {
+	NewNotFound("RESOURCE_NOT_FOUND", "Entity does not exist", WithCause(err))
 }

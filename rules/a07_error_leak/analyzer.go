@@ -59,10 +59,11 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			case *ast.SelectorExpr:
 				CheckPgErrorSensitiveFields(pass, fset, node, dm, &issues)
 			case *ast.CallExpr:
-				sink := InspectResponseSink(node)
+				CheckErrorFactoryCall(pass, fset, node, fn, dm, &issues)
+				sink := InspectResponseSink(pass, node, fn)
 				if sink.IsSink {
 					for _, arg := range sink.Args {
-						CheckLeakedErrorArg(pass, fset, arg, node.Pos(), fn.Body, dm, &issues)
+						CheckLeakedErrorArg(pass, fset, arg, node.Pos(), fn, dm, &issues)
 					}
 				}
 			}

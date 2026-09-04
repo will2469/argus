@@ -3,6 +3,7 @@ package positive
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // DBExecutor represents a standard database interface for queries.
@@ -44,6 +45,28 @@ func P4_Nested(ctx context.Context, db DBExecutor) error {
 func P5_Alias(ctx context.Context, db DBExecutor, suffix string) error {
 	q := fmt.Sprintf("CREATE TABLE tenant_%s (id int)", suffix)
 	_, err := db.Exec(ctx, q) // want `\[ARGUS-A06\] runtime database query contains forbidden DDL statement \(CREATE TABLE\)`
+	return err
+}
+
+// P6: Dynamic Concat — dynamic concatenation assembling CREATE TABLE statement.
+func P6_DynamicConcat(ctx context.Context, db DBExecutor, objectType, table string) error {
+	query := "CREATE " + objectType + " TABLE " + table
+	_, err := db.Exec(ctx, query) // want `\[ARGUS-A06\] runtime database query contains forbidden DDL statement \(CREATE TABLE\)`
+	return err
+}
+
+// P7: Inline Concat — direct inline concatenation creating DROP TABLE.
+func P7_InlineConcat(ctx context.Context, db DBExecutor, table string) error {
+	_, err := db.Exec(ctx, "DROP TABLE "+table) // want `\[ARGUS-A06\] runtime database query contains forbidden DDL statement \(DROP\)`
+	return err
+}
+
+// P8: StringBuilder — assembling TRUNCATE query via strings.Builder.
+func P8_StringBuilder(ctx context.Context, db DBExecutor, table string) error {
+	var sb strings.Builder
+	sb.WriteString("TRUNCATE TABLE ")
+	sb.WriteString(table)
+	_, err := db.Exec(ctx, sb.String()) // want `\[ARGUS-A06\] runtime database query contains forbidden DDL statement \(TRUNCATE\)`
 	return err
 }
 

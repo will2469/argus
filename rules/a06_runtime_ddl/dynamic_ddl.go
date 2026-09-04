@@ -1,65 +1,40 @@
-// Package a06_runtime_ddl detects dynamic DDL patterns constructed via fmt.Sprintf or string operations.
+// Package a06_runtime_ddl detects dynamic DDL queries constructed via string concatenation,
+// formatting (fmt.Sprintf), and string builders in runtime Go code.
 package a06_runtime_ddl
 
 import (
 	"go/ast"
 	"go/token"
-	"regexp"
 	"strconv"
 	"strings"
 )
 
-var ddlKeywordsRegex = regexp.MustCompile(`(?i)\b(CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE|TRUNCATE(\s+TABLE)?|CREATE\s+INDEX|DROP\s+INDEX|CREATE\s+SCHEMA|DROP\s+SCHEMA|GRANT\s+|REVOKE\s+)\b`)
-
-// DetectDynamicDDL checks if an AST expression is a dynamic string construction
-// (e.g. fmt.Sprintf) that assembles a DDL query.
-func DetectDynamicDDL(expr ast.Expr, body *ast.BlockStmt) string {
+// EvalDynamicDDL evaluates an AST expression to determine if it constructs a DDL query.
+func EvalDynamicDDL(expr ast.Expr) string {
 	if expr == nil {
 		return ""
 	}
 
-	// 1. Direct call: fmt.Sprintf("CREATE TABLE ...", ...)
-	if call, ok := expr.(*ast.CallExpr); ok {
-		if op := checkSprintfCall(call); op != "" {
+	switch e := expr.(type) {
+	case *ast.CallExpr:
+		if op := evalSprintfDDL(e); op != "" {
 			return op
 		}
-	}
-
-	// 2. Variable identifier tracing
-	if ident, ok := expr.(*ast.Ident); ok && body != nil {
-		var foundOp string
-		ast.Inspect(body, func(n ast.Node) bool {
-			assign, ok := n.(*ast.AssignStmt)
-			if !ok {
-				return true
-			}
-			for i, lhs := range assign.Lhs {
-				id, ok := lhs.(*ast.Ident)
-				if ok && id.Name == ident.Name && i < len(assign.Rhs) {
-					rhs := assign.Rhs[i]
-					if call, ok := rhs.(*ast.CallExpr); ok {
-						if op := checkSprintfCall(call); op != "" {
-							foundOp = op
-						}
-					} else if lit, ok := rhs.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-						val, _ := strconv.Unquote(lit.Value)
-						if op := IsDDLKeyword(val); op != "" {
-							foundOp = op
-						}
-					}
-				}
-			}
-			return true
-		})
-		if foundOp != "" {
-			return foundOp
+		if op := evalSprintDDL(e); op != "" {
+			return op
 		}
+	case *ast.BinaryExpr:
+		if e.Op == token.ADD {
+			return evalConcatDDL(e)
+		}
+	case *ast.ParenExpr:
+		return EvalDynamicDDL(e.X)
 	}
 
 	return ""
 }
 
-func checkSprintfCall(call *ast.CallExpr) string {
+func evalSprintfDDL(call *ast.CallExpr) string {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != "Sprintf" {
 		return ""
@@ -79,33 +54,65 @@ func checkSprintfCall(call *ast.CallExpr) string {
 		formatVal = strings.Trim(formatLit.Value, "`\"")
 	}
 
-	return IsDDLKeyword(formatVal)
+	return MatchDDLCommand(formatVal)
 }
 
-// IsDDLKeyword checks if a string contains DDL keywords.
-func IsDDLKeyword(s string) string {
-	match := ddlKeywordsRegex.FindString(s)
-	if match == "" {
+func evalSprintDDL(call *ast.CallExpr) string {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Sprint" {
 		return ""
 	}
-	upper := strings.ToUpper(strings.TrimSpace(match))
-	if strings.HasPrefix(upper, "CREATE TABLE") {
-		return "CREATE TABLE"
+	id, ok := sel.X.(*ast.Ident)
+	if !ok || id.Name != "fmt" || len(call.Args) == 0 {
+		return ""
 	}
-	if strings.HasPrefix(upper, "DROP TABLE") {
-		return "DROP"
+
+	var parts []string
+	for _, arg := range call.Args {
+		if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			val, _ := strconv.Unquote(lit.Value)
+			parts = append(parts, val)
+		}
 	}
-	if strings.HasPrefix(upper, "ALTER TABLE") {
-		return "ALTER TABLE"
+	if len(parts) > 0 {
+		return MatchDDLCommand(strings.Join(parts, " "))
 	}
-	if strings.HasPrefix(upper, "TRUNCATE") {
-		return "TRUNCATE"
+	return ""
+}
+
+func evalConcatDDL(bin *ast.BinaryExpr) string {
+	parts := extractConcatLiterals(bin)
+	if len(parts) == 0 {
+		return ""
 	}
-	if strings.HasPrefix(upper, "CREATE INDEX") {
-		return "CREATE INDEX"
+	joined := strings.Join(parts, " ")
+	return MatchDDLCommand(joined)
+}
+
+func extractConcatLiterals(e ast.Expr) []string {
+	var parts []string
+	var walk func(expr ast.Expr)
+	walk = func(expr ast.Expr) {
+		switch x := expr.(type) {
+		case *ast.BasicLit:
+			if x.Kind == token.STRING {
+				val, err := strconv.Unquote(x.Value)
+				if err != nil {
+					val = strings.Trim(x.Value, "`\"")
+				}
+				if val != "" {
+					parts = append(parts, val)
+				}
+			}
+		case *ast.BinaryExpr:
+			if x.Op == token.ADD {
+				walk(x.X)
+				walk(x.Y)
+			}
+		case *ast.ParenExpr:
+			walk(x.X)
+		}
 	}
-	if strings.HasPrefix(upper, "GRANT") || strings.HasPrefix(upper, "REVOKE") {
-		return "GRANT/REVOKE"
-	}
-	return upper
+	walk(e)
+	return parts
 }

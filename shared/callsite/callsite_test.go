@@ -180,3 +180,55 @@ func (MyQuerier) Exec(sql string, args ...any) (any, error) { return nil, nil }
 		}
 	}
 }
+
+func TestExtractSQLArg_IsolatesQuery(t *testing.T) {
+	src := `package main
+
+import "context"
+
+func main() {
+	var ctx context.Context
+	db.Exec(ctx, "SELECT * FROM users WHERE id = $1", "CREATE TABLE fake")
+	db.Exec("DELETE FROM logs WHERE id = $1", "DROP TABLE fake")
+	db.ExecContext(ctx, "UPDATE accounts SET balance = $1", "ALTER TABLE fake")
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	var queries []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			sqlArg := ExtractSQLArg(call, nil)
+			if sqlArg != nil {
+				if s, ok := extractString(sqlArg); ok {
+					queries = append(queries, s)
+				}
+			}
+			if q, ok := ExtractQueryString(call); ok {
+				if q != queries[len(queries)-1] {
+					t.Errorf("ExtractQueryString mismatch: got %q, want %q", q, queries[len(queries)-1])
+				}
+			}
+		}
+		return true
+	})
+
+	expected := []string{
+		"SELECT * FROM users WHERE id = $1",
+		"DELETE FROM logs WHERE id = $1",
+		"UPDATE accounts SET balance = $1",
+	}
+
+	if len(queries) != len(expected) {
+		t.Fatalf("expected %d queries, got %d", len(expected), len(queries))
+	}
+	for i, want := range expected {
+		if queries[i] != want {
+			t.Errorf("query %d mismatch: got %q, want %q", i, queries[i], want)
+		}
+	}
+}

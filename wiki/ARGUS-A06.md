@@ -56,27 +56,29 @@ Creating temporary tables (`CREATE TEMP TABLE`) during request handling is frequ
 
 ## 3. How Argus Detects Violations (Static Analysis Architecture)
 
-Argus inspects all Go application call sites outside test files:
+Argus inspects all Go application database call sites outside test files:
 
 ```mermaid
 flowchart LR
-    Callsite["Extract DB Call<br/>(Query, Exec, SendBatch)"] --> Literal{"Is Query a Literal<br/>or Static String?"}
-    Literal -->|Yes| ASTCheck["ddl_nodes.go:<br/>pg_query_go AST Inspection"]
-    Literal -->|No| DynamicCheck["dynamic_ddl.go:<br/>fmt.Sprintf & Verbs Regex"]
+    Callsite["Extract DB Call<br/>(Query, Exec, Prepare)"] --> ArgExtract["ExtractSQLArg:<br/>Isolate Query Argument<br/>(Skip ctx & Data Params)"]
+    ArgExtract --> Literal{"Is SQL Query<br/>Compile-Time Literal?"}
+    Literal -->|Yes| ASTCheck["ddl_nodes.go:<br/>pg_query_go AST Parser"]
+    Literal -->|No| FlowCheck["ddl_tracker.go & dynamic_ddl.go:<br/>Flow-Sensitive Provenance<br/>(Concat +, Sprintf, Builders)"]
     ASTCheck --> NodeMatch{"Contains DDL Node?<br/>(CREATE, DROP, ALTER,<br/>TRUNCATE, GRANT, etc.)"}
-    DynamicCheck --> DynamicMatch{"Matches DDL Keywords?<br/>(CREATE TABLE, DROP, etc.)"}
+    FlowCheck --> DynamicMatch{"Constructs DDL Command?<br/>(CREATE TABLE, DROP, etc.)"}
     NodeMatch -->|Yes| Report["Report CRITICAL Violation:<br/>Forbidden Runtime DDL"]
     DynamicMatch -->|Yes| Report
     NodeMatch -->|No| Safe["Pass (Valid DML Operation)"]
     DynamicMatch -->|No| Safe
 ```
 
-1. **Comprehensive DDL Node Registry (`ddl_nodes.go`):** Traverses all statements in multi-statement queries (`SELECT 1; DROP TABLE users;`) and checks for all PostgreSQL DDL node types:
+1. **Deterministic SQL Argument Isolation (`shared/callsite/sql_arg.go`):** Identifies the exact SQL query argument while skipping `context.Context` parameters and completely ignoring bound data arguments (`$1`, `$2`), eliminating false positives when data parameter values contain DDL strings.
+2. **Comprehensive DDL Node Registry (`ddl_nodes.go`):** Traverses all statements in multi-statement queries (`SELECT 1; DROP TABLE users;`) and checks for all PostgreSQL DDL node types via `pg_query_go`:
    - `CreateStmt`, `DropStmt`, `AlterTableStmt`, `TruncateStmt`
    - `GrantStmt`, `GrantRoleStmt`, `IndexStmt`, `RenameStmt`, `CommentStmt`
-   - `CreateSeqStmt`, `AlterSeqStmt`, `CreateSchemaStmt`, `CreateExtensionStmt`, `DoStmt`
-2. **Dynamic DDL Matcher (`dynamic_ddl.go`):** Detects dynamic format calls (`fmt.Sprintf("CREATE TABLE %s ...")`) and traced variable assignments.
-3. **Exemptions:** Automatic exemption for `_test.go` files and migration runner packages.
+   - `CreateSeqStmt`, `AlterSeqStmt`, `CreateSchemaStmt`, `CreateExtensionStmt`, `ViewStmt`, `DoStmt`
+3. **Flow-Sensitive Provenance & Dynamic DDL Tracker (`ddl_tracker.go`, `command_matcher.go`, `dynamic_ddl.go`):** Tracks dynamic string concatenation (`"CREATE " + objectType + " TABLE " + table`), `fmt.Sprintf`, `strings.Builder`, clean overrides (`q = "SELECT 1"`), and lattice joins across branching statements (`if/else`).
+4. **Exemptions:** Automatic exemption for `_test.go` files and migration runner packages.
 
 ---
 

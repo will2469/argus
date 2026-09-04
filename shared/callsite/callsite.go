@@ -58,19 +58,14 @@ func GetCallMethodName(fun ast.Expr) string {
 	return ""
 }
 
-// ExtractQueryString extracts a compile-time SQL string literal from arguments of a DB call.
+// ExtractQueryString extracts a compile-time SQL string literal from the SQL argument of a DB call.
 // Resolves inline literals, concatenated strings ("a" + "b"), local variables, and constants.
 func ExtractQueryString(call *ast.CallExpr) (string, bool) {
-	if call == nil || len(call.Args) == 0 {
+	sqlArg := ExtractSQLArg(call, nil)
+	if sqlArg == nil {
 		return "", false
 	}
-
-	for _, arg := range call.Args {
-		if s, ok := extractString(arg); ok {
-			return s, true
-		}
-	}
-	return "", false
+	return extractString(sqlArg)
 }
 
 func extractString(expr ast.Expr) (string, bool) {

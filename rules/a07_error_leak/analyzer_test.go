@@ -25,6 +25,7 @@ func TestInspectResponseSink(t *testing.T) {
 	fset := token.NewFileSet()
 	src := `package main
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -34,6 +35,12 @@ func handler(w http.ResponseWriter) {
 	w.Write([]byte("err"))
 	json.NewEncoder(w).Encode("err")
 	fmt.Fprintf(w, "%s", "err")
+
+	// Non-sinks: local memory buffer operations
+	var buf bytes.Buffer
+	buf.Write([]byte("err"))
+	json.NewEncoder(&buf).Encode("err")
+	fmt.Fprintf(&buf, "%s", "err")
 }
 `
 	file, err := parser.ParseFile(fset, "test.go", src, 0)
@@ -41,10 +48,18 @@ func handler(w http.ResponseWriter) {
 		t.Fatal(err)
 	}
 
+	var fn *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if f, ok := decl.(*ast.FuncDecl); ok && f.Name.Name == "handler" {
+			fn = f
+			break
+		}
+	}
+
 	var sinksCount int
 	ast.Inspect(file, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
-			sink := InspectResponseSink(call)
+			sink := InspectResponseSink(nil, call, fn)
 			if sink.IsSink {
 				sinksCount++
 			}
@@ -53,6 +68,6 @@ func handler(w http.ResponseWriter) {
 	})
 
 	if sinksCount != 4 {
-		t.Errorf("expected 4 sinks, got %d", sinksCount)
+		t.Errorf("expected exactly 4 response sinks (w.*), got %d (buffers falsely identified as sinks)", sinksCount)
 	}
 }

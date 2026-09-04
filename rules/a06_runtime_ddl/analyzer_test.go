@@ -24,11 +24,16 @@ func TestDetectRuntimeDDL_Compliant(t *testing.T) {
 		"INSERT INTO orders (id, total) VALUES ($1, $2)",
 		"UPDATE accounts SET balance = balance - $1 WHERE id = $2",
 		"DELETE FROM tokens WHERE expires_at < NOW()",
+		"SELECT * FROM users WHERE name = 'CREATE TABLE'",
+		"INSERT INTO logs (msg) VALUES ('DROP TABLE foo')",
 	}
 
 	for _, q := range dmls {
 		if op := DetectDDLFromAST(q); op != "" {
 			t.Errorf("expected DML query to be compliant, but detected DDL op %q for query %q", op, q)
+		}
+		if op := MatchDDLCommand(q); op != "" {
+			t.Errorf("expected MatchDDLCommand to be empty for DML query %q, got %q", q, op)
 		}
 	}
 }
@@ -57,7 +62,7 @@ func TestDetectRuntimeDDL_Violations(t *testing.T) {
 	}
 }
 
-func TestDetectDynamicDDL(t *testing.T) {
+func TestMatchDDLCommand(t *testing.T) {
 	cases := []struct {
 		sql string
 		op  string
@@ -67,10 +72,13 @@ func TestDetectDynamicDDL(t *testing.T) {
 		{"ALTER TABLE foo ADD col int", "ALTER TABLE"},
 		{"TRUNCATE TABLE foo", "TRUNCATE"},
 		{"GRANT SELECT ON foo TO bar", "GRANT/REVOKE"},
+		{"CREATE TABLE", "CREATE TABLE"},
+		{"SELECT * FROM users WHERE note = 'CREATE TABLE'", ""},
+		{"UPDATE users SET status = 'DROP TABLE'", ""},
 	}
 	for _, tc := range cases {
-		if op := IsDDLKeyword(tc.sql); op != tc.op {
-			t.Errorf("expected %q, got %q", tc.op, op)
+		if op := MatchDDLCommand(tc.sql); op != tc.op {
+			t.Errorf("MatchDDLCommand(%q): expected %q, got %q", tc.sql, tc.op, op)
 		}
 	}
 }

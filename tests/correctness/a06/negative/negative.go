@@ -2,6 +2,7 @@ package negative
 
 import (
 	"context"
+	"fmt"
 )
 
 // DBExecutor represents a standard database interface for queries.
@@ -45,5 +46,33 @@ const CleanupQuery = "DELETE FROM users WHERE active = false"
 
 func N5_StaticConstant(ctx context.Context, db DBExecutor) error {
 	_, err := db.Exec(ctx, CleanupQuery)
+	return err
+}
+
+// N6: Parameter Data Value — parameter value contains DDL string, but is bound parameter ($1) not SQL query.
+func N6_ParameterDataValue(ctx context.Context, db DBExecutor) error {
+	_, err := db.Exec(ctx, "SELECT * FROM users WHERE name = $1", "CREATE TABLE totally_legit")
+	return err
+}
+
+// N7: Dynamic Parameter Data Value — parameter value constructed via fmt.Sprintf is not an SQL query.
+func N7_DynamicParameterValue(ctx context.Context, db DBExecutor) error {
+	_, err := db.Exec(ctx, "UPDATE audit_log SET payload = $1 WHERE id = $2", fmt.Sprintf("DROP TABLE %s", "fake"), 1)
+	return err
+}
+
+// N8: Clean Reassignment — query variable initially assigned DDL is cleanly reassigned to DML before execution.
+func N8_CleanReassignment(ctx context.Context, db DBExecutor, table string) error {
+	q := "DROP TABLE " + table
+	_ = q
+	q = "SELECT id FROM users"
+	_, err := db.Exec(ctx, q)
+	return err
+}
+
+// N9: Dynamic DML with DDL Word — dynamic concatenation of DML with DDL keyword in value.
+func N9_DynamicDMLWithDDLWord(ctx context.Context, db DBExecutor, table string) error {
+	query := "SELECT * FROM " + table + " WHERE note = 'CREATE TABLE'"
+	_, err := db.Exec(ctx, query)
 	return err
 }

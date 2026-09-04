@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -48,12 +49,16 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 		return nil
 	}
 
+	tracker := NewDDLTracker(pass, file)
+	tracker.Analyze()
+
 	var issues []Issue
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
 			continue
 		}
+		tracker.SetCurrentFunc(fn)
 
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
@@ -66,15 +71,17 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 				return true
 			}
 
-			// Filter non-db receivers
-			if id, ok := sel.X.(*ast.Ident); ok {
-				switch strings.ToLower(id.Name) {
-				case "log", "logger", "search", "client", "http", "queue", "cmd", "runner", "cache":
-					return true
-				}
+			if !isDatabaseCall(pass, call, sel) {
+				return true
 			}
 
-			if dm != nil && fset != nil && dm.IsIgnored(fset, call.Pos(), RuleCode) {
+			// Identify the actual SQL query argument, ignoring bound parameter arguments
+			sqlArg := callsite.ExtractSQLArg(call, pass)
+			if sqlArg == nil {
+				return true
+			}
+
+			if dm != nil && fset != nil && (dm.IsIgnored(fset, call.Pos(), RuleCode) || dm.IsIgnored(fset, sqlArg.Pos(), RuleCode)) {
 				return true
 			}
 
@@ -89,15 +96,13 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 				}
 			}
 
-			// 2. Dynamic DDL detection on all arguments of the call
-			for _, arg := range call.Args {
-				if ddlOp := DetectDynamicDDL(arg, fn.Body); ddlOp != "" {
-					issues = append(issues, Issue{
-						Pos:     call.Pos(),
-						Message: fmt.Sprintf("runtime database query contains forbidden DDL statement (%s); DDL is restricted to migrations", ddlOp),
-					})
-					return true
-				}
+			// 2. Dynamic DDL detection evaluated strictly on the SQL argument expression
+			if ddlOp := tracker.GetDDLOpAt(sqlArg, call); ddlOp != "" {
+				issues = append(issues, Issue{
+					Pos:     call.Pos(),
+					Message: fmt.Sprintf("runtime database query contains forbidden DDL statement (%s); DDL is restricted to migrations", ddlOp),
+				})
+				return true
 			}
 
 			return true
@@ -105,6 +110,53 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 	}
 
 	return issues
+}
+
+func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr, sel *ast.SelectorExpr) bool {
+	if call == nil || sel == nil {
+		return false
+	}
+
+	if pass != nil && pass.TypesInfo != nil {
+		var recv types.Type
+		if selType, ok := pass.TypesInfo.Selections[sel]; ok && selType.Recv() != nil {
+			recv = selType.Recv()
+		} else if tv, ok := pass.TypesInfo.Types[sel.X]; ok && tv.Type != nil {
+			recv = tv.Type
+		}
+		if recv != nil {
+			if callsite.IsPgxOrSQLType(recv) {
+				return true
+			}
+			if isNonDatabaseReceiverName(strings.ToLower(recv.String())) {
+				return false
+			}
+		}
+	}
+
+	recvName := ""
+	if id, ok := sel.X.(*ast.Ident); ok {
+		recvName = strings.ToLower(id.Name)
+	}
+
+	if isNonDatabaseReceiverName(recvName) {
+		return false
+	}
+
+	return true
+}
+
+func isNonDatabaseReceiverName(name string) bool {
+	switch {
+	case strings.Contains(name, "logger"), strings.Contains(name, "log"),
+		strings.Contains(name, "slog"), strings.Contains(name, "zap"),
+		strings.Contains(name, "http"), strings.Contains(name, "client"),
+		strings.Contains(name, "queue"), strings.Contains(name, "search"),
+		strings.Contains(name, "searchengine"), strings.Contains(name, "cmd"),
+		strings.Contains(name, "runner"), strings.Contains(name, "cache"):
+		return true
+	}
+	return false
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {

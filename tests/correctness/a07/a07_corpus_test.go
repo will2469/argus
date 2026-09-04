@@ -34,12 +34,16 @@ func TestA07_PositiveCorpus(t *testing.T) {
 
 	t.Logf("=== Positive Corpus Results (%d issues found) ===", len(issues))
 	expectedLines := map[int]string{
-		28: "P1_Obvious",
-		34: "P2_Indirect",
-		39: "P3_Helper",
-		44: "P4_Nested",
-		49: "P5_Alias_Write",
-		50: "P5_Alias_JsonEncode",
+		29: "P1_Obvious",
+		35: "P2_Indirect",
+		40: "P3_Helper",
+		45: "P4_Nested",
+		50: "P5_Alias_Write",
+		51: "P5_Alias_JsonEncode",
+		62: "P6_Unmasked_404",
+		67: "P7_Unmasked_400",
+		72: "P8_FormattedString",
+		81: "P9_UnmaskedFactory",
 	}
 
 	foundLines := make(map[int]bool)
@@ -131,8 +135,8 @@ func TestA07_StandaloneRunner_DualPathParity(t *testing.T) {
 			a07Issues++
 		}
 	}
-	if a07Issues != 6 {
-		t.Errorf("Dual-Path Parity FAILED on positive corpus: expected 6 issues from standalone runner, got %d", a07Issues)
+	if a07Issues != 10 {
+		t.Errorf("Dual-Path Parity FAILED on positive corpus: expected 10 issues from standalone runner, got %d", a07Issues)
 	}
 
 	auditCfgNeg := runner.AuditConfig{
