@@ -3,6 +3,7 @@ package a12_timeout_config
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"strings"
 
@@ -88,6 +89,7 @@ func traceIdentConfigTypeAST(file *ast.File, fn *ast.FuncDecl, targetID *ast.Ide
 		}
 	}
 
+	targetDeclPos := findDeclPos(fn.Body, targetID)
 	var foundType ast.Expr
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		if n == nil || n.Pos() >= targetID.Pos() {
@@ -96,15 +98,19 @@ func traceIdentConfigTypeAST(file *ast.File, fn *ast.FuncDecl, targetID *ast.Ide
 		switch s := n.(type) {
 		case *ast.AssignStmt:
 			for i, lhs := range s.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && id.Name == targetID.Name {
-					var rhs ast.Expr
-					if i < len(s.Rhs) {
-						rhs = s.Rhs[i]
-					} else if len(s.Rhs) == 1 {
-						rhs = s.Rhs[0]
-					}
-					if rhs != nil {
-						foundType = extractTypeFromRHS(file, rhs)
+				if id, ok := lhs.(*ast.Ident); ok {
+					matches := (targetDeclPos != token.NoPos && id.Pos() == targetDeclPos) ||
+						(targetDeclPos == token.NoPos && id.Name == targetID.Name)
+					if matches {
+						var rhs ast.Expr
+						if i < len(s.Rhs) {
+							rhs = s.Rhs[i]
+						} else if len(s.Rhs) == 1 {
+							rhs = s.Rhs[0]
+						}
+						if rhs != nil {
+							foundType = extractTypeFromRHS(file, rhs)
+						}
 					}
 				}
 			}
@@ -113,7 +119,9 @@ func traceIdentConfigTypeAST(file *ast.File, fn *ast.FuncDecl, targetID *ast.Ide
 				for _, spec := range gen.Specs {
 					if valSpec, ok := spec.(*ast.ValueSpec); ok {
 						for _, name := range valSpec.Names {
-							if name.Name == targetID.Name && valSpec.Type != nil {
+							matches := (targetDeclPos != token.NoPos && name.Pos() == targetDeclPos) ||
+								(targetDeclPos == token.NoPos && name.Name == targetID.Name)
+							if matches && valSpec.Type != nil {
 								foundType = valSpec.Type
 							}
 						}
@@ -151,12 +159,8 @@ func isPgxpoolConfigTypeExpr(file *ast.File, typeExpr ast.Expr) bool {
 	if typeExpr == nil {
 		return false
 	}
-	for {
-		if star, ok := typeExpr.(*ast.StarExpr); ok {
-			typeExpr = star.X
-			continue
-		}
-		break
+	for star, ok := typeExpr.(*ast.StarExpr); ok; star, ok = typeExpr.(*ast.StarExpr) {
+		typeExpr = star.X
 	}
 	if sel, ok := typeExpr.(*ast.SelectorExpr); ok && sel.Sel.Name == "Config" {
 		if id, ok := sel.X.(*ast.Ident); ok {
