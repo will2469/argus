@@ -132,86 +132,95 @@ func isProvenTxHelperCall(pass *analysis.Pass, call *ast.CallExpr, fn *ast.FuncD
 }
 
 func isProvenDBPoolInterface(t types.Type) bool {
+	t = unwrapPointer(t)
 	if t == nil {
 		return false
 	}
-	for {
-		if ptr, ok := t.(*types.Pointer); ok {
-			t = ptr.Elem()
-		} else {
-			break
-		}
-	}
 
 	var hasBeginWithTx bool
-	checkMethod := func(fn *types.Func) {
+	forEachTypeMethod(t, func(fn *types.Func) {
 		name := fn.Name()
-		sig, ok := fn.Type().(*types.Signature)
-		if !ok {
+		if name != "Begin" && name != "BeginTx" {
 			return
 		}
-		switch name {
-		case "Begin", "BeginTx":
-			res := sig.Results()
-			if res != nil && res.Len() >= 1 {
-				for i := 0; i < res.Len(); i++ {
-					if isProvenDBTxType(res.At(i).Type()) {
-						hasBeginWithTx = true
-					}
+		sig, ok := fn.Type().(*types.Signature)
+		if !ok || sig.Results() == nil {
+			return
+		}
+		for i := 0; i < sig.Results().Len(); i++ {
+			if isProvenDBTxType(sig.Results().At(i).Type()) {
+				hasBeginWithTx = true
+			}
+		}
+	})
+	return hasBeginWithTx
+}
+
+// isProvenDBTxType verifies whether a Go type represents a genuine database transaction.
+// It accepts known database driver transaction types (e.g., *sql.Tx, pgx.Tx) or types that
+// structurally satisfy the database transaction contract by implementing BOTH query capability
+// (Query or QueryRow) AND write execution capability (Exec, ExecContext, or SendBatch).
+//
+// Capability Inference Boundary:
+// Types from unknown packages implementing both Exec and Query are recognized to support
+// application-level abstractions (DBTX, Querier). Single-method proxies (e.g., FakeDBProxy
+// with only Exec) are strictly rejected to prevent false alarms.
+func isProvenDBTxType(t types.Type) bool {
+	t = unwrapPointer(t)
+	if t == nil {
+		return false
+	}
+
+	// 1. Direct match for known DB driver transaction types
+	if named, ok := t.(*types.Named); ok {
+		if obj := named.Obj(); obj != nil && obj.Pkg() != nil {
+			switch obj.Pkg().Path() {
+			case "database/sql", "github.com/jackc/pgx/v5", "github.com/jackc/pgx/v4",
+				"github.com/jmoiron/sqlx", "github.com/lib/pq":
+				if obj.Name() == "Tx" {
+					return true
 				}
 			}
 		}
 	}
 
-	if named, ok := t.(*types.Named); ok {
-		for i := 0; i < named.NumMethods(); i++ {
-			checkMethod(named.Method(i))
+	// 2. Structural capability verification: require write/exec capability AND either query or lifecycle methods.
+	var hasExec, hasQuery, hasLifecycle bool
+	forEachTypeMethod(t, func(fn *types.Func) {
+		switch fn.Name() {
+		case "Exec", "ExecContext", "SendBatch":
+			hasExec = true
+		case "Query", "QueryRow":
+			hasQuery = true
+		case "Commit", "Rollback":
+			hasLifecycle = true
 		}
-	}
-	if iface, ok := t.Underlying().(*types.Interface); ok {
-		for i := 0; i < iface.NumMethods(); i++ {
-			checkMethod(iface.Method(i))
-		}
-	}
+	})
 
-	return hasBeginWithTx
+	return (hasExec && hasQuery) || (hasExec && hasLifecycle)
 }
 
-func isProvenDBTxType(t types.Type) bool {
-	if t == nil {
-		return false
-	}
+func unwrapPointer(t types.Type) types.Type {
 	for {
 		if ptr, ok := t.(*types.Pointer); ok {
 			t = ptr.Elem()
 		} else {
-			break
+			return t
 		}
 	}
-	if callsite.IsPgxOrSQLType(t) {
-		return true
-	}
+}
 
-	var hasExecOrQuery bool
-	checkTxFunc := func(fn *types.Func) {
-		switch fn.Name() {
-		case "Exec", "ExecContext", "Query", "QueryRow", "SendBatch":
-			hasExecOrQuery = true
-		}
-	}
-
+func forEachTypeMethod(t types.Type, fn func(*types.Func)) {
 	if named, ok := t.(*types.Named); ok {
 		for i := 0; i < named.NumMethods(); i++ {
-			checkTxFunc(named.Method(i))
+			fn(named.Method(i))
 		}
 	}
 	if iface, ok := t.Underlying().(*types.Interface); ok {
 		for i := 0; i < iface.NumMethods(); i++ {
-			checkTxFunc(iface.Method(i))
+			fn(iface.Method(i))
 		}
 	}
-
-	return hasExecOrQuery
 }
 
 // isProvenTxReceiver verifies whether an expression is the expected transaction identifier

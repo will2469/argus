@@ -150,3 +150,45 @@ func A9_WorkerPoolBegin_MustBeSafe(wp WorkerPool) error {
 	return wp.Begin()
 }
 
+// A10: Fake DB Proxy — single-method Exec proxy without Query or lifecycle capability must NOT trigger false positive.
+type FakeDBProxy struct{}
+
+func (FakeDBProxy) Exec(ctx context.Context, sql string, args ...any) error {
+	return nil
+}
+
+type FakePool struct{}
+
+func (FakePool) Begin(ctx context.Context) (FakeDBProxy, error) {
+	return FakeDBProxy{}, nil
+}
+
+func A10_FakeDBProxy_MustBeSafe(ctx context.Context, fp FakePool) error {
+	tx, err := fp.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	return tx.Exec(ctx, "UPDATE balances SET amount = 0 WHERE id = 1")
+}
+
+// A11: Fake Search Proxy — single-method Query proxy without Exec or lifecycle capability must NOT trigger false positive.
+type FakeSearchProxy struct{}
+
+func (FakeSearchProxy) Query(ctx context.Context, sql string, args ...any) error {
+	return nil
+}
+
+type FakeSearchPool struct{}
+
+func (FakeSearchPool) Begin(ctx context.Context) (FakeSearchProxy, error) {
+	return FakeSearchProxy{}, nil
+}
+
+func A11_FakeSearchProxy_MustBeSafe(ctx context.Context, sp FakeSearchPool) error {
+	tx, err := sp.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	return tx.Query(ctx, "SELECT * FROM balances FOR UPDATE")
+}
+

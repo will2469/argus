@@ -72,17 +72,15 @@ func getASTTypeName(expr ast.Expr) string {
 	if star, ok := expr.(*ast.StarExpr); ok {
 		expr = star.X
 	}
-	if id, ok := expr.(*ast.Ident); ok {
-		return id.Name
-	}
-	if idx, ok := expr.(*ast.IndexExpr); ok {
-		return getASTTypeName(idx.X)
-	}
-	if idxList, ok := expr.(*ast.IndexListExpr); ok {
-		return getASTTypeName(idxList.X)
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		return sel.Sel.Name
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.IndexExpr:
+		return getASTTypeName(e.X)
+	case *ast.IndexListExpr:
+		return getASTTypeName(e.X)
+	case *ast.SelectorExpr:
+		return e.Sel.Name
 	}
 	return ""
 }
@@ -160,18 +158,26 @@ func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
 		if t.Methods == nil {
 			return false
 		}
-		var hasBegin, hasExecOrQuery bool
+		var hasBegin, hasExec, hasQuery bool
 		for _, m := range t.Methods.List {
 			for _, name := range m.Names {
 				switch name.Name {
 				case "Begin", "BeginTx":
-					hasBegin = true
-				case "Exec", "ExecContext", "Query", "QueryContext":
-					hasExecOrQuery = true
+					if ft, ok := m.Type.(*ast.FuncType); ok && ft.Results != nil && len(ft.Results.List) > 0 {
+						if isProvenDBTxASTType(ft.Results.List[0].Type, file) {
+							hasBegin = true
+						}
+					} else {
+						hasBegin = true
+					}
+				case "Exec", "ExecContext":
+					hasExec = true
+				case "Query", "QueryContext", "QueryRow":
+					hasQuery = true
 				}
 			}
 		}
-		return hasBegin || hasExecOrQuery
+		return hasBegin || (hasExec && hasQuery)
 	case *ast.StructType:
 		if t.Fields == nil {
 			return false
@@ -179,6 +185,41 @@ func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
 		for _, field := range t.Fields.List {
 			if isProvenDBPoolASTType(field.Type, file) {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+func isProvenDBTxASTType(expr ast.Expr, file *ast.File) bool {
+	if expr == nil {
+		return false
+	}
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	if sel, ok := expr.(*ast.SelectorExpr); ok {
+		if pkgID, ok := sel.X.(*ast.Ident); ok {
+			return isKnownDBPackage(pkgID.Name, file) && sel.Sel.Name == "Tx"
+		}
+	}
+	if id, ok := expr.(*ast.Ident); ok {
+		if ts := findTypeSpec(id.Name, file); ts != nil {
+			if iface, ok := ts.Type.(*ast.InterfaceType); ok && iface.Methods != nil {
+				var hasExec, hasQuery, hasLifecycle bool
+				for _, m := range iface.Methods.List {
+					for _, name := range m.Names {
+						switch name.Name {
+						case "Exec", "ExecContext", "SendBatch":
+							hasExec = true
+						case "Query", "QueryContext", "QueryRow":
+							hasQuery = true
+						case "Commit", "Rollback":
+							hasLifecycle = true
+						}
+					}
+				}
+				return (hasExec && hasQuery) || (hasExec && hasLifecycle)
 			}
 		}
 	}
@@ -195,14 +236,12 @@ func isDBPoolConstructorCall(call *ast.CallExpr) bool {
 	}
 	if pkgID, ok := sel.X.(*ast.Ident); ok {
 		switch pkgID.Name {
-		case "sql":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "OpenDB"
+		case "sql", "sqlx":
+			return sel.Sel.Name == "Open" || sel.Sel.Name == "OpenDB" || sel.Sel.Name == "Connect"
 		case "pgx":
 			return sel.Sel.Name == "Connect" || sel.Sel.Name == "ConnectConfig"
 		case "pgxpool":
 			return sel.Sel.Name == "New" || sel.Sel.Name == "NewWithConfig"
-		case "sqlx":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "Connect"
 		}
 	}
 	return false

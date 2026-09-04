@@ -100,6 +100,8 @@ func TestA10_AdversarialCorpus(t *testing.T) {
 		{"A7_HelperNoIso", 121, true},
 		{"A8_NonDBWithTxHelper", 133, false},
 		{"A9_WorkerPoolBegin", 149, false},
+		{"A10_FakeDBProxy", 167, false},
+		{"A11_FakeSearchProxy", 188, false},
 	}
 
 	for _, a := range assertions {

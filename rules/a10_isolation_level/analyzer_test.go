@@ -168,6 +168,7 @@ import "context"
 
 type Tx interface {
 	Exec(ctx context.Context, sql string, args ...any) error
+	Query(ctx context.Context, sql string, args ...any) error
 }
 
 type Pool interface {
