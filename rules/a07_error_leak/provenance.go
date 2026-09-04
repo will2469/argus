@@ -66,16 +66,13 @@ func getIdentErrorOrigin(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl) E
 		return OriginUnknown
 	}
 
-	// 1. Explicit variable naming conventions
+	// 1. Explicit variable naming conventions for non-DB domain errors
 	lower := strings.ToLower(id.Name)
 	if isNonDBErrorName(lower) {
 		return OriginNonDatabase
 	}
-	if isDBErrorName(lower) {
-		return OriginDatabase
-	}
 
-	// 2. Type-based resolution
+	// 2. Type-based resolution via go/types
 	if pass != nil && pass.TypesInfo != nil {
 		if t := pass.TypesInfo.TypeOf(id); t != nil {
 			if IsPgErrorType(t) {
@@ -89,8 +86,11 @@ func getIdentErrorOrigin(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl) E
 		if origin := traceAssignOrigin(pass, id.Name, fn.Body, fn); origin != OriginUnknown {
 			return origin
 		}
-		// If it's a function parameter not marked non-DB, check if it's generic error
+		// If it's a function parameter, check if it has a proven PgError type or is generic
 		if isFuncParam(id.Name, fn) {
+			if isPgErrorParam(id.Name, fn) {
+				return OriginDatabase
+			}
 			return OriginGeneric
 		}
 	}
@@ -105,9 +105,6 @@ func getSelectorErrorOrigin(pass *analysis.Pass, sel *ast.SelectorExpr, fn *ast.
 	lower := strings.ToLower(sel.Sel.Name)
 	if isNonDBErrorName(lower) {
 		return OriginNonDatabase
-	}
-	if isDBErrorName(lower) {
-		return OriginDatabase
 	}
 	if origin := GetErrorOrigin(pass, sel.X, fn); origin != OriginUnknown {
 		return origin
@@ -124,20 +121,41 @@ func traceAssignOrigin(pass *analysis.Pass, varName string, body *ast.BlockStmt,
 		}
 		for i, lhs := range assign.Lhs {
 			id, ok := lhs.(*ast.Ident)
-			if !ok || id.Name != varName || i >= len(assign.Rhs) {
+			if !ok || id.Name != varName {
 				continue
 			}
 
-			rhs := assign.Rhs[i]
+			var rhs ast.Expr
+			if i < len(assign.Rhs) {
+				rhs = assign.Rhs[i]
+			} else if len(assign.Rhs) == 1 {
+				rhs = assign.Rhs[0]
+			} else {
+				continue
+			}
+
 			// Check if RHS is a call
 			if call, ok := rhs.(*ast.CallExpr); ok {
-				// If RHS is err.Error() or similar
 				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Error" && len(call.Args) == 0 {
 					origin = GetErrorOrigin(pass, sel.X, fn)
 					return false
 				}
 				origin = getCallErrorOrigin(pass, call)
 				return false
+			}
+
+			// Check if RHS is type assertion, e.g. pgErr, ok := err.(*PgError)
+			if ta, ok := rhs.(*ast.TypeAssertExpr); ok && ta.Type != nil {
+				if pass != nil && pass.TypesInfo != nil {
+					if t := pass.TypesInfo.TypeOf(ta.Type); t != nil && IsPgErrorType(t) {
+						origin = OriginDatabase
+						return false
+					}
+				}
+				if isPgErrorASTType(ta.Type) {
+					origin = OriginDatabase
+					return false
+				}
 			}
 
 			// Check if RHS is another identifier (alias)
@@ -169,6 +187,40 @@ func isFuncParam(name string, fn *ast.FuncDecl) bool {
 		for _, id := range field.Names {
 			if id.Name == name {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+func isPgErrorParam(name string, fn *ast.FuncDecl) bool {
+	if fn == nil || fn.Type == nil || fn.Type.Params == nil {
+		return false
+	}
+	for _, field := range fn.Type.Params.List {
+		for _, id := range field.Names {
+			if id.Name == name {
+				return isPgErrorASTType(field.Type)
+			}
+		}
+	}
+	return false
+}
+
+func isPgErrorASTType(expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	if id, ok := expr.(*ast.Ident); ok {
+		return id.Name == "PgError" || id.Name == "Error"
+	}
+	if sel, ok := expr.(*ast.SelectorExpr); ok {
+		if sel.Sel.Name == "PgError" || sel.Sel.Name == "Error" {
+			if pkgID, ok := sel.X.(*ast.Ident); ok {
+				return pkgID.Name == "pgconn" || pkgID.Name == "pq" || pkgID.Name == "pgdriver"
 			}
 		}
 	}

@@ -71,3 +71,78 @@ func handler(w http.ResponseWriter) {
 		t.Errorf("expected exactly 4 response sinks (w.*), got %d (buffers falsely identified as sinks)", sinksCount)
 	}
 }
+
+func TestErrorProvenanceSoundness(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+import (
+	"database/sql"
+	"errors"
+	"net/http"
+)
+
+type CustomService struct{}
+func (s *CustomService) Ping() error { return errors.New("service ping failed") }
+func (s *CustomService) Err() error { return errors.New("custom err") }
+func (s *CustomService) Close() error { return errors.New("closed") }
+
+type MemoryStore struct{}
+func (m *MemoryStore) Get(k string) (string, error) { return "", errors.New("missing") }
+
+// 1. Unrelated error named sqlErr must NOT be flagged as DB error leak
+func nonDBNamedError(w http.ResponseWriter) {
+	sqlErr := errors.New("totally unrelated")
+	http.Error(w, sqlErr.Error(), 400)
+}
+
+// 2. Ping/Err/Close on custom non-DB service must NOT be flagged
+func nonDBMethods(w http.ResponseWriter, s *CustomService) {
+	err := s.Ping()
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+	}
+}
+
+// 3. Receiver named store on in-memory store must NOT be flagged
+func memoryStore(w http.ResponseWriter, store *MemoryStore) {
+	_, err := store.Get("foo")
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+	}
+}
+
+// 4. Multi-value DB query must be FLAGGED
+func dbQuery(w http.ResponseWriter, db *sql.DB) {
+	rows, err := db.Query("SELECT 1")
+	_ = rows
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+}
+
+// 5. DB Ping on actual *sql.DB must be FLAGGED
+func dbPing(w http.ResponseWriter, db *sql.DB) {
+	err := db.Ping()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+}
+`
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+
+	// We expect exactly 2 issues: from dbQuery (line 44) and dbPing (line 52)
+	if len(issues) != 2 {
+		t.Fatalf("expected exactly 2 issues from actual DB calls, got %d", len(issues))
+	}
+
+	for _, iss := range issues {
+		pos := fset.Position(iss.Pos)
+		t.Logf("Detected expected DB issue at line %d: %s", pos.Line, iss.Message)
+	}
+}
+

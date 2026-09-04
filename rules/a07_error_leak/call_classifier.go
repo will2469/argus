@@ -12,41 +12,149 @@ import (
 )
 
 func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr) bool {
+	if call == nil {
+		return false
+	}
 	sel := callsite.GetCallSelector(call.Fun)
 	if sel == nil {
 		return false
 	}
 
 	methodName := sel.Sel.Name
-	if callsite.IsDBQueryMethod(methodName) {
-		return true
+	if !isCandidateDBMethod(methodName) {
+		return false
 	}
 
-	// Transaction and scanning methods
-	switch methodName {
-	case "Commit", "Rollback", "Scan", "Err", "Ping", "Close":
-		return true
-	}
-
-	// Type-based receiver verification
+	// 1. Semantic Type-Based Verification via pass.TypesInfo
 	if pass != nil && pass.TypesInfo != nil {
-		if recvType := pass.TypesInfo.TypeOf(sel.X); recvType != nil {
-			if callsite.IsPgxOrSQLType(recvType) {
-				return true
+		var recvType types.Type
+		if selType, ok := pass.TypesInfo.Selections[sel]; ok && selType.Recv() != nil {
+			recvType = selType.Recv()
+		} else if tv, ok := pass.TypesInfo.Types[sel.X]; ok && tv.Type != nil {
+			recvType = tv.Type
+		} else if id, ok := sel.X.(*ast.Ident); ok {
+			if obj := pass.TypesInfo.Uses[id]; obj != nil {
+				recvType = obj.Type()
+			}
+		}
+
+		if recvType != nil && recvType != types.Typ[types.Invalid] {
+			return callsite.IsPgxOrSQLType(recvType)
+		}
+
+		// Package-level calls from database packages, e.g. sql.Open, pgx.Connect
+		if id, ok := sel.X.(*ast.Ident); ok {
+			if pkgName, ok := pass.TypesInfo.Uses[id].(*types.PkgName); ok {
+				return isKnownDBPackagePath(pkgName.Imported().Path())
 			}
 		}
 	}
 
-	// Receiver naming heuristic for repos and DAOs
+	// 2. AST-level Symbol / Type Verification (when pass == nil or TypesInfo is unavailable)
 	if id, ok := sel.X.(*ast.Ident); ok {
-		lower := strings.ToLower(id.Name)
-		if strings.Contains(lower, "repo") || strings.Contains(lower, "store") ||
-			strings.Contains(lower, "dao") || strings.Contains(lower, "queries") ||
-			strings.Contains(lower, "db") || strings.Contains(lower, "pool") || strings.Contains(lower, "tx") {
+		switch id.Name {
+		case "sql", "pgx", "pgxpool", "sqlx", "pq":
 			return true
+		}
+
+		if id.Obj != nil {
+			if field, ok := id.Obj.Decl.(*ast.Field); ok && isKnownDBASTType(field.Type) {
+				return true
+			}
+			if vs, ok := id.Obj.Decl.(*ast.ValueSpec); ok && isKnownDBASTType(vs.Type) {
+				return true
+			}
+			if as, ok := id.Obj.Decl.(*ast.AssignStmt); ok {
+				for i, lhs := range as.Lhs {
+					if lid, ok := lhs.(*ast.Ident); ok && lid.Name == id.Name {
+						var rhs ast.Expr
+						if i < len(as.Rhs) {
+							rhs = as.Rhs[i]
+						} else if len(as.Rhs) == 1 {
+							rhs = as.Rhs[0]
+						}
+						if rhsCall, ok := rhs.(*ast.CallExpr); ok && isDBConstructorCall(rhsCall) {
+							return true
+						}
+					}
+				}
+			}
 		}
 	}
 
+	return false
+}
+
+func isCandidateDBMethod(methodName string) bool {
+	if callsite.IsDBQueryMethod(methodName) {
+		return true
+	}
+	switch methodName {
+	case "Commit", "Rollback", "Scan", "Err", "Ping", "PingContext",
+		"Close", "SendBatch", "Prepare", "PrepareContext", "CopyFrom",
+		"Begin", "BeginTx", "BeginTxFunc":
+		return true
+	}
+	return false
+}
+
+func isKnownDBPackagePath(path string) bool {
+	switch path {
+	case "database/sql", "github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/pgxpool",
+		"github.com/jackc/pgx/v5/pgconn", "github.com/jackc/pgx/v4", "github.com/jackc/pgx/v4/pgxpool",
+		"github.com/jmoiron/sqlx", "github.com/lib/pq":
+		return true
+	}
+	return false
+}
+
+func isKnownDBASTType(expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	if sel, ok := expr.(*ast.SelectorExpr); ok {
+		if pkgID, ok := sel.X.(*ast.Ident); ok {
+			switch pkgID.Name {
+			case "sql", "pgx", "pgxpool", "sqlx", "pq":
+				switch sel.Sel.Name {
+				case "DB", "Tx", "Conn", "Pool", "Row", "Rows", "Stmt", "Batch":
+					return true
+				}
+			}
+		}
+	}
+	if id, ok := expr.(*ast.Ident); ok {
+		switch id.Name {
+		case "DB", "Tx", "Pool", "Querier", "DBTX":
+			return true
+		}
+	}
+	return false
+}
+
+func isDBConstructorCall(call *ast.CallExpr) bool {
+	if call == nil {
+		return false
+	}
+	sel := callsite.GetCallSelector(call.Fun)
+	if sel == nil {
+		return false
+	}
+	if pkgID, ok := sel.X.(*ast.Ident); ok {
+		switch pkgID.Name {
+		case "sql":
+			return sel.Sel.Name == "Open" || sel.Sel.Name == "OpenDB"
+		case "pgx":
+			return sel.Sel.Name == "Connect" || sel.Sel.Name == "ConnectConfig"
+		case "pgxpool":
+			return sel.Sel.Name == "New" || sel.Sel.Name == "NewWithConfig"
+		case "sqlx":
+			return sel.Sel.Name == "Open" || sel.Sel.Name == "Connect"
+		}
+	}
 	return false
 }
 
@@ -100,18 +208,6 @@ func isNonDBErrorName(name string) bool {
 		"autherr", "formerr", "reqerr", "userfacing", "usererr", "badreq", "schemaerr",
 	}
 	for _, p := range nonDBPatterns {
-		if strings.Contains(name, p) {
-			return true
-		}
-	}
-	return false
-}
-
-func isDBErrorName(name string) bool {
-	dbPatterns := []string{
-		"dberr", "pgerr", "sqlerr", "txerr", "queryerr", "repoerr", "storeerr",
-	}
-	for _, p := range dbPatterns {
 		if strings.Contains(name, p) {
 			return true
 		}

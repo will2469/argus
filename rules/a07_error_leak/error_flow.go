@@ -34,16 +34,33 @@ func IsPgErrorSelector(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 		return false
 	}
 	if pass != nil && pass.TypesInfo != nil {
-		if typ := pass.TypesInfo.TypeOf(sel.X); typ != nil {
-			if IsPgErrorType(typ) {
-				return true
-			}
+		if typ := pass.TypesInfo.TypeOf(sel.X); typ != nil && typ != types.Typ[types.Invalid] {
+			return IsPgErrorType(typ)
 		}
 	}
-	// Heuristic fallback
-	if id, ok := sel.X.(*ast.Ident); ok {
-		name := strings.ToLower(id.Name)
-		return strings.Contains(name, "pgerr") || strings.Contains(name, "pgerror")
+	// AST fallback: check if sel.X has AST type proof
+	if id, ok := sel.X.(*ast.Ident); ok && id.Obj != nil {
+		if field, ok := id.Obj.Decl.(*ast.Field); ok && isPgErrorASTType(field.Type) {
+			return true
+		}
+		if vs, ok := id.Obj.Decl.(*ast.ValueSpec); ok && isPgErrorASTType(vs.Type) {
+			return true
+		}
+		if as, ok := id.Obj.Decl.(*ast.AssignStmt); ok {
+			for i, lhs := range as.Lhs {
+				if lid, ok := lhs.(*ast.Ident); ok && lid.Name == id.Name {
+					var rhs ast.Expr
+					if i < len(as.Rhs) {
+						rhs = as.Rhs[i]
+					} else if len(as.Rhs) == 1 {
+						rhs = as.Rhs[0]
+					}
+					if ta, ok := rhs.(*ast.TypeAssertExpr); ok && isPgErrorASTType(ta.Type) {
+						return true
+					}
+				}
+			}
+		}
 	}
 	return false
 }

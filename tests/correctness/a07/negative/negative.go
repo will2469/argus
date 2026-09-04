@@ -125,3 +125,43 @@ func NewNotFound(code string, msg string, opts ...FactoryOption) {}
 func N12_MaskedFactoryWithCause(err error) {
 	NewNotFound("RESOURCE_NOT_FOUND", "Entity does not exist", WithCause(err))
 }
+
+// N13: Non-DB Error With DB Name — variable named sqlErr created via errors.New is non-database.
+func N13_NonDBErrorWithDBName(w http.ResponseWriter) {
+	sqlErr := errors.New("totally unrelated")
+	http.Error(w, sqlErr.Error(), http.StatusBadRequest)
+}
+
+type CustomService struct{}
+
+func (s *CustomService) Ping() error  { return errors.New("service unreachable") }
+func (s *CustomService) Err() error   { return errors.New("custom error") }
+func (s *CustomService) Close() error { return errors.New("failed closing client") }
+
+// N14: Non-DB Service Methods — methods named Ping, Err, Close on custom non-database types.
+func N14_NonDBServiceMethods(w http.ResponseWriter, s *CustomService) {
+	if err := s.Ping(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+	}
+	if err := s.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+	}
+	if err := s.Close(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+	}
+}
+
+type MemoryStore struct{}
+
+func (m *MemoryStore) Get(key string) (string, error) {
+	return "", errors.New("key missing in cache")
+}
+
+// N15: Memory Store Error — receiver named store/repo on in-memory cache without database connection.
+func N15_MemoryStoreError(w http.ResponseWriter, store *MemoryStore) {
+	_, err := store.Get("item")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+	}
+}
+
