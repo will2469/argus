@@ -54,6 +54,7 @@ func N2_LegitimateIdiom(ctx context.Context) {
 	cfg.MaxConnLifetime = 1 * time.Hour
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "10000"
 	cfg.ConnConfig.RuntimeParams["lock_timeout"] = "3000"
+	cfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "15000"
 	_, _ = pgxpool.NewWithConfig(ctx, cfg)
 }
 
@@ -81,3 +82,28 @@ func DefaultConfig() *Config {
 		},
 	}
 }
+
+// N6: Unrelated Config — struct named Config without ConnConfig must NOT be flagged.
+type UnrelatedConfig struct {
+	MaxConnIdleTime time.Duration
+}
+
+func N6_UnrelatedConfig() {
+	_ = UnrelatedConfig{
+		MaxConnIdleTime: 5 * time.Minute,
+	}
+}
+
+// N7: Unrelated Package New — other package New call must NOT be flagged.
+type otherPkgType struct{}
+
+var otherpkg otherPkgType
+
+func (otherPkgType) New(ctx context.Context, dsn string) error {
+	return nil
+}
+
+func N7_UnrelatedPackageNew(ctx context.Context) {
+	_ = otherpkg.New(ctx, "postgres://user:pass@localhost:5432/db")
+}
+

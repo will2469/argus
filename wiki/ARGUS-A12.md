@@ -56,23 +56,25 @@ flowchart TD
 
 ## 3. How Argus Detects Violations (Static Analysis Architecture)
 
-Argus inspects connection pool initialization via DSN query parameters and Go struct assignment flows:
+Argus inspects connection pool initialization via DSN query parameters and Go struct assignment flows, backed by **semantic type identity** and **context-aware argument extraction**:
 
 ```mermaid
 flowchart LR
-    Scan["Inspect Pool Init Calls<br/>(Exclude _test.go)"] --> CallType{"pgxpool.New or<br/>pgxpool.NewWithConfig?"}
-    CallType -->|pgxpool.New| CheckDSN["dsn_checker.go:<br/>Parse URL Query / KV Params"]
-    CallType -->|pgxpool.NewWithConfig| CheckFlow["config_flow.go:<br/>Track AST Assignments on Config Var"]
+    Scan["Inspect Pool Init Calls<br/>(Exclude _test.go)"] --> CallType{"Verified pgxpool.New or<br/>pgxpool.NewWithConfig?<br/>(types.Info / Package Path)"}
+    CallType -->|pgxpool.New| CheckDSN["dsn_checker.go:<br/>Parse URL Query / KV Params<br/>(Context-aware arg finder)"]
+    CallType -->|pgxpool.NewWithConfig| CheckFlow["config_flow.go:<br/>Track AST Assignments on Config Var<br/>(Structural proof: ConnConfig + limits)"]
     CheckDSN --> DSNMissing{"Missing statement_timeout,<br/>lock_timeout, or idle timeout?"}
-    CheckFlow --> StructMissing{"Missing RuntimeParams or<br/>MaxConnIdleTime / Lifetime?"}
+    CheckFlow --> StructMissing{"Missing statement, lock, idle timeout,<br/>or MaxConnIdleTime / Lifetime?"}
     DSNMissing -->|Yes| ReportDSN["Report HIGH Violation:<br/>Missing DSN Timeout Parameters"]
     StructMissing -->|Yes| ReportStruct["Report HIGH Violation:<br/>Incomplete pgxpool.Config Timeouts"]
     DSNMissing -->|No| Pass["Pass (Complete Timeout Config)"]
     StructMissing -->|No| Pass
 ```
 
-1. **DSN Parameter Checker (`dsn_checker.go`):** Parses URL query parameters and key-value connection strings for `statement_timeout`, `lock_timeout`, and `idle_in_transaction_session_timeout`.
-2. **Configuration Flow Evaluator (`config_flow.go`):** Tracks `pgxpool.Config` composite literals, struct assignments (`AssignStmt`), and helper initializers (`configurePostgresPool`).
+1. **Semantic Receiver & Type Identity (`call_matcher.go`):** Validates that `New` or `NewWithConfig` calls originate from `"github.com/jackc/pgx/v5/pgxpool"` (or v4) using `types.Info`, preventing spoofing by unrelated packages (`otherpkg.New`) or methods (`client.New`). Confirms that `Config` structs possess `ConnConfig` and pool limit fields (`MaxConnIdleTime`, `MaxConnLifetime`), eliminating fragile package name string heuristics.
+2. **Context-Aware Argument Resolution (`callsite.IsContextArg`):** Identifies the target DSN or configuration argument dynamically by skipping context parameters (`context.Context`), eliminating fragile argument-count positional assumptions.
+3. **DSN Parameter Checker (`dsn_checker.go`):** Parses URL query parameters and key-value connection strings for `statement_timeout`, `lock_timeout`, and `idle_in_transaction_session_timeout`.
+4. **Configuration Flow Evaluator (`config_flow.go`):** Tracks `pgxpool.Config` composite literals, struct assignments (`AssignStmt`), and helper initializers (`configurePostgresPool`), enforcing all 5 mandatory timeouts (`statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`, `MaxConnIdleTime`, `MaxConnLifetime`).
 
 ---
 

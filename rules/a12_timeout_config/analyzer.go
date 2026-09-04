@@ -53,7 +53,7 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.CallExpr:
-			inspectCall(fset, node, file, dm, &issues)
+			inspectCall(pass, fset, node, file, dm, &issues)
 		case *ast.CompositeLit:
 			inspectCompositeLit(pass, fset, node, file, dm, &issues)
 		}
@@ -63,38 +63,25 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 	return issues
 }
 
-func inspectCall(fset *token.FileSet, call *ast.CallExpr, file *ast.File, dm *directives.DirectiveMap, issues *[]Issue) {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
+func inspectCall(pass *analysis.Pass, fset *token.FileSet, call *ast.CallExpr, file *ast.File, dm *directives.DirectiveMap, issues *[]Issue) {
+	isPgx, methodName := isPgxpoolCall(pass, file, call)
+	if !isPgx {
 		return
 	}
-	if id, ok := sel.X.(*ast.Ident); ok && id.Name != "pgxpool" {
-		return
-	}
-
-	methodName := sel.Sel.Name
 
 	switch methodName {
 	case "New":
-		// pgxpool.New(ctx, dsn)
-		dsnArgIdx := 0
-		if len(call.Args) >= 2 {
-			dsnArgIdx = 1
-		}
-		if dsnArgIdx < len(call.Args) {
-			dsnStrings := extractAllDSNStrings(call, file)
+		arg, _ := findCallArg(call, pass)
+		if arg != nil {
+			dsnStrings := extractAllDSNStrings(call, file, pass)
 			for _, dsnStr := range dsnStrings {
-				checkDSNCall(fset, call.Args[dsnArgIdx], dsnStr, dm, issues)
+				checkDSNCall(fset, arg, dsnStr, dm, issues)
 			}
 		}
 	case "NewWithConfig":
-		// pgxpool.NewWithConfig(ctx, cfg)
-		cfgArgIdx := 0
-		if len(call.Args) >= 2 {
-			cfgArgIdx = 1
-		}
-		if cfgArgIdx < len(call.Args) {
-			checkNewWithConfigCall(fset, call, call.Args[cfgArgIdx], file, dm, issues)
+		arg, _ := findCallArg(call, pass)
+		if arg != nil {
+			checkNewWithConfigCall(fset, call, arg, file, dm, issues)
 		}
 	}
 }
@@ -153,6 +140,9 @@ func reportConfigStatus(fset *token.FileSet, pos token.Pos, status ConfigStatus,
 	if !status.HasLockTimeout {
 		report("lock-timeout", "pgxpool.Config missing ConnConfig.RuntimeParams[\"lock_timeout\"]; set to prevent lock acquisition starvation")
 	}
+	if !status.HasIdleInTransaction {
+		report("idle-in-transaction", "pgxpool.Config missing ConnConfig.RuntimeParams[\"idle_in_transaction_session_timeout\"]; set to prevent idle transactions holding locks")
+	}
 	if !status.HasMaxConnIdleTime {
 		report("max-conn-idle-time", "pgxpool.Config missing MaxConnIdleTime; set to prevent idle connection accumulation")
 	}
@@ -162,45 +152,6 @@ func reportConfigStatus(fset *token.FileSet, pos token.Pos, status ConfigStatus,
 	if status.HasZeroTimeout {
 		report("zero-timeout", fmt.Sprintf("pgxpool.Config timeout parameter '%s' must not be set to 0 (unlimited)", status.ZeroTimeoutParam))
 	}
-}
-
-func isPgxpoolConfigType(pass *analysis.Pass, file *ast.File, expr ast.Expr) bool {
-	if expr == nil {
-		return false
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		if id, ok := sel.X.(*ast.Ident); ok && id.Name == "pgxpool" && sel.Sel.Name == "Config" {
-			return true
-		}
-	}
-	if id, ok := expr.(*ast.Ident); ok && id.Name == "Config" {
-		if pass != nil && pass.Pkg != nil {
-			pkg := pass.Pkg.Name()
-			if pkg == "a12" || pkg == "a" || pkg == "positive" || pkg == "adversarial" || pkg == "negative" {
-				return true
-			}
-		}
-		if file != nil {
-			pkg := file.Name.Name
-			if pkg == "a12" || pkg == "positive" || pkg == "adversarial" || pkg == "negative" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func findEnclosingFunc(file *ast.File, pos token.Pos) *ast.FuncDecl {
-	var enclosing *ast.FuncDecl
-	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok {
-			if fn.Pos() <= pos && pos <= fn.End() {
-				enclosing = fn
-				break
-			}
-		}
-	}
-	return enclosing
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {

@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 
+	"golang.org/x/tools/go/analysis"
+
 	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/directives"
 )
@@ -91,15 +93,14 @@ func checkDSNCall(fset *token.FileSet, dsnExpr ast.Expr, dsn string, dm *directi
 	}
 }
 
-func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
+func extractAllDSNStrings(call *ast.CallExpr, file *ast.File, pass *analysis.Pass) []string {
 	if call == nil || len(call.Args) == 0 {
 		return nil
 	}
-	dsnArgIdx := 0
-	if len(call.Args) >= 2 {
-		dsnArgIdx = 1
+	arg, _ := findCallArg(call, pass)
+	if arg == nil {
+		return nil
 	}
-	arg := call.Args[dsnArgIdx]
 
 	var results []string
 	switch e := arg.(type) {

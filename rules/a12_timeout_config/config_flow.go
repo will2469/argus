@@ -9,12 +9,13 @@ import (
 
 // ConfigStatus tracks presence of required timeout configurations.
 type ConfigStatus struct {
-	HasStatementTimeout bool
-	HasLockTimeout      bool
-	HasMaxConnIdleTime  bool
-	HasMaxConnLifetime  bool
-	HasZeroTimeout      bool
-	ZeroTimeoutParam    string
+	HasStatementTimeout  bool
+	HasLockTimeout       bool
+	HasIdleInTransaction bool
+	HasMaxConnIdleTime   bool
+	HasMaxConnLifetime   bool
+	HasZeroTimeout       bool
+	ZeroTimeoutParam     string
 }
 
 // EvalCompositeLit evaluates a pgxpool.Config composite literal.
@@ -93,6 +94,12 @@ func evalRuntimeParamsExpr(expr ast.Expr, status *ConfigStatus) {
 				status.HasZeroTimeout = true
 				status.ZeroTimeoutParam = "lock_timeout"
 			}
+		case "idle_in_transaction_session_timeout", "idle_in_transaction":
+			status.HasIdleInTransaction = true
+			if isZeroValue(paramVal) {
+				status.HasZeroTimeout = true
+				status.ZeroTimeoutParam = "idle_in_transaction_session_timeout"
+			}
 		}
 	}
 }
@@ -120,24 +127,8 @@ func EvalBlockAssignments(body *ast.BlockStmt, configVarName string) ConfigStatu
 				checkHelperCall(call, configVarName, &status)
 			}
 		case *ast.IfStmt:
-			if s.Init != nil {
-				if assign, ok := s.Init.(*ast.AssignStmt); ok {
-					for i, lhs := range assign.Lhs {
-						checkAssignment(lhs, i, assign.Rhs, configVarName, &status)
-					}
-					for _, rhsExpr := range assign.Rhs {
-						if call, ok := rhsExpr.(*ast.CallExpr); ok {
-							checkHelperCall(call, configVarName, &status)
-						}
-					}
-				}
-			}
-			if call, ok := s.Cond.(*ast.CallExpr); ok {
-				checkHelperCall(call, configVarName, &status)
-			}
 			if s.Body != nil {
-				subStatus := EvalBlockAssignments(s.Body, configVarName)
-				mergeStatus(&status, subStatus)
+				mergeStatus(&status, EvalBlockAssignments(s.Body, configVarName))
 			}
 		}
 	}
@@ -177,6 +168,13 @@ func checkAssignment(lhs ast.Expr, idx int, rhs []ast.Expr, varName string, stat
 			status.ZeroTimeoutParam = "lock_timeout"
 		}
 	}
+	if strings.Contains(lhsStr, "idle_in_transaction") {
+		status.HasIdleInTransaction = true
+		if isZeroValue(rhsVal) {
+			status.HasZeroTimeout = true
+			status.ZeroTimeoutParam = "idle_in_transaction_session_timeout"
+		}
+	}
 
 	if idx < len(rhs) {
 		evalRuntimeParamsExpr(rhs[idx], status)
@@ -190,16 +188,19 @@ func checkHelperCall(call *ast.CallExpr, varName string, status *ConfigStatus) {
 			if strings.Contains(fnName, "configurePostgresPool") || strings.Contains(fnName, "Configure") {
 				status.HasStatementTimeout = true
 				status.HasLockTimeout = true
+				status.HasIdleInTransaction = true
 				status.HasMaxConnIdleTime = true
 				status.HasMaxConnLifetime = true
 			}
 			if strings.Contains(fnName, "setRuntimeParam") && len(call.Args) >= 2 {
 				paramName := extractLitString(call.Args[1])
-				if paramName == "statement_timeout" {
+				switch paramName {
+				case "statement_timeout":
 					status.HasStatementTimeout = true
-				}
-				if paramName == "lock_timeout" {
+				case "lock_timeout":
 					status.HasLockTimeout = true
+				case "idle_in_transaction_session_timeout", "idle_in_transaction":
+					status.HasIdleInTransaction = true
 				}
 			}
 		}
@@ -209,6 +210,7 @@ func checkHelperCall(call *ast.CallExpr, varName string, status *ConfigStatus) {
 func mergeStatus(dst *ConfigStatus, src ConfigStatus) {
 	dst.HasStatementTimeout = dst.HasStatementTimeout || src.HasStatementTimeout
 	dst.HasLockTimeout = dst.HasLockTimeout || src.HasLockTimeout
+	dst.HasIdleInTransaction = dst.HasIdleInTransaction || src.HasIdleInTransaction
 	dst.HasMaxConnIdleTime = dst.HasMaxConnIdleTime || src.HasMaxConnIdleTime
 	dst.HasMaxConnLifetime = dst.HasMaxConnLifetime || src.HasMaxConnLifetime
 	if src.HasZeroTimeout {

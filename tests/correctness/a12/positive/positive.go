@@ -54,7 +54,7 @@ func P2_Indirect(ctx context.Context) {
 
 // P3: Helper Violation — incomplete Config struct literal missing fields.
 func P3_Helper() {
-	_ = Config{ // want `\[ARGUS-A12\] pgxpool.Config missing ConnConfig.RuntimeParams\["statement_timeout"\]` `\[ARGUS-A12\] pgxpool.Config missing ConnConfig.RuntimeParams\["lock_timeout"\]` `\[ARGUS-A12\] pgxpool.Config missing MaxConnIdleTime` `\[ARGUS-A12\] pgxpool.Config missing MaxConnLifetime`
+	_ = Config{ // want `\[ARGUS-A12\] pgxpool.Config missing ConnConfig.RuntimeParams\["statement_timeout"\]` `\[ARGUS-A12\] pgxpool.Config missing ConnConfig.RuntimeParams\["lock_timeout"\]` `\[ARGUS-A12\] pgxpool.Config missing ConnConfig.RuntimeParams\["idle_in_transaction_session_timeout"\]` `\[ARGUS-A12\] pgxpool.Config missing MaxConnIdleTime` `\[ARGUS-A12\] pgxpool.Config missing MaxConnLifetime`
 		ConnConfig: ConnConfig{},
 	}
 }
@@ -66,6 +66,7 @@ func P4_Nested(ctx context.Context) {
 	cfgZero.MaxConnLifetime = 1 * time.Hour
 	cfgZero.ConnConfig.RuntimeParams["statement_timeout"] = "0"
 	cfgZero.ConnConfig.RuntimeParams["lock_timeout"] = "3000"
+	cfgZero.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "15000"
 	_, _ = pgxpool.NewWithConfig(ctx, cfgZero) // want `\[ARGUS-A12\] pgxpool.Config timeout parameter 'statement_timeout' must not be set to 0`
 }
 
