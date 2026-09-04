@@ -32,10 +32,11 @@ make -C "${REPO_ROOT}" build
 echo "=== 3. Testing Path 2: Standalone CLI Runner on 1-SSOT Golden Corpus ==="
 if [ -d "${REPO_ROOT}/tests/correctness/${SHORT_ID}" ]; then
     FIXTURE_DIR="${REPO_ROOT}/tests/correctness/${SHORT_ID}/positive"
-    STANDALONE_OUTPUT="$("${REPO_ROOT}/bin/argus" check --dirs="${FIXTURE_DIR}" --no-report 2>&1 || true)"
+    STANDALONE_OUTPUT="$("${REPO_ROOT}/bin/argus" --dirs="${FIXTURE_DIR}" --no-report 2>&1 || true)"
 else
     FIXTURE_DIR="${REPO_ROOT}/tests/migration/${SHORT_ID}/positive/migrations"
-    STANDALONE_OUTPUT="$("${REPO_ROOT}/bin/argus" check-migrations --dirs="${FIXTURE_DIR}" --no-report 2>&1 || true)"
+    mkdir -p /tmp/empty_parity_dir
+    STANDALONE_OUTPUT="$("${REPO_ROOT}/bin/argus" --dirs="/tmp/empty_parity_dir" --migrations="${FIXTURE_DIR}" --no-report 2>&1 || true)"
 fi
 
 echo "Standalone Output Summary:"

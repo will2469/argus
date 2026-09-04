@@ -12,12 +12,20 @@
 
 Database schema evolution across migration files (`db/migrations/`) **must adhere to the Expand and Contract (Parallel Run) zero-downtime paradigm**.
 
-Directly destructive DDL operations are strictly prohibited in `.up.sql` migration scripts:
+Directly destructive DDL operations are strictly prohibited in `.up.sql` migration scripts unless protected by validated contract evidence:
 
+- **`DROP TABLE`**
 - **`DROP COLUMN`**
-- **`RENAME COLUMN`**
-- **`RENAME TABLE`**
+- **`DROP SCHEMA [CASCADE]`**
+- **`DROP DATABASE`**
+- **`DROP SEQUENCE`**
+- **`DROP VIEW / MATERIALIZED VIEW`**
+- **`DROP TYPE / DOMAIN`**
+- **`DROP CONSTRAINT`** (foreign keys, unique, check constraints)
+- **`DETACH PARTITION`**
+- **`RENAME COLUMN / TABLE`**
 - **`ALTER COLUMN TYPE`** (in-place column type modification)
+- **`ALTER COLUMN SET NOT NULL`** (table-scanning exclusive lock)
 - **`ADD COLUMN ... NOT NULL`** without a `DEFAULT` clause
 - **`TRUNCATE TABLE`**
 
@@ -62,7 +70,7 @@ flowchart TD
         P2["Phase 2 (Dual-Write): Deploy App Release N (writes both old & new columns)"]
         P3["Phase 3 (Backfill): Background worker backfills legacy rows"]
         P4["Phase 4 (Read-Switch): Deploy App Release N+1 (reads exclusively from new column)"]
-        P5["Phase 5 (Contract): Drop old column in Release N+2 with -- argus:contract tag"]
+        P5["Phase 5 (Contract): Drop old column in Release N+2 with verified contract evidence"]
         P1 --> P2 --> P3 --> P4 --> P5
     end
 ```
@@ -71,27 +79,40 @@ flowchart TD
 
 ## 3. How Argus Detects Violations (Static Analysis Architecture)
 
-Argus inspects all `.up.sql` migration files using pure PostgreSQL AST parsing:
+Argus inspects all `.up.sql` migration files through a 4-stage pipeline that rejects dummy contract bypasses:
 
 ```mermaid
-flowchart LR
-    Scan["Scan .up.sql Migrations<br/>(Exclude .down.sql)"] --> Parse["ddl_ast_walker.go:<br/>pg_query_go AST Inspection"]
-    Parse --> CheckDrop{"Drop Table / Drop Column?"}
-    Parse --> CheckRename{"Rename Table / Column?"}
-    Parse --> CheckAlter{"Alter Column Type?"}
-    Parse --> CheckNotNull{"ADD COLUMN NOT NULL<br/>Without DEFAULT?"}
-    CheckDrop -->|Yes| TagCheck{"Has -- argus:contract Tag?"}
-    CheckRename -->|Yes| Report["Report CRITICAL Violation:<br/>Destructive Migration Operation"]
-    CheckAlter -->|Yes| Report
-    CheckNotNull -->|Yes| Report
-    TagCheck -->|No| Report
-    TagCheck -->|Yes| Pass["Pass (Verified Contract Phase)"]
-    CheckDrop -->|No| Pass
+flowchart TD
+    AST["1. SQL AST (pg_query_go)<br/>Parse complete migration query tree"] --> Ops{"2. Exact Destructive Operation?<br/>(DropStmt, AlterTableCmd, Truncate, Rename)"}
+    Ops -->|No| PassSafe["Pass (Safe Non-Breaking DDL)"]
+    Ops -->|Yes| Meta["3. Exact Migration Phase Metadata<br/>(Preceding comments, file headers, contract directory)"]
+    Meta --> Validate{"4. Validated Contract Evidence?<br/>- Phase confirmed as 'contract'<br/>- Valid Release SemVer / tag<br/>- Accountability (issue, approver, reason)<br/>- Rejects dummy words ('anything', 'test')"}
+    Validate -->|Valid Contract Evidence| PassContract["Pass (Verified Contract Phase Drop)"]
+    Validate -->|Invalid or Missing| Report["Report CRITICAL Violation:<br/>Destructive Operation Prohibited"]
 ```
 
-1. **AST Statement Inspection (`ddl_ast_walker.go`):** Identifies `DropStmt`, `TruncateStmt`, `RenameStmt`, and `AlterTableCmd` (`AT_DropColumn`, `AT_AlterColumnType`, `AT_AddColumn` with `CONSTR_NOTNULL` and no `CONSTR_DEFAULT`).
-2. **Contract Phase Tag Verification (`contract_tag.go`):** Validates `-- argus:contract <release_tag>` comments immediately preceding legitimate contract-phase drop statements.
-3. **Standalone Scanner (`standalone_runner.go`):** Provides independent migration directory validation capable of running in pre-commit hooks.
+### 3.1. Comprehensive Destructive Operation Coverage
+
+The AST analyzer (`ddl_ast_walker.go`) evaluates all destructive PostgreSQL operations:
+- `DropStmt`: `OBJECT_TABLE`, `OBJECT_COLUMN`, `OBJECT_SCHEMA`, `OBJECT_DATABASE`, `OBJECT_SEQUENCE`, `OBJECT_VIEW`, `OBJECT_TYPE`, `OBJECT_DOMAIN`.
+- Dedicated drops: `DropdbStmt`, `DropTableSpaceStmt`, `DropRoleStmt`.
+- `AlterTableStmt`: `AT_DropColumn`, `AT_AlterColumnType`, `AT_DropConstraint`, `AT_SetNotNull`, `AT_DetachPartition`, and `AT_AddColumn` (`NOT NULL` without `DEFAULT`).
+- `TruncateStmt`: `TRUNCATE TABLE`.
+- `RenameStmt`: Table or column renames.
+
+### 3.2. Validated Contract Evidence Standard
+
+Simply having `-- argus:contract anything` is **strictly rejected**. Contract evidence must provide structured proof of an authorized contract phase:
+
+1. **Structured Key-Value Standard:**
+   ```sql
+   -- argus:contract phase=contract release=v2.0.0 issue=DB-101 approved_by=dba-team reason="old_token deprecated"
+   ALTER TABLE users DROP COLUMN old_token;
+   ```
+2. **Accountability Requirement:**
+   Every contract tag must declare a valid release identifier (`vX.Y.Z`, `release_v2`, etc.) and an accountability artifact (`issue=...`, `approved_by=...`, or a multi-word deprecation reason).
+3. **Dummy Blacklist:**
+   Generic tokens like `anything`, `dummy`, `test`, `foo`, `bar`, `temp`, `skip`, or bare words without release structure are rejected as security/correctness evasions.
 
 ---
 

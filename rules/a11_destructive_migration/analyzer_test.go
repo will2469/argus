@@ -46,6 +46,14 @@ func TestCheckMigration_DestructiveViolations(t *testing.T) {
 		{"AlterType", "ALTER TABLE users ALTER COLUMN age TYPE BIGINT;"},
 		{"Truncate", "TRUNCATE TABLE users;"},
 		{"AddNotNullNoDefault", "ALTER TABLE users ADD COLUMN email VARCHAR(100) NOT NULL;"},
+		{"DropSchema", "DROP SCHEMA public CASCADE;"},
+		{"DropDatabase", "DROP DATABASE testdb;"},
+		{"DropSequence", "DROP SEQUENCE order_seq;"},
+		{"DropView", "DROP VIEW active_users;"},
+		{"DropType", "DROP TYPE user_role;"},
+		{"DropConstraint", "ALTER TABLE orders DROP CONSTRAINT fk_user;"},
+		{"SetNotNull", "ALTER TABLE users ALTER COLUMN email SET NOT NULL;"},
+		{"DetachPartition", "ALTER TABLE orders DETACH PARTITION orders_2024;"},
 	}
 
 	for _, tc := range cases {
@@ -84,11 +92,48 @@ func TestCheckMigration_Ignored(t *testing.T) {
 	}
 }
 
-func TestContractTag(t *testing.T) {
-	sql := `-- argus:contract release_v2_cleanup
-ALTER TABLE users DROP COLUMN old_token;`
-	issues := CheckMigration("002_contract.sql", sql, nil)
-	if len(issues) != 0 {
-		t.Fatalf("expected 0 issues for contract-tagged migration, got %d", len(issues))
+func TestContractTag_Valid(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{
+			"QualifiedReleaseTask",
+			"-- argus:contract release_v2_cleanup\nALTER TABLE users DROP COLUMN old_token;",
+		},
+		{
+			"StructuredKeyValues",
+			"-- argus:contract phase=contract release=v2.0.0 issue=DB-101 approved_by=dba\nALTER TABLE users DROP COLUMN old_token;",
+		},
+		{
+			"FileHeaderPhase",
+			"-- argus:phase contract release=v2.0.0 issue=MIG-123\nALTER TABLE users DROP COLUMN old_token;",
+		},
+	}
+
+	for _, tc := range cases {
+		issues := CheckMigration(tc.name+".sql", tc.sql, nil)
+		if len(issues) != 0 {
+			t.Fatalf("[%s] expected 0 issues for valid contract evidence, got %d", tc.name, len(issues))
+		}
+	}
+}
+
+func TestContractTag_DummyBypassRejected(t *testing.T) {
+	dummyBypasses := []struct {
+		name string
+		sql  string
+	}{
+		{"AnythingDummy", "-- argus:contract anything\nDROP TABLE users;"},
+		{"TestDummy", "-- argus:contract test\nDROP TABLE users;"},
+		{"FooDummy", "-- argus:contract foo\nDROP TABLE users;"},
+		{"NoAccountability", "-- argus:contract v1.0.0\nDROP TABLE users;"},
+	}
+
+	for _, tc := range dummyBypasses {
+		issues := CheckMigration(tc.name+".sql", tc.sql, nil)
+		if len(issues) == 0 {
+			t.Errorf("[%s] CORRECTION NEEDED: dummy contract bypass must be REJECTED, but was allowed", tc.name)
+		}
 	}
 }

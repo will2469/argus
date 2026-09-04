@@ -2,7 +2,6 @@ package a11_test
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/will2469/argus/rules/a11_destructive_migration"
@@ -25,16 +24,28 @@ func TestA11_PositiveCorpus(t *testing.T) {
 		t.Logf("  Line %d [%s]: %s", iss.Line, filepath.Base(iss.Filename), iss.Message)
 	}
 
-	if len(issues) != 1 {
-		t.Fatalf("Positive Gate FAILED: expected exactly 1 issue from positive migrations, got %d", len(issues))
+	if len(issues) != 6 {
+		t.Fatalf("Positive Gate FAILED: expected exactly 6 issues from positive migrations, got %d", len(issues))
 	}
 
-	base := filepath.Base(issues[0].Filename)
-	if base != "001_destructive.up.sql" {
-		t.Errorf("expected issue in 001_destructive.up.sql, got %s", base)
+	detectedFiles := make(map[string]bool)
+	for _, iss := range issues {
+		detectedFiles[filepath.Base(iss.Filename)] = true
 	}
-	if !strings.Contains(issues[0].Message, "DROP COLUMN") {
-		t.Errorf("expected DROP COLUMN in issue message, got: %s", issues[0].Message)
+
+	expectedFiles := []string{
+		"001_destructive.up.sql",
+		"002_dummy_bypass.up.sql",
+		"003_drop_schema.up.sql",
+		"004_drop_constraint.up.sql",
+		"005_set_not_null.up.sql",
+		"006_detach_partition.up.sql",
+	}
+
+	for _, ef := range expectedFiles {
+		if !detectedFiles[ef] {
+			t.Errorf("expected violation in %s, but none was detected", ef)
+		}
 	}
 }
 
@@ -123,8 +134,8 @@ func TestA11_StandaloneRunner_DualPathParity(t *testing.T) {
 			posIssues++
 		}
 	}
-	if posIssues != 1 {
-		t.Errorf("Dual-Path Parity FAILED on positive: expected 1 issue from standalone runner, got %d", posIssues)
+	if posIssues != 6 {
+		t.Errorf("Dual-Path Parity FAILED on positive: expected 6 issues from standalone runner, got %d", posIssues)
 	}
 
 	auditCfgNeg := runner.AuditConfig{

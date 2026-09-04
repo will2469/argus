@@ -32,7 +32,26 @@ func CheckMigration(filename, content string, dm *directives.DirectiveMap) []mig
 				reportDestructive(filename, content, rawStmt, "DROP TABLE", &issues, dm)
 			case pg_query.ObjectType_OBJECT_COLUMN:
 				reportDestructive(filename, content, rawStmt, "DROP COLUMN", &issues, dm)
+			case pg_query.ObjectType_OBJECT_SCHEMA:
+				reportDestructive(filename, content, rawStmt, "DROP SCHEMA", &issues, dm)
+			case pg_query.ObjectType_OBJECT_DATABASE:
+				reportDestructive(filename, content, rawStmt, "DROP DATABASE", &issues, dm)
+			case pg_query.ObjectType_OBJECT_SEQUENCE:
+				reportDestructive(filename, content, rawStmt, "DROP SEQUENCE", &issues, dm)
+			case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
+				reportDestructive(filename, content, rawStmt, "DROP VIEW", &issues, dm)
+			case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
+				reportDestructive(filename, content, rawStmt, "DROP TYPE", &issues, dm)
 			}
+		}
+		if rawStmt.Stmt.GetDropdbStmt() != nil {
+			reportDestructive(filename, content, rawStmt, "DROP DATABASE", &issues, dm)
+		}
+		if rawStmt.Stmt.GetDropTableSpaceStmt() != nil {
+			reportDestructive(filename, content, rawStmt, "DROP TABLESPACE", &issues, dm)
+		}
+		if rawStmt.Stmt.GetDropRoleStmt() != nil {
+			reportDestructive(filename, content, rawStmt, "DROP ROLE", &issues, dm)
 		}
 
 		// 2. TRUNCATE statements
@@ -52,30 +71,37 @@ func CheckMigration(filename, content string, dm *directives.DirectiveMap) []mig
 				if cmd == nil {
 					continue
 				}
-				if cmd.Subtype == pg_query.AlterTableType_AT_DropColumn {
+				switch cmd.Subtype {
+				case pg_query.AlterTableType_AT_DropColumn:
 					reportDestructive(filename, content, rawStmt, "DROP COLUMN", &issues, dm)
-				}
-				if cmd.Subtype == pg_query.AlterTableType_AT_AlterColumnType {
+				case pg_query.AlterTableType_AT_AlterColumnType:
 					reportDestructive(filename, content, rawStmt, "ALTER COLUMN TYPE", &issues, dm)
-				}
-				if cmd.Subtype == pg_query.AlterTableType_AT_AddColumn && cmd.Def != nil {
-					if colDef := cmd.Def.GetColumnDef(); colDef != nil {
-						hasNotNull := false
-						hasDefault := false
-						for _, c := range colDef.Constraints {
-							con := c.GetConstraint()
-							if con == nil {
-								continue
+				case pg_query.AlterTableType_AT_DropConstraint:
+					reportDestructive(filename, content, rawStmt, "DROP CONSTRAINT", &issues, dm)
+				case pg_query.AlterTableType_AT_SetNotNull:
+					reportDestructive(filename, content, rawStmt, "ALTER COLUMN SET NOT NULL", &issues, dm)
+				case pg_query.AlterTableType_AT_DetachPartition, pg_query.AlterTableType_AT_DetachPartitionFinalize:
+					reportDestructive(filename, content, rawStmt, "DETACH PARTITION", &issues, dm)
+				case pg_query.AlterTableType_AT_AddColumn:
+					if cmd.Def != nil {
+						if colDef := cmd.Def.GetColumnDef(); colDef != nil {
+							hasNotNull := false
+							hasDefault := false
+							for _, c := range colDef.Constraints {
+								con := c.GetConstraint()
+								if con == nil {
+									continue
+								}
+								if con.Contype == pg_query.ConstrType_CONSTR_NOTNULL {
+									hasNotNull = true
+								}
+								if con.Contype == pg_query.ConstrType_CONSTR_DEFAULT || con.Contype == pg_query.ConstrType_CONSTR_GENERATED {
+									hasDefault = true
+								}
 							}
-							if con.Contype == pg_query.ConstrType_CONSTR_NOTNULL {
-								hasNotNull = true
+							if hasNotNull && !hasDefault {
+								reportDestructive(filename, content, rawStmt, "ADD COLUMN NOT NULL without DEFAULT", &issues, dm)
 							}
-							if con.Contype == pg_query.ConstrType_CONSTR_DEFAULT {
-								hasDefault = true
-							}
-						}
-						if hasNotNull && !hasDefault {
-							reportDestructive(filename, content, rawStmt, "ADD COLUMN NOT NULL without DEFAULT", &issues, dm)
 						}
 					}
 				}
@@ -92,15 +118,28 @@ func reportDestructive(filename, content string, rawStmt *pg_query.RawStmt, op s
 		line = migration.FindLineFromOffset(content, int(rawStmt.StmtLocation))
 	}
 
-	if IsContractTagged(filename, content, line, dm) {
+	// 1. Check administrative ignore directive
+	if dm != nil && dm.IsLineIgnored(filename, line, RuleCode) {
 		return
+	}
+
+	// 2. Extract migration phase metadata & validate contract evidence
+	meta := ExtractMigrationPhaseMetadata(filename, content, line)
+	res := ValidateContractEvidence(meta)
+	if res.IsValid {
+		return
+	}
+
+	msg := fmt.Sprintf("Destructive operation %s prohibited in .up.sql migration; apply expand-contract pattern", op)
+	if res.Reason != "" && res.Reason != "no contract phase declared" {
+		msg = fmt.Sprintf("Destructive operation %s prohibited in .up.sql migration; %s", op, res.Reason)
 	}
 
 	*issues = append(*issues, migration.Issue{
 		Rule:     RuleCode,
 		Filename: filename,
 		Line:     line,
-		Message:  fmt.Sprintf("Destructive operation %s prohibited in .up.sql migration; apply expand-contract pattern", op),
+		Message:  msg,
 		Severity: "CRITICAL",
 	})
 }

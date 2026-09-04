@@ -1,4 +1,4 @@
-package positive // want `\[ARGUS-A11\] 001_destructive.up.sql: Destructive operation DROP COLUMN prohibited in .up.sql migration; apply expand-contract pattern`
+package positive // want `\[ARGUS-A11\] 001_destructive.up.sql: Destructive operation DROP COLUMN prohibited in .up.sql migration; apply expand-contract pattern` `\[ARGUS-A11\] 002_dummy_bypass.up.sql: Destructive operation DROP TABLE prohibited in .up.sql migration; dummy release tag "anything" is not valid contract evidence` `\[ARGUS-A11\] 003_drop_schema.up.sql: Destructive operation DROP SCHEMA prohibited in .up.sql migration; apply expand-contract pattern` `\[ARGUS-A11\] 004_drop_constraint.up.sql: Destructive operation DROP CONSTRAINT prohibited in .up.sql migration; apply expand-contract pattern` `\[ARGUS-A11\] 005_set_not_null.up.sql: Destructive operation ALTER COLUMN SET NOT NULL prohibited in .up.sql migration; apply expand-contract pattern` `\[ARGUS-A11\] 006_detach_partition.up.sql: Destructive operation DETACH PARTITION prohibited in .up.sql migration; apply expand-contract pattern`
 
 // Dummy exports a no-op symbol to satisfy package compilation.
 func Dummy() {}
