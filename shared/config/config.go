@@ -250,11 +250,21 @@ func (c *Config) IsRuleEnabled(code string) bool {
 	if c == nil || c.Rules == nil {
 		return true
 	}
-	r, exists := c.Rules[code]
-	if !exists {
-		return true
+	cleanCode := strings.ToUpper(strings.TrimSpace(code))
+	if r, exists := c.Rules[cleanCode]; exists {
+		return r.Enabled
 	}
-	return r.Enabled
+	if !strings.HasPrefix(cleanCode, "ARGUS-") {
+		if r, exists := c.Rules["ARGUS-"+cleanCode]; exists {
+			return r.Enabled
+		}
+	} else {
+		short := strings.TrimPrefix(cleanCode, "ARGUS-")
+		if r, exists := c.Rules[short]; exists {
+			return r.Enabled
+		}
+	}
+	return true
 }
 
 // GetStringSlice retrieves a slice of strings option for a rule with fallback to defaultVal.

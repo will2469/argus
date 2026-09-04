@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/will2469/argus/shared/config"
 )
 
 func TestAuditConfig_CustomDirsAndMigrationGrant(t *testing.T) {
@@ -91,3 +93,138 @@ GRANT ALL PRIVILEGES ON TABLE test2 TO app_user;
 		t.Errorf("Expected to find ARGUS-A15 violation in bad migration, got issues: %v", result.Issues)
 	}
 }
+
+func TestAuditConfig_DisabledGoRule(t *testing.T) {
+	tempDir := t.TempDir()
+
+	goDir := filepath.Join(tempDir, "service")
+	if err := os.MkdirAll(goDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	// Go file violating ARGUS-A24 (multi-tenant query missing tenant_id)
+	goFile := filepath.Join(goDir, "user_repo.go")
+	goSrc := `package service
+
+import "context"
+
+type DB interface {
+	Query(ctx context.Context, sql string, args ...any)
+}
+
+func GetUsers(ctx context.Context, db DB) {
+	db.Query(ctx, "SELECT id, name FROM tenant_data WHERE active = true")
+}
+`
+	if err := os.WriteFile(goFile, []byte(goSrc), 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// 1. Audit with ARGUS-A24 disabled
+	cfgDisabled := config.DefaultConfig()
+	cfgDisabled.Rules["ARGUS-A24"] = config.RuleConfig{Enabled: false}
+
+	resDisabled, err := RunAuditWithConfig(AuditConfig{
+		RootDir:       tempDir,
+		ScanDirs:      []string{goDir},
+		MigrationDirs: []string{tempDir},
+		Config:        cfgDisabled,
+	})
+	if err != nil {
+		t.Fatalf("RunAuditWithConfig failed: %v", err)
+	}
+
+	for _, issue := range resDisabled.Issues {
+		if issue.Rule == "TENANT_ISOLATION_LEAK" || issue.Rule == "ARGUS-A24" {
+			t.Fatalf("expected 0 A24 issues when disabled, but found: %+v", issue)
+		}
+	}
+
+	// 2. Audit with ARGUS-A24 enabled
+	cfgEnabled := config.DefaultConfig()
+	cfgEnabled.Rules["ARGUS-A24"] = config.RuleConfig{Enabled: true}
+
+	resEnabled, err := RunAuditWithConfig(AuditConfig{
+		RootDir:       tempDir,
+		ScanDirs:      []string{goDir},
+		MigrationDirs: []string{tempDir},
+		Config:        cfgEnabled,
+	})
+	if err != nil {
+		t.Fatalf("RunAuditWithConfig failed: %v", err)
+	}
+
+	foundA24 := false
+	for _, issue := range resEnabled.Issues {
+		if issue.Rule == "TENANT_ISOLATION_LEAK" || issue.Rule == "ARGUS-A24" {
+			foundA24 = true
+			break
+		}
+	}
+	if !foundA24 {
+		t.Errorf("expected ARGUS-A24 violation when enabled, got issues: %+v", resEnabled.Issues)
+	}
+}
+
+func TestAuditConfig_DisabledMigrationRule(t *testing.T) {
+	tempDir := t.TempDir()
+
+	migDir := filepath.Join(tempDir, "migrations")
+	if err := os.MkdirAll(migDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	migFile := filepath.Join(migDir, "001_bad.up.sql")
+	migSrc := `CREATE TABLE test (id INT);
+GRANT ALL PRIVILEGES ON TABLE test TO app_user;
+`
+	if err := os.WriteFile(migFile, []byte(migSrc), 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// 1. Audit with ARGUS-A15 disabled
+	cfgDisabled := config.DefaultConfig()
+	cfgDisabled.Rules["ARGUS-A15"] = config.RuleConfig{Enabled: false}
+
+	resDisabled, err := RunAuditWithConfig(AuditConfig{
+		RootDir:       tempDir,
+		ScanDirs:      []string{tempDir},
+		MigrationDirs: []string{migDir},
+		Config:        cfgDisabled,
+	})
+	if err != nil {
+		t.Fatalf("RunAuditWithConfig failed: %v", err)
+	}
+
+	for _, issue := range resDisabled.Issues {
+		if issue.Rule == "ARGUS-A15" || issue.Rule == "FORBIDDEN_DDL_APP_ROLE_GRANT" {
+			t.Fatalf("expected 0 A15 issues when disabled, but found: %+v", issue)
+		}
+	}
+
+	// 2. Audit with ARGUS-A15 enabled
+	cfgEnabled := config.DefaultConfig()
+	cfgEnabled.Rules["ARGUS-A15"] = config.RuleConfig{Enabled: true}
+
+	resEnabled, err := RunAuditWithConfig(AuditConfig{
+		RootDir:       tempDir,
+		ScanDirs:      []string{tempDir},
+		MigrationDirs: []string{migDir},
+		Config:        cfgEnabled,
+	})
+	if err != nil {
+		t.Fatalf("RunAuditWithConfig failed: %v", err)
+	}
+
+	foundA15 := false
+	for _, issue := range resEnabled.Issues {
+		if issue.Rule == "ARGUS-A15" {
+			foundA15 = true
+			break
+		}
+	}
+	if !foundA15 {
+		t.Errorf("expected ARGUS-A15 violation when enabled, got issues: %+v", resEnabled.Issues)
+	}
+}
+

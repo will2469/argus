@@ -46,25 +46,29 @@ func scanMigrationDirectories(migrationDirs []string, rootDir string, tracker *M
 		dm := directives.NewDirectiveMap()
 
 		// 1. Check A13: Missing Down Migrations
-		var a13Issues []migration.Issue
-		if fsys != nil {
-			a13Issues = a13_missing_down_migration.ScanDirectoryFS(fsys, targetDir, dm)
-		} else {
-			a13Issues = a13_missing_down_migration.ScanDirectory(targetDir, dm)
-		}
-		for _, issue := range a13Issues {
-			addMigrationIssue(issue, "ARGUS-A13", rootDir, tracker)
+		if isRuleActive(cfg, a13_missing_down_migration.RuleCode) {
+			var a13Issues []migration.Issue
+			if fsys != nil {
+				a13Issues = a13_missing_down_migration.ScanDirectoryFS(fsys, targetDir, dm)
+			} else {
+				a13Issues = a13_missing_down_migration.ScanDirectory(targetDir, dm)
+			}
+			for _, issue := range a13Issues {
+				addMigrationIssue(issue, "ARGUS-A13", rootDir, tracker)
+			}
 		}
 
 		// 2. Check A29: Unindexed Foreign Keys across migration directory
-		var a29Issues []migration.Issue
-		if fsys != nil {
-			a29Issues = a29_unindexed_fk.ScanMigrationDirFS(fsys, targetDir, dm, cfg)
-		} else {
-			a29Issues = a29_unindexed_fk.ScanMigrationDir(targetDir, dm, cfg)
-		}
-		for _, issue := range a29Issues {
-			addMigrationIssue(issue, "ARGUS-A29", rootDir, tracker)
+		if isRuleActive(cfg, a29_unindexed_fk.RuleCode) {
+			var a29Issues []migration.Issue
+			if fsys != nil {
+				a29Issues = a29_unindexed_fk.ScanMigrationDirFS(fsys, targetDir, dm, cfg)
+			} else {
+				a29Issues = a29_unindexed_fk.ScanMigrationDir(targetDir, dm, cfg)
+			}
+			for _, issue := range a29Issues {
+				addMigrationIssue(issue, "ARGUS-A29", rootDir, tracker)
+			}
 		}
 
 		// 3. Per-file migration checks: A11, A15, A27, A28, A30
@@ -102,28 +106,38 @@ func scanMigrationDirectories(migrationDirs []string, rootDir string, tracker *M
 			fileDm := directives.ParseSQLDirectives(content, file)
 
 			// A11: Destructive Migrations
-			for _, issue := range a11_destructive_migration.CheckMigration(file, content, fileDm) {
-				addMigrationIssue(issue, "ARGUS-A11", rootDir, tracker)
+			if isRuleActive(cfg, a11_destructive_migration.RuleCode) {
+				for _, issue := range a11_destructive_migration.CheckMigration(file, content, fileDm) {
+					addMigrationIssue(issue, "ARGUS-A11", rootDir, tracker)
+				}
 			}
 
 			// A15: Forbidden DDL App Role Grants
-			for _, issue := range a15_ddl_grant.CheckMigration(file, content, fileDm, reg) {
-				addMigrationIssue(issue, "ARGUS-A15", rootDir, tracker)
+			if isRuleActive(cfg, a15_ddl_grant.RuleCode) {
+				for _, issue := range a15_ddl_grant.CheckMigration(file, content, fileDm, reg) {
+					addMigrationIssue(issue, "ARGUS-A15", rootDir, tracker)
+				}
 			}
 
 			// A27: Non-concurrent Index Creation
-			for _, issue := range a27_concurrent_index.CheckMigration(file, content, fileDm) {
-				addMigrationIssue(issue, "ARGUS-A27", rootDir, tracker)
+			if isRuleActive(cfg, a27_concurrent_index.RuleCode) {
+				for _, issue := range a27_concurrent_index.CheckMigration(file, content, fileDm) {
+					addMigrationIssue(issue, "ARGUS-A27", rootDir, tracker)
+				}
 			}
 
 			// A28: Table Locking Constraint Addition
-			for _, issue := range a28_constraint_lock.CheckMigration(file, content, fileDm) {
-				addMigrationIssue(issue, "ARGUS-A28", rootDir, tracker)
+			if isRuleActive(cfg, a28_constraint_lock.RuleCode) {
+				for _, issue := range a28_constraint_lock.CheckMigration(file, content, fileDm) {
+					addMigrationIssue(issue, "ARGUS-A28", rootDir, tracker)
+				}
 			}
 
 			// A30: Timestamp without Timezone
-			for _, issue := range a30_timestamptz.CheckMigration(file, content, fileDm) {
-				addMigrationIssue(issue, "ARGUS-A30", rootDir, tracker)
+			if isRuleActive(cfg, a30_timestamptz.RuleCode) {
+				for _, issue := range a30_timestamptz.CheckMigration(file, content, fileDm) {
+					addMigrationIssue(issue, "ARGUS-A30", rootDir, tracker)
+				}
 			}
 		}
 	}

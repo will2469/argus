@@ -6,7 +6,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/will2469/argus/shared/config"
 )
+
+// isRuleActive checks whether a rule is enabled in the configuration.
+func isRuleActive(cfg *config.Config, code string) bool {
+	return cfg == nil || cfg.IsRuleEnabled(code)
+}
+
 
 func findFilesWithExt(root, ext string) []string {
 	var files []string

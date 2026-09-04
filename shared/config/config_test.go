@@ -19,6 +19,25 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestIsRuleEnabled_PrefixAndCaseResilience(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Rules["ARGUS-A24"] = RuleConfig{Enabled: false}
+
+	if cfg.IsRuleEnabled("ARGUS-A24") {
+		t.Errorf("expected ARGUS-A24 to be disabled")
+	}
+	if cfg.IsRuleEnabled("A24") {
+		t.Errorf("expected A24 (short alias) to be disabled")
+	}
+	if cfg.IsRuleEnabled("argus-a24") {
+		t.Errorf("expected lowercase argus-a24 to be disabled")
+	}
+	if !cfg.IsRuleEnabled("A01") {
+		t.Errorf("expected A01 (short alias) to be enabled")
+	}
+}
+
+
 func TestLoadConfigFallback(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg, err := LoadConfig(tempDir)
