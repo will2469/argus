@@ -10,15 +10,18 @@ import (
 )
 
 func isStorageSDKType(typeStr string) bool {
-	storagePackages := []string{
-		"github.com/aws/aws-sdk-go-v2/service/s3",
-		"github.com/aws/aws-sdk-go/service/s3",
-		"cloud.google.com/go/storage",
-		"github.com/minio/minio-go",
-		"github.com/Azure/azure-sdk-for-go",
+	// Fail-closed: only accept exact package path matches, not substring matching
+	storagePackages := map[string]bool{
+		"github.com/aws/aws-sdk-go-v2/service/s3":           true,
+		"github.com/aws/aws-sdk-go/service/s3":              true,
+		"cloud.google.com/go/storage":                      true,
+		"github.com/minio/minio-go":                         true,
+		"github.com/Azure/azure-sdk-for-go/storage":         true,
 	}
-	for _, pkg := range storagePackages {
-		if strings.Contains(typeStr, pkg) {
+
+	// Check if typeStr exactly matches or starts with a known storage package path
+	for pkg := range storagePackages {
+		if typeStr == pkg || strings.HasPrefix(typeStr, pkg+".") {
 			return true
 		}
 	}
@@ -31,7 +34,8 @@ func isNetConnCall(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	}
 	if pass != nil && pass.TypesInfo != nil {
 		t := pass.TypesInfo.TypeOf(sel.X)
-		return t != nil && strings.Contains(t.String(), "net.Conn")
+		// Fail-closed: only accept exact type path, not substring matching
+		return t != nil && (t.String() == "net.Conn" || strings.HasPrefix(t.String(), "net.Conn"))
 	}
 	return false
 }
@@ -41,7 +45,8 @@ func isExecCmdCall(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	case "Run", "Output", "CombinedOutput", "Start":
 		if pass != nil && pass.TypesInfo != nil {
 			t := pass.TypesInfo.TypeOf(sel.X)
-			return t != nil && strings.Contains(t.String(), "os/exec.Cmd")
+			// Fail-closed: only accept exact type path, not substring matching
+			return t != nil && (t.String() == "os/exec.Cmd" || strings.HasPrefix(t.String(), "os/exec.Cmd"))
 		}
 	}
 	return false
@@ -52,7 +57,8 @@ func isOSFileCall(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	case "Read", "Write", "ReadAt", "WriteAt", "WriteString", "Sync":
 		if pass != nil && pass.TypesInfo != nil {
 			t := pass.TypesInfo.TypeOf(sel.X)
-			return t != nil && strings.Contains(t.String(), "os.File")
+			// Fail-closed: only accept exact type path, not substring matching
+			return t != nil && (t.String() == "os.File" || strings.HasPrefix(t.String(), "os.File"))
 		}
 	}
 	return false

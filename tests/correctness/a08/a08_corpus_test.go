@@ -34,13 +34,13 @@ func TestA08_PositiveCorpus(t *testing.T) {
 
 	t.Logf("=== Positive Corpus Results (%d issues found) ===", len(issues))
 	expectedLines := map[int]string{
-		33: "P1_Obvious",
-		47: "P2_Indirect",
-		56: "P3_Helper",
-		69: "P4_Nested",
-		77: "P5_Alias",
-		85: "P6_StorageUpload",
-		98: "P7_NetDial",
+		34:  "P1_Obvious",
+		48:  "P2_Indirect",
+		62:  "P3_Helper",
+		80:  "P4_Nested",
+		93:  "P5_Alias",
+		106: "P6_StoragePutObject",
+		119: "P7_NetDial",
 	}
 
 	foundLines := make(map[int]bool)

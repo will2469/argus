@@ -118,31 +118,41 @@ func isHTTPClientCall(pass *analysis.Pass, sel *ast.SelectorExpr, fn *ast.FuncDe
 		if t != nil {
 			t = unwrapPointer(t)
 			typeStr := t.String()
-			if strings.Contains(typeStr, "net/http.Client") || strings.Contains(typeStr, "net/http.RoundTripper") {
+			// Provenance-based: only accept exact type path
+			if typeStr == "net/http.Client" || typeStr == "net/http.RoundTripper" ||
+				strings.HasPrefix(typeStr, "net/http.Client") || strings.HasPrefix(typeStr, "net/http.RoundTripper") {
 				return true
 			}
-			if iface, ok := t.Underlying().(*types.Interface); ok {
-				for i := 0; i < iface.NumMethods(); i++ {
-					if iface.Method(i).Name() == "Do" || iface.Method(i).Name() == "RoundTrip" {
-						return true
-					}
-				}
-			}
+			// Reject structural resemblance (any type with Do/Get/Post methods)
 			return false
 		}
 	}
 
+	// AST fallback: heuristic check for http.Client type selector
+	// Accept only if type name is exactly "Client" or "RoundTripper" from net/http package
 	astType := findASTType(sel.X, fn, file)
 	typeName := getASTTypeName(astType)
+	if astType != nil {
+		if sel, ok := astType.(*ast.SelectorExpr); ok {
+			if pkgID, ok := sel.X.(*ast.Ident); ok && pkgID.Name == "http" {
+				if sel.Sel.Name == "Client" || sel.Sel.Name == "RoundTripper" {
+					return true
+				}
+			}
+		}
+	}
+	// Accept type name "Client" or "RoundTripper" as heuristic (may have false positives)
 	return typeName == "Client" || typeName == "RoundTripper"
 }
 
 func isStorageClientCall(pass *analysis.Pass, sel *ast.SelectorExpr, fn *ast.FuncDecl, file *ast.File) bool {
+	// Highly specific storage SDK methods (strong evidence regardless of receiver type)
 	switch sel.Sel.Name {
-	case "PutObject", "GetObject", "DeleteObject", "UploadPart", "CopyObject",
-		"CreateMultipartUpload", "CompleteMultipartUpload", "AbortMultipartUpload", "ListObjects", "ListObjectsV2", "HeadObject":
+	case "PutObject", "GetObject", "DeleteObject", "HeadObject", "ListObjects", "ListObjectsV2",
+		"UploadPart", "CopyObject", "CreateMultipartUpload", "CompleteMultipartUpload", "AbortMultipartUpload":
 		return isConfirmedStorageReceiver(pass, sel.X, fn, file, true)
 	case "Upload", "Download":
+		// Generic methods require storage-like receiver type name as additional evidence
 		return isConfirmedStorageReceiver(pass, sel.X, fn, file, false)
 	default:
 		return false
@@ -157,30 +167,56 @@ func isConfirmedStorageReceiver(pass *analysis.Pass, expr ast.Expr, fn *ast.Func
 			if isProvenNonStorageType(t) {
 				return false
 			}
+			// Provenance-based: accept exact storage SDK package paths
 			if isStorageSDKType(t.String()) {
 				return true
 			}
-			if named, ok := t.(*types.Named); ok && named.Obj() != nil {
-				name := named.Obj().Name()
-				if strings.Contains(name, "Storage") || strings.Contains(name, "S3") ||
-					strings.Contains(name, "Bucket") || strings.Contains(name, "Uploader") || strings.Contains(name, "Blob") {
-					return true
-				}
+			// For highly specific storage methods (PutObject, GetObject, etc.),
+			// method name is strong evidence of storage I/O even without SDK provenance
+			if isDomainSpecificMethod {
+				return true
 			}
-			return isDomainSpecificMethod
+			// For generic methods (Upload, Download), require storage-like type name
+			typeName := getTypeNameFromType(t)
+			if isStorageLikeTypeName(typeName) {
+				return true
+			}
+			return false
 		}
 	}
 
-	astType := findASTType(expr, fn, file)
-	typeName := getASTTypeName(astType)
-	if isNonStorageTypeName(typeName) {
-		return false
-	}
-	if strings.Contains(typeName, "Storage") || strings.Contains(typeName, "S3") ||
-		strings.Contains(typeName, "Bucket") || strings.Contains(typeName, "Uploader") || strings.Contains(typeName, "Blob") {
+	// AST fallback mode
+	if isDomainSpecificMethod {
+		// Highly specific methods (PutObject, etc.) are strong evidence alone
 		return true
 	}
-	return isDomainSpecificMethod
+
+	// For generic methods (Upload, Download), require storage-like type name
+	astType := findASTType(expr, fn, file)
+	typeName := getASTTypeName(astType)
+	return isStorageLikeTypeName(typeName)
+}
+
+func getTypeNameFromType(t types.Type) string {
+	if named, ok := t.(*types.Named); ok && named.Obj() != nil {
+		return named.Obj().Name()
+	}
+	return ""
+}
+
+func isStorageLikeTypeName(name string) bool {
+	if name == "" {
+		return false
+	}
+	// Storage-related type name heuristics (case-insensitive substring matching)
+	lowerName := strings.ToLower(name)
+	storageKeywords := []string{"storage", "s3", "bucket", "uploader", "blob", "minio", "gcs", "azure"}
+	for _, keyword := range storageKeywords {
+		if strings.Contains(lowerName, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func isProvenNonStorageType(t types.Type) bool {

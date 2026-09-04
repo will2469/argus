@@ -65,7 +65,9 @@ func isDBReceiver(pass *analysis.Pass, fun ast.Expr, fn *ast.FuncDecl, file *ast
 		}
 	}
 
-	// 2. AST-level Symbol / Type Verification (pass == nil or unresolved)
+	// 2. AST-level fallback (pass == nil or unresolved type): heuristic package selector matching
+	// Accept known database package selectors (sql.DB, pgxpool.Pool, etc.)
+	// This is a heuristic and may produce false negatives for wrapped abstractions
 	astType := findASTType(sel.X, fn, file)
 	if astType != nil && isProvenDBPoolASTType(astType, file) {
 		return true
@@ -99,50 +101,48 @@ func isProvenDBPoolInterface(t types.Type) bool {
 	}
 	t = unwrapPointer(t)
 
-	var hasBeginWithTx, hasBeginFuncWithTx bool
-	checkMethod := func(fn *types.Func) {
-		sig, ok := fn.Type().(*types.Signature)
-		if !ok {
-			return
+	// Provenance-based: only accept exact package path matches
+	if named, ok := t.(*types.Named); ok && named.Obj() != nil {
+		pkg := named.Obj().Pkg()
+		if pkg == nil {
+			return false
 		}
-		switch fn.Name() {
-		case "Begin", "BeginTx":
-			res := sig.Results()
-			if res != nil && res.Len() >= 1 {
-				for i := 0; i < res.Len(); i++ {
-					if isProvenDBTxType(res.At(i).Type()) {
-						hasBeginWithTx = true
-					}
-				}
-			}
-		case "BeginFunc":
-			params := sig.Params()
-			if params != nil && params.Len() >= 1 {
-				for i := 0; i < params.Len(); i++ {
-					if fnSig, ok := params.At(i).Type().(*types.Signature); ok {
-						if fnSig.Params() != nil && fnSig.Params().Len() >= 1 {
-							if isProvenDBTxType(fnSig.Params().At(0).Type()) {
-								hasBeginFuncWithTx = true
-							}
-						}
-					}
-				}
-			}
+		path := pkg.Path()
+		name := named.Obj().Name()
+
+		// Exact package/type matches only
+		switch path {
+		case "github.com/jackc/pgx/v5/pgxpool":
+			return name == "Pool"
+		case "github.com/jackc/pgx/v4/pgxpool":
+			return name == "Pool"
+		case "database/sql":
+			return name == "DB"
 		}
 	}
 
-	if named, ok := t.(*types.Named); ok {
-		for i := 0; i < named.NumMethods(); i++ {
-			checkMethod(named.Method(i))
-		}
+	// Heuristic fallback: for unknown packages, check if interface has transaction-like methods
+	// This is less strict but necessary for detecting wrapped abstractions
+	return hasTransactionMethods(t)
+}
+
+func hasTransactionMethods(t types.Type) bool {
+	iface, ok := t.Underlying().(*types.Interface)
+	if !ok {
+		return false
 	}
-	if iface, ok := t.Underlying().(*types.Interface); ok {
-		for i := 0; i < iface.NumMethods(); i++ {
-			checkMethod(iface.Method(i))
+
+	// Check if interface has Begin/BeginFunc/BeginTx methods (transaction pool indicators)
+	hasBegin := false
+	for i := 0; i < iface.NumMethods(); i++ {
+		method := iface.Method(i)
+		switch method.Name() {
+		case "Begin", "BeginFunc", "BeginTx", "ExecuteTx", "WithTx":
+			hasBegin = true
 		}
 	}
 
-	return hasBeginWithTx || hasBeginFuncWithTx
+	return hasBegin
 }
 
 func isProvenDBTxType(t types.Type) bool {
@@ -150,30 +150,10 @@ func isProvenDBTxType(t types.Type) bool {
 		return false
 	}
 	t = unwrapPointer(t)
-	if callsite.IsPgxOrSQLType(t) {
-		return true
-	}
 
-	var hasExecOrQuery bool
-	checkTxFunc := func(fn *types.Func) {
-		switch fn.Name() {
-		case "Exec", "ExecContext", "Query", "QueryRow", "SendBatch":
-			hasExecOrQuery = true
-		}
-	}
-
-	if named, ok := t.(*types.Named); ok {
-		for i := 0; i < named.NumMethods(); i++ {
-			checkTxFunc(named.Method(i))
-		}
-	}
-	if iface, ok := t.Underlying().(*types.Interface); ok {
-		for i := 0; i < iface.NumMethods(); i++ {
-			checkTxFunc(iface.Method(i))
-		}
-	}
-
-	return hasExecOrQuery
+	// Fail-closed: only accept exact type verification via callsite.IsPgxOrSQLType
+	// Reject structural method set analysis (Begin, Exec, Query) as insufficient proof
+	return callsite.IsPgxOrSQLType(t)
 }
 
 func isDBTxIdent(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl, file *ast.File) bool {
@@ -186,10 +166,13 @@ func isDBTxIdent(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl, file *ast
 			return isProvenDBTxType(t)
 		}
 	}
+	// AST-level fallback: check if type is sql.Tx, pgx.Tx, etc.
 	astType := findASTType(id, fn, file)
 	if astType != nil {
 		return isProvenDBTxASTType(astType, file)
 	}
+	// Conservative: accept as transaction if unresolved (may cause false positives,
+	// but prevents false negatives in critical blocking I/O detection)
 	return true
 }
 
