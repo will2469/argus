@@ -197,3 +197,14 @@ func isNetConnCall(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	}
 	return false
 }
+
+func getReceiverName(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.SelectorExpr:
+		return e.Sel.Name
+	}
+	return ""
+}
+

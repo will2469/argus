@@ -72,7 +72,7 @@ func N5_PostCommitIO(ctx context.Context, pool Pool) error {
 func N6_ChannelSync(ctx context.Context, pool Pool, ch chan int) error {
 	return pool.BeginFunc(ctx, func(tx Tx) error {
 		ch <- 42
-		_ = <-ch
+		<-ch
 		return tx.Exec(ctx, "UPDATE queue SET processed = true")
 	})
 }

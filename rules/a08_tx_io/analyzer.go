@@ -61,23 +61,26 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			continue
 		}
 
-		inspectFunctionTransactions(pass, fset, fn.Body, funcDecls, dm, &issues)
+		inspectFunctionTransactions(pass, fset, fn, file, funcDecls, dm, &issues)
 	}
 
 	return issues
 }
 
-func inspectFunctionTransactions(pass *analysis.Pass, fset *token.FileSet, body *ast.BlockStmt, funcDecls map[string]*ast.FuncDecl, dm *directives.DirectiveMap, issues *[]Issue) {
+func inspectFunctionTransactions(pass *analysis.Pass, fset *token.FileSet, fn *ast.FuncDecl, file *ast.File, funcDecls map[string]*ast.FuncDecl, dm *directives.DirectiveMap, issues *[]Issue) {
+	if fn == nil || fn.Body == nil {
+		return
+	}
 	visited := make(map[string]bool)
 
 	// 1. Check closure-based transactions (BeginFunc, ExecuteTx, WithTx)
-	ast.Inspect(body, func(n ast.Node) bool {
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 
-		closure := ExtractTxClosure(pass, call)
+		closure := ExtractTxClosure(pass, call, fn, file)
 		if closure != nil && closure.Body != nil {
 			ast.Inspect(closure.Body, func(innerNode ast.Node) bool {
 				CheckTxNode(pass, fset, innerNode, funcDecls, visited, dm, issues)
@@ -87,13 +90,8 @@ func inspectFunctionTransactions(pass *analysis.Pass, fset *token.FileSet, body 
 		return true
 	})
 
-	// 2. Check explicit transaction blocks (pool.Begin ... tx.Commit)
-	InspectExplicitTxRanges(pass, body, func(stmt ast.Stmt) {
-		ast.Inspect(stmt, func(n ast.Node) bool {
-			CheckTxNode(pass, fset, n, funcDecls, visited, dm, issues)
-			return true
-		})
-	})
+	// 2. Flow-sensitive path analysis for explicit transaction lifecycles (pool.Begin ... tx.Commit)
+	InspectExplicitTxFlow(pass, fset, fn, file, funcDecls, visited, dm, issues)
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {
