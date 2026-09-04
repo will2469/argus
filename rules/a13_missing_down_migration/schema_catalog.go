@@ -7,13 +7,13 @@ import (
 
 // SchemaCatalog tracks table and column definitions across sequential migrations.
 type SchemaCatalog struct {
-	columns map[string]map[string]string // qualified table name -> column name -> type
+	columns map[QualifiedIdent]map[string]string // qualified table identifier -> column name -> type
 }
 
 // NewSchemaCatalog creates a new empty schema catalog.
 func NewSchemaCatalog() *SchemaCatalog {
 	return &SchemaCatalog{
-		columns: make(map[string]map[string]string),
+		columns: make(map[QualifiedIdent]map[string]string),
 	}
 }
 
@@ -83,13 +83,12 @@ func NormalizeTypeName(tName string) string {
 }
 
 // GetColumnType retrieves the recorded type for a table and column.
-func (sc *SchemaCatalog) GetColumnType(table, column string) (string, bool) {
+func (sc *SchemaCatalog) GetColumnType(table QualifiedIdent, column string) (string, bool) {
 	if sc == nil {
 		return "", false
 	}
-	tbl := FormatQualifiedName("", table)
-	col := strings.ToLower(strings.Trim(strings.TrimSpace(column), `"'`))
-	cols, exists := sc.columns[tbl]
+	col := normalizeCol(column)
+	cols, exists := sc.columns[table]
 	if !exists {
 		return "", false
 	}
@@ -98,37 +97,34 @@ func (sc *SchemaCatalog) GetColumnType(table, column string) (string, bool) {
 }
 
 // SetColumnType registers or updates a column type in the catalog.
-func (sc *SchemaCatalog) SetColumnType(table, column, colType string) {
+func (sc *SchemaCatalog) SetColumnType(table QualifiedIdent, column, colType string) {
 	if sc == nil {
 		return
 	}
-	tbl := FormatQualifiedName("", table)
-	col := strings.ToLower(strings.Trim(strings.TrimSpace(column), `"'`))
-	if sc.columns[tbl] == nil {
-		sc.columns[tbl] = make(map[string]string)
+	col := normalizeCol(column)
+	if sc.columns[table] == nil {
+		sc.columns[table] = make(map[string]string)
 	}
-	sc.columns[tbl][col] = NormalizeTypeName(colType)
+	sc.columns[table][col] = NormalizeTypeName(colType)
 }
 
 // DropColumn removes a column from the catalog.
-func (sc *SchemaCatalog) DropColumn(table, column string) {
+func (sc *SchemaCatalog) DropColumn(table QualifiedIdent, column string) {
 	if sc == nil {
 		return
 	}
-	tbl := FormatQualifiedName("", table)
-	col := strings.ToLower(strings.Trim(strings.TrimSpace(column), `"'`))
-	if cols, exists := sc.columns[tbl]; exists {
+	col := normalizeCol(column)
+	if cols, exists := sc.columns[table]; exists {
 		delete(cols, col)
 	}
 }
 
 // DropTable removes an entire table from the catalog.
-func (sc *SchemaCatalog) DropTable(table string) {
+func (sc *SchemaCatalog) DropTable(table QualifiedIdent) {
 	if sc == nil {
 		return
 	}
-	tbl := FormatQualifiedName("", table)
-	delete(sc.columns, tbl)
+	delete(sc.columns, table)
 }
 
 // ApplyOps applies forward schema mutations from an UP migration.
@@ -151,17 +147,14 @@ func (sc *SchemaCatalog) ApplyOps(ops []SchemaOp) {
 		case OpAlterColumnType:
 			sc.SetColumnType(op.Target, op.SubTarget, op.AuxTarget)
 		case OpRenameTable:
-			oldTbl := FormatQualifiedName("", op.Target)
-			newTbl := FormatQualifiedName("", op.SubTarget)
-			if cols, exists := sc.columns[oldTbl]; exists {
-				sc.columns[newTbl] = cols
-				delete(sc.columns, oldTbl)
+			if cols, exists := sc.columns[op.Target]; exists {
+				sc.columns[op.NewTable] = cols
+				delete(sc.columns, op.Target)
 			}
 		case OpRenameColumn:
-			tbl := FormatQualifiedName("", op.Target)
-			oldCol := strings.ToLower(strings.Trim(strings.TrimSpace(op.SubTarget), `"'`))
-			newCol := strings.ToLower(strings.Trim(strings.TrimSpace(op.AuxTarget), `"'`))
-			if cols, exists := sc.columns[tbl]; exists {
+			oldCol := normalizeCol(op.SubTarget)
+			newCol := normalizeCol(op.AuxTarget)
+			if cols, exists := sc.columns[op.Target]; exists {
 				if typ, ok := cols[oldCol]; ok {
 					cols[newCol] = typ
 					delete(cols, oldCol)

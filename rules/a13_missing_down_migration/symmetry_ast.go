@@ -101,13 +101,13 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp, cat *Sche
 		if !matched {
 			if upOp.Kind == OpAlterColumnType {
 				for _, downOp := range downOps {
-					if downOp.Kind == OpAlterColumnType && normalizeCanonical(upOp.Target) == normalizeCanonical(downOp.Target) && normalizeCanonical(upOp.SubTarget) == normalizeCanonical(downOp.SubTarget) {
-						if upOp.AuxTarget != "" && downOp.AuxTarget != "" && upOp.AuxTarget == downOp.AuxTarget {
+					if downOp.Kind == OpAlterColumnType && upOp.Target.Equal(downOp.Target) && normalizeCol(upOp.SubTarget) == normalizeCol(downOp.SubTarget) {
+						if upOp.AuxTarget != "" && downOp.AuxTarget != "" && NormalizeTypeName(upOp.AuxTarget) == NormalizeTypeName(downOp.AuxTarget) {
 							return &migration.Issue{
 								Rule:     RuleCode,
 								Filename: downPath,
 								Line:     1,
-								Message:  fmt.Sprintf("Rollback migration %q is not a valid inverse for %q: column %q on table %q altered to the same type %q", downName, upName, upOp.SubTarget, DisplayQualifiedName(upOp.Target), upOp.AuxTarget),
+								Message:  fmt.Sprintf("Rollback migration %q is not a valid inverse for %q: column %q on table %q altered to the same type %q", downName, upName, upOp.SubTarget, upOp.Target.Display(), upOp.AuxTarget),
 								Severity: "HIGH",
 							}
 						}
@@ -116,7 +116,7 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp, cat *Sche
 								Rule:     RuleCode,
 								Filename: downPath,
 								Line:     1,
-								Message:  fmt.Sprintf("Rollback migration %q is not a valid inverse for %q: altering column %q on table %q to %q does not restore original type %q", downName, upName, upOp.SubTarget, DisplayQualifiedName(upOp.Target), downOp.AuxTarget, origType),
+								Message:  fmt.Sprintf("Rollback migration %q is not a valid inverse for %q: altering column %q on table %q to %q does not restore original type %q", downName, upName, upOp.SubTarget, upOp.Target.Display(), downOp.AuxTarget, origType),
 								Severity: "HIGH",
 							}
 						}
@@ -124,7 +124,7 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp, cat *Sche
 							Rule:     RuleCode,
 							Filename: downPath,
 							Line:     1,
-							Message:  fmt.Sprintf("Rollback migration %q: cannot prove reversibility of type alteration on column %q of table %q (original type unknown); declare original type in migration history or use '-- argus:ignore-a13 ADR-xxx <reason>'", downName, upOp.SubTarget, DisplayQualifiedName(upOp.Target)),
+							Message:  fmt.Sprintf("Rollback migration %q: cannot prove reversibility of type alteration on column %q of table %q (original type unknown); declare original type in migration history or use '-- argus:ignore-a13 ADR-xxx <reason>'", downName, upOp.SubTarget, upOp.Target.Display()),
 							Severity: "HIGH",
 						}
 					}

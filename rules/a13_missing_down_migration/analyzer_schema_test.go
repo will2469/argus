@@ -126,3 +126,72 @@ func TestScanDirectory_AlterColumnType_IgnoredDirective(t *testing.T) {
 		t.Fatalf("expected 0 issues when ignored with directive, got %d: %v", len(issues), issues)
 	}
 }
+
+func TestScanDirectory_AddColumnVsDropSameTable_Rejected(t *testing.T) {
+	tempDir := t.TempDir()
+
+	_ = os.WriteFile(filepath.Join(tempDir, "001_add.up.sql"), []byte("ALTER TABLE users ADD COLUMN email TEXT;"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_add.down.sql"), []byte("DROP TABLE users;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) == 0 {
+		t.Fatalf("CORRECTNESS BUG: DROP TABLE must NOT be accepted as rollback for ADD COLUMN")
+	}
+	var hasMissingDropCol bool
+	for _, iss := range issues {
+		if strings.Contains(iss.Message, "missing DROP COLUMN") {
+			hasMissingDropCol = true
+		}
+	}
+	if !hasMissingDropCol {
+		t.Errorf("expected missing DROP COLUMN issue, got: %v", issues)
+	}
+}
+
+func TestScanDirectory_RenameColumnVsDropSameTable_Rejected(t *testing.T) {
+	tempDir := t.TempDir()
+
+	_ = os.WriteFile(filepath.Join(tempDir, "001_rename.up.sql"), []byte("ALTER TABLE users RENAME COLUMN email TO contact_email;"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_rename.down.sql"), []byte("DROP TABLE users;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) == 0 {
+		t.Fatalf("CORRECTNESS BUG: DROP TABLE must NOT be accepted as rollback for RENAME COLUMN")
+	}
+}
+
+func TestScanDirectory_RenameColumnVsDropColumn_Rejected(t *testing.T) {
+	tempDir := t.TempDir()
+
+	_ = os.WriteFile(filepath.Join(tempDir, "001_rename.up.sql"), []byte("ALTER TABLE users RENAME COLUMN email TO contact_email;"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_rename.down.sql"), []byte("ALTER TABLE users DROP COLUMN contact_email;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) == 0 {
+		t.Fatalf("CORRECTNESS BUG: DROP COLUMN must NOT be accepted as rollback for RENAME COLUMN")
+	}
+}
+
+func TestScanDirectory_AlterTypeVsDropSameTable_Rejected(t *testing.T) {
+	tempDir := t.TempDir()
+
+	_ = os.WriteFile(filepath.Join(tempDir, "001_alter.up.sql"), []byte("ALTER TABLE users ALTER COLUMN age TYPE bigint;"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_alter.down.sql"), []byte("DROP TABLE users;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) == 0 {
+		t.Fatalf("CORRECTNESS BUG: DROP TABLE must NOT be accepted as rollback for ALTER COLUMN TYPE")
+	}
+}
+
+func TestScanDirectory_CreateIndexVsDropSameTable_Rejected(t *testing.T) {
+	tempDir := t.TempDir()
+
+	_ = os.WriteFile(filepath.Join(tempDir, "001_idx.up.sql"), []byte("CREATE INDEX idx_users_email ON users (email);"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_idx.down.sql"), []byte("DROP TABLE users;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) == 0 {
+		t.Fatalf("CORRECTNESS BUG: DROP TABLE must NOT be accepted as rollback for CREATE INDEX")
+	}
+}
