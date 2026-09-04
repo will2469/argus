@@ -14,6 +14,11 @@ import (
 // ValidateDownSQL validates that a .down.sql file contains non-empty, executable SQL statements
 // that semantically invert the schema operations in the corresponding .up.sql file.
 func ValidateDownSQL(upPath, upContent, downPath, downContent string, dm *directives.DirectiveMap) *migration.Issue {
+	return ValidateDownSQLWithCatalog(upPath, upContent, downPath, downContent, dm, nil)
+}
+
+// ValidateDownSQLWithCatalog validates rollback symmetry with an optional schema catalog context.
+func ValidateDownSQLWithCatalog(upPath, upContent, downPath, downContent string, dm *directives.DirectiveMap, cat *SchemaCatalog) *migration.Issue {
 	trimmedDown := strings.TrimSpace(downContent)
 	downName := filepath.Base(downPath)
 	upName := filepath.Base(upPath)
@@ -69,12 +74,17 @@ func ValidateDownSQL(upPath, upContent, downPath, downContent string, dm *direct
 	upOps := extractSchemaOps(upTree)
 	downOps := extractSchemaOps(downTree)
 
-	return checkSymmetry(upPath, downPath, upOps, downOps)
+	return checkSymmetry(upPath, downPath, upOps, downOps, cat)
 }
 
-func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp) *migration.Issue {
+func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp, cat *SchemaCatalog) *migration.Issue {
 	downName := filepath.Base(downPath)
 	upName := filepath.Base(upPath)
+
+	workingCat := cat.Clone()
+	if workingCat == nil {
+		workingCat = NewSchemaCatalog()
+	}
 
 	// 1. Forward symmetry: For every DDL operation in UP, require a matching inverse in DOWN
 	for _, upOp := range upOps {
@@ -83,12 +93,43 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp) *migratio
 		}
 		matched := false
 		for _, downOp := range downOps {
-			if upOp.IsInvertedBy(downOp) {
+			if upOp.IsInvertedByWithCatalog(downOp, workingCat) {
 				matched = true
 				break
 			}
 		}
 		if !matched {
+			if upOp.Kind == OpAlterColumnType {
+				for _, downOp := range downOps {
+					if downOp.Kind == OpAlterColumnType && normalizeCanonical(upOp.Target) == normalizeCanonical(downOp.Target) && normalizeCanonical(upOp.SubTarget) == normalizeCanonical(downOp.SubTarget) {
+						if upOp.AuxTarget != "" && downOp.AuxTarget != "" && upOp.AuxTarget == downOp.AuxTarget {
+							return &migration.Issue{
+								Rule:     RuleCode,
+								Filename: downPath,
+								Line:     1,
+								Message:  fmt.Sprintf("Rollback migration %q is not a valid inverse for %q: column %q on table %q altered to the same type %q", downName, upName, upOp.SubTarget, DisplayQualifiedName(upOp.Target), upOp.AuxTarget),
+								Severity: "HIGH",
+							}
+						}
+						if origType, ok := workingCat.GetColumnType(upOp.Target, upOp.SubTarget); ok {
+							return &migration.Issue{
+								Rule:     RuleCode,
+								Filename: downPath,
+								Line:     1,
+								Message:  fmt.Sprintf("Rollback migration %q is not a valid inverse for %q: altering column %q on table %q to %q does not restore original type %q", downName, upName, upOp.SubTarget, DisplayQualifiedName(upOp.Target), downOp.AuxTarget, origType),
+								Severity: "HIGH",
+							}
+						}
+						return &migration.Issue{
+							Rule:     RuleCode,
+							Filename: downPath,
+							Line:     1,
+							Message:  fmt.Sprintf("Rollback migration %q: cannot prove reversibility of type alteration on column %q of table %q (original type unknown); declare original type in migration history or use '-- argus:ignore-a13 ADR-xxx <reason>'", downName, upOp.SubTarget, DisplayQualifiedName(upOp.Target)),
+							Severity: "HIGH",
+						}
+					}
+				}
+			}
 			return &migration.Issue{
 				Rule:     RuleCode,
 				Filename: downPath,
@@ -97,6 +138,8 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp) *migratio
 				Severity: "HIGH",
 			}
 		}
+
+		workingCat.ApplyOps([]SchemaOp{upOp})
 	}
 
 	// 2. Backward symmetry: Every DDL operation in DOWN must invert an operation in UP
@@ -106,7 +149,7 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp) *migratio
 		}
 		invertsAny := false
 		for _, upOp := range upOps {
-			if upOp.IsInvertedBy(downOp) {
+			if upOp.IsInvertedByWithCatalog(downOp, cat) {
 				invertsAny = true
 				break
 			}

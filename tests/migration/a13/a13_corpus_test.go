@@ -103,6 +103,8 @@ func TestA13_AdversarialCorpus(t *testing.T) {
 		{"M_TargetMismatch", "006_target_mismatch.down.sql"},
 		{"M_RenameAsymmetry", "007_rename_asymmetry.down.sql"},
 		{"M_RogueMutation", "008_rogue_drop.down.sql"},
+		{"M_SchemaMismatch", "009_schema_mismatch.down.sql"},
+		{"M_AlterTypeMismatch", "010_alter_type_mismatch.down.sql"},
 	}
 
 	for _, a := range assertions {

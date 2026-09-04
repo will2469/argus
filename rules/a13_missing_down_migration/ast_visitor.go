@@ -2,6 +2,8 @@
 package a13_missing_down_migration
 
 import (
+	"strings"
+
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
 
@@ -27,26 +29,32 @@ func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
 		stmt := rawStmt.Stmt
 
 		if create := stmt.GetCreateStmt(); create != nil && create.Relation != nil {
-			ops = append(ops, SchemaOp{Kind: OpCreateTable, Target: create.Relation.Relname})
+			tbl := extractRangeVarName(create.Relation)
+			colDefs := make(map[string]string)
+			for _, elt := range create.TableElts {
+				if cdef := elt.GetColumnDef(); cdef != nil {
+					colDefs[strings.ToLower(cdef.Colname)] = extractTypeName(cdef.TypeName)
+				}
+			}
+			ops = append(ops, SchemaOp{Kind: OpCreateTable, Target: tbl, ColDefs: colDefs})
 			continue
 		}
 
 		if drop := stmt.GetDropStmt(); drop != nil {
 			for _, obj := range drop.Objects {
-				name := extractObjectName(obj)
 				switch drop.RemoveType {
 				case pg_query.ObjectType_OBJECT_TABLE:
-					ops = append(ops, SchemaOp{Kind: OpDropTable, Target: name})
+					ops = append(ops, SchemaOp{Kind: OpDropTable, Target: extractQualifiedObjectName(obj)})
 				case pg_query.ObjectType_OBJECT_INDEX:
-					ops = append(ops, SchemaOp{Kind: OpDropIndex, Target: name})
+					ops = append(ops, SchemaOp{Kind: OpDropIndex, Target: extractQualifiedObjectName(obj)})
 				case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
-					ops = append(ops, SchemaOp{Kind: OpDropView, Target: name})
+					ops = append(ops, SchemaOp{Kind: OpDropView, Target: extractQualifiedObjectName(obj)})
 				case pg_query.ObjectType_OBJECT_SEQUENCE:
-					ops = append(ops, SchemaOp{Kind: OpDropSequence, Target: name})
+					ops = append(ops, SchemaOp{Kind: OpDropSequence, Target: extractQualifiedObjectName(obj)})
 				case pg_query.ObjectType_OBJECT_SCHEMA:
-					ops = append(ops, SchemaOp{Kind: OpDropSchema, Target: name})
+					ops = append(ops, SchemaOp{Kind: OpDropSchema, Target: extractSchemaName(obj)})
 				case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
-					ops = append(ops, SchemaOp{Kind: OpDropType, Target: name})
+					ops = append(ops, SchemaOp{Kind: OpDropType, Target: extractQualifiedObjectName(obj)})
 				}
 			}
 			continue
@@ -55,47 +63,60 @@ func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
 		if idx := stmt.GetIndexStmt(); idx != nil {
 			tbl := ""
 			if idx.Relation != nil {
-				tbl = idx.Relation.Relname
+				tbl = extractRangeVarName(idx.Relation)
 			}
-			ops = append(ops, SchemaOp{Kind: OpCreateIndex, Target: idx.Idxname, SubTarget: tbl})
+			ops = append(ops, SchemaOp{Kind: OpCreateIndex, Target: FormatQualifiedName("", idx.Idxname), SubTarget: tbl})
 			continue
 		}
 
 		if view := stmt.GetViewStmt(); view != nil && view.View != nil {
-			ops = append(ops, SchemaOp{Kind: OpCreateView, Target: view.View.Relname})
+			ops = append(ops, SchemaOp{Kind: OpCreateView, Target: extractRangeVarName(view.View)})
 			continue
 		}
 
 		if seq := stmt.GetCreateSeqStmt(); seq != nil && seq.Sequence != nil {
-			ops = append(ops, SchemaOp{Kind: OpCreateSequence, Target: seq.Sequence.Relname})
+			ops = append(ops, SchemaOp{Kind: OpCreateSequence, Target: extractRangeVarName(seq.Sequence)})
 			continue
 		}
 
 		if sch := stmt.GetCreateSchemaStmt(); sch != nil {
-			ops = append(ops, SchemaOp{Kind: OpCreateSchema, Target: sch.Schemaname})
+			ops = append(ops, SchemaOp{Kind: OpCreateSchema, Target: strings.ToLower(strings.Trim(sch.Schemaname, `"'`))})
 			continue
 		}
 
 		if rename := stmt.GetRenameStmt(); rename != nil {
 			switch rename.RenameType {
 			case pg_query.ObjectType_OBJECT_TABLE:
+				sch := ""
 				oldName := rename.Subname
-				if rename.Relation != nil && rename.Relation.Relname != "" {
-					oldName = rename.Relation.Relname
+				if rename.Relation != nil {
+					sch = rename.Relation.Schemaname
+					if rename.Relation.Relname != "" {
+						oldName = rename.Relation.Relname
+					}
 				}
-				ops = append(ops, SchemaOp{Kind: OpRenameTable, Target: oldName, SubTarget: rename.Newname})
+				ops = append(ops, SchemaOp{
+					Kind:      OpRenameTable,
+					Target:    FormatQualifiedName(sch, oldName),
+					SubTarget: FormatQualifiedName(sch, rename.Newname),
+				})
 			case pg_query.ObjectType_OBJECT_COLUMN:
 				tbl := ""
 				if rename.Relation != nil {
-					tbl = rename.Relation.Relname
+					tbl = extractRangeVarName(rename.Relation)
 				}
-				ops = append(ops, SchemaOp{Kind: OpRenameColumn, Target: tbl, SubTarget: rename.Subname, AuxTarget: rename.Newname})
+				ops = append(ops, SchemaOp{
+					Kind:      OpRenameColumn,
+					Target:    tbl,
+					SubTarget: rename.Subname,
+					AuxTarget: rename.Newname,
+				})
 			}
 			continue
 		}
 
 		if alter := stmt.GetAlterTableStmt(); alter != nil && alter.Relation != nil {
-			tbl := alter.Relation.Relname
+			tbl := extractRangeVarName(alter.Relation)
 			for _, rawCmd := range alter.Cmds {
 				cmd := rawCmd.GetAlterTableCmd()
 				if cmd == nil {
@@ -104,7 +125,13 @@ func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
 				switch cmd.Subtype {
 				case pg_query.AlterTableType_AT_AddColumn:
 					if cmd.Def != nil && cmd.Def.GetColumnDef() != nil {
-						ops = append(ops, SchemaOp{Kind: OpAddColumn, Target: tbl, SubTarget: cmd.Def.GetColumnDef().Colname})
+						cdef := cmd.Def.GetColumnDef()
+						ops = append(ops, SchemaOp{
+							Kind:      OpAddColumn,
+							Target:    tbl,
+							SubTarget: cdef.Colname,
+							AuxTarget: extractTypeName(cdef.TypeName),
+						})
 					}
 				case pg_query.AlterTableType_AT_DropColumn:
 					ops = append(ops, SchemaOp{Kind: OpDropColumn, Target: tbl, SubTarget: cmd.Name})
@@ -117,7 +144,16 @@ func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
 				case pg_query.AlterTableType_AT_DropConstraint:
 					ops = append(ops, SchemaOp{Kind: OpDropConstraint, Target: tbl, SubTarget: cmd.Name})
 				case pg_query.AlterTableType_AT_AlterColumnType:
-					ops = append(ops, SchemaOp{Kind: OpAlterColumnType, Target: tbl, SubTarget: cmd.Name})
+					newType := ""
+					if cmd.Def != nil && cmd.Def.GetColumnDef() != nil {
+						newType = extractTypeName(cmd.Def.GetColumnDef().TypeName)
+					}
+					ops = append(ops, SchemaOp{
+						Kind:      OpAlterColumnType,
+						Target:    tbl,
+						SubTarget: cmd.Name,
+						AuxTarget: newType,
+					})
 				}
 			}
 			continue
@@ -131,7 +167,14 @@ func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
 	return ops
 }
 
-func extractObjectName(obj *pg_query.Node) string {
+func extractRangeVarName(rv *pg_query.RangeVar) string {
+	if rv == nil {
+		return ""
+	}
+	return FormatQualifiedName(rv.Schemaname, rv.Relname)
+}
+
+func extractQualifiedObjectName(obj *pg_query.Node) string {
 	if obj == nil {
 		return ""
 	}
@@ -142,12 +185,45 @@ func extractObjectName(obj *pg_query.Node) string {
 				parts = append(parts, s.Sval)
 			}
 		}
-		if len(parts) > 0 {
-			return parts[len(parts)-1]
+		if len(parts) == 1 {
+			return FormatQualifiedName("", parts[0])
+		} else if len(parts) >= 2 {
+			return FormatQualifiedName(parts[len(parts)-2], parts[len(parts)-1])
 		}
 	}
 	if str := obj.GetString_(); str != nil {
-		return str.Sval
+		return FormatQualifiedName("", str.Sval)
 	}
 	return ""
+}
+
+func extractSchemaName(obj *pg_query.Node) string {
+	if obj == nil {
+		return ""
+	}
+	if list := obj.GetList(); list != nil && len(list.Items) > 0 {
+		if s := list.Items[0].GetString_(); s != nil {
+			return strings.ToLower(strings.Trim(s.Sval, `"'`))
+		}
+	}
+	if str := obj.GetString_(); str != nil {
+		return strings.ToLower(strings.Trim(str.Sval, `"'`))
+	}
+	return ""
+}
+
+func extractTypeName(tn *pg_query.TypeName) string {
+	if tn == nil || len(tn.Names) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, n := range tn.Names {
+		if s := n.GetString_(); s != nil {
+			parts = append(parts, s.Sval)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return NormalizeTypeName(parts[len(parts)-1])
 }

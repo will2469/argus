@@ -10,6 +10,7 @@ import (
 
 	"github.com/will2469/argus/shared/directives"
 	"github.com/will2469/argus/shared/migration"
+	"github.com/will2469/argus/shared/sqlparser"
 )
 
 // ScanDirectory checks all migration files in a directory and subdirectories for missing or empty down migrations.
@@ -72,6 +73,7 @@ func ScanDirectoryFS(fsys fs.FS, dir string, dm *directives.DirectiveMap) []migr
 	sort.Strings(dirs)
 
 	for _, d := range dirs {
+		cat := NewSchemaCatalog()
 		upNames := dirUpFiles[d]
 		sort.Strings(upNames)
 		existingFiles := dirFiles[d]
@@ -96,8 +98,12 @@ func ScanDirectoryFS(fsys fs.FS, dir string, dm *directives.DirectiveMap) []migr
 				continue
 			}
 
-			if issue := ValidateDownSQL(upPath, string(upData), downPath, string(downData), dm); issue != nil {
+			if issue := ValidateDownSQLWithCatalog(upPath, string(upData), downPath, string(downData), dm, cat); issue != nil {
 				issues = append(issues, *issue)
+			}
+
+			if upTree, err := sqlparser.Parse(string(upData)); err == nil {
+				cat.ApplyOps(extractSchemaOps(upTree))
 			}
 		}
 	}

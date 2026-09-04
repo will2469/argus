@@ -35,19 +35,25 @@ const (
 // SchemaOp represents a detected database schema operation.
 type SchemaOp struct {
 	Kind      OpKind
-	Target    string // Primary object name (table, index, view, etc.)
-	SubTarget string // Secondary object name (column, constraint, or old/target name)
-	AuxTarget string // Tertiary object name (new name on rename)
+	Target    string            // Primary object name (table, index, view, etc.)
+	SubTarget string            // Secondary object name (column, constraint, or old/target name)
+	AuxTarget string            // Tertiary object name (new name or new type)
+	ColDefs   map[string]string // Column definitions for table creation
 }
 
 // IsInvertedBy checks if downOp is the inverse operation of this schema op.
 func (op SchemaOp) IsInvertedBy(downOp SchemaOp) bool {
-	tUp := normalizeName(op.Target)
-	tDown := normalizeName(downOp.Target)
-	sUp := normalizeName(op.SubTarget)
-	sDown := normalizeName(downOp.SubTarget)
-	aUp := normalizeName(op.AuxTarget)
-	aDown := normalizeName(downOp.AuxTarget)
+	return op.IsInvertedByWithCatalog(downOp, nil)
+}
+
+// IsInvertedByWithCatalog checks if downOp is the inverse operation with catalog context.
+func (op SchemaOp) IsInvertedByWithCatalog(downOp SchemaOp, cat *SchemaCatalog) bool {
+	tUp := normalizeCanonical(op.Target)
+	tDown := normalizeCanonical(downOp.Target)
+	sUp := normalizeCanonical(op.SubTarget)
+	sDown := normalizeCanonical(downOp.SubTarget)
+	aUp := normalizeCanonical(op.AuxTarget)
+	aDown := normalizeCanonical(downOp.AuxTarget)
 
 	switch op.Kind {
 	case OpCreateTable:
@@ -111,7 +117,20 @@ func (op SchemaOp) IsInvertedBy(downOp SchemaOp) bool {
 		if downOp.Kind == OpDropTable && tUp == tDown {
 			return true
 		}
-		return downOp.Kind == OpAlterColumnType && tUp == tDown && sUp == sDown
+		if downOp.Kind != OpAlterColumnType || tUp != tDown || sUp != sDown {
+			return false
+		}
+		// Strict rejection: identical type cannot undo alteration
+		if aUp != "" && aDown != "" && aUp == aDown {
+			return false
+		}
+		// Proven inverse: down type must match original type recorded in catalog
+		if cat != nil {
+			if origType, ok := cat.GetColumnType(op.Target, op.SubTarget); ok {
+				return aDown == origType
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -153,7 +172,7 @@ func (op SchemaOp) ExpectedInverseName() string {
 	case OpDropConstraint:
 		return "ADD CONSTRAINT"
 	case OpRenameTable:
-		return fmt.Sprintf("RENAME TABLE %q TO %q", op.SubTarget, op.Target)
+		return fmt.Sprintf("RENAME TABLE %q TO %q", DisplayQualifiedName(op.SubTarget), DisplayQualifiedName(op.Target))
 	case OpRenameColumn:
 		return fmt.Sprintf("RENAME COLUMN %q TO %q", op.AuxTarget, op.SubTarget)
 	case OpAlterColumnType:
@@ -167,38 +186,32 @@ func (op SchemaOp) ExpectedInverseName() string {
 func (op SchemaOp) DescribeTarget() string {
 	switch op.Kind {
 	case OpCreateTable, OpDropTable:
-		return fmt.Sprintf("table %q", op.Target)
+		return fmt.Sprintf("table %q", DisplayQualifiedName(op.Target))
 	case OpAddColumn, OpDropColumn:
-		return fmt.Sprintf("column %q on table %q", op.SubTarget, op.Target)
+		return fmt.Sprintf("column %q on table %q", op.SubTarget, DisplayQualifiedName(op.Target))
 	case OpCreateIndex, OpDropIndex:
-		return fmt.Sprintf("index %q", op.Target)
+		return fmt.Sprintf("index %q", DisplayQualifiedName(op.Target))
 	case OpCreateView, OpDropView:
-		return fmt.Sprintf("view %q", op.Target)
+		return fmt.Sprintf("view %q", DisplayQualifiedName(op.Target))
 	case OpCreateSequence, OpDropSequence:
-		return fmt.Sprintf("sequence %q", op.Target)
+		return fmt.Sprintf("sequence %q", DisplayQualifiedName(op.Target))
 	case OpCreateSchema, OpDropSchema:
 		return fmt.Sprintf("schema %q", op.Target)
 	case OpCreateType, OpDropType:
-		return fmt.Sprintf("type %q", op.Target)
+		return fmt.Sprintf("type %q", DisplayQualifiedName(op.Target))
 	case OpAddConstraint, OpDropConstraint:
-		return fmt.Sprintf("constraint %q on table %q", op.SubTarget, op.Target)
+		return fmt.Sprintf("constraint %q on table %q", op.SubTarget, DisplayQualifiedName(op.Target))
 	case OpRenameTable:
-		return fmt.Sprintf("renamed table %q to %q", op.Target, op.SubTarget)
+		return fmt.Sprintf("renamed table %q to %q", DisplayQualifiedName(op.Target), DisplayQualifiedName(op.SubTarget))
 	case OpRenameColumn:
-		return fmt.Sprintf("renamed column %q to %q on table %q", op.SubTarget, op.AuxTarget, op.Target)
+		return fmt.Sprintf("renamed column %q to %q on table %q", op.SubTarget, op.AuxTarget, DisplayQualifiedName(op.Target))
 	case OpAlterColumnType:
-		return fmt.Sprintf("type alteration on column %q of table %q", op.SubTarget, op.Target)
+		return fmt.Sprintf("type alteration on column %q of table %q", op.SubTarget, DisplayQualifiedName(op.Target))
 	default:
-		return fmt.Sprintf("object %q", op.Target)
+		return fmt.Sprintf("object %q", DisplayQualifiedName(op.Target))
 	}
 }
 
-func normalizeName(name string) string {
-	name = strings.TrimSpace(name)
-	name = strings.Trim(name, `"'`)
-	name = strings.ToLower(name)
-	if idx := strings.LastIndex(name, "."); idx != -1 {
-		name = name[idx+1:]
-	}
-	return name
+func normalizeCanonical(name string) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(name), `"'`))
 }
