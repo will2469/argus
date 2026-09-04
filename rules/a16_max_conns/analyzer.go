@@ -9,7 +9,6 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/directives"
 )
@@ -59,97 +58,34 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			return true
 		}
 
-		inspectCall(fset, call, file, dm, maxSafe, &issues)
+		inspectCall(pass, fset, call, file, dm, maxSafe, &issues)
 		return true
 	})
 
 	return issues
 }
 
-func inspectCall(fset *token.FileSet, call *ast.CallExpr, file *ast.File, dm *directives.DirectiveMap, maxSafe int32, issues *[]Issue) {
-	methodName := callsite.GetCallMethodName(call.Fun)
+func inspectCall(pass *analysis.Pass, fset *token.FileSet, call *ast.CallExpr, file *ast.File, dm *directives.DirectiveMap, maxSafe int32, issues *[]Issue) {
+	isCall, methodName := isPgxpoolCall(pass, file, call)
+	if !isCall {
+		return
+	}
 
 	switch methodName {
-	case "New", "pgxpool.New":
-		if !isPgxPoolCall(call.Fun) {
-			return
-		}
-		dsnArgIdx := 0
-		if len(call.Args) >= 2 {
-			dsnArgIdx = 1
-		}
-		if dsnArgIdx < len(call.Args) {
+	case "New":
+		arg, _ := findCallArg(call, pass)
+		if arg != nil {
 			dsnStrings := extractAllDSNStrings(call, file)
 			for _, dsnStr := range dsnStrings {
-				checkDSNCall(fset, call.Args[dsnArgIdx], dsnStr, dm, maxSafe, issues)
+				checkDSNCall(fset, arg, dsnStr, dm, maxSafe, issues)
 			}
 		}
-	case "NewWithConfig", "pgxpool.NewWithConfig":
-		cfgArgIdx := 0
-		if len(call.Args) >= 2 {
-			cfgArgIdx = 1
-		}
-		if cfgArgIdx < len(call.Args) {
-			checkNewWithConfigCall(fset, call, call.Args[cfgArgIdx], file, dm, maxSafe, issues)
+	case "NewWithConfig":
+		arg, _ := findCallArg(call, pass)
+		if arg != nil {
+			checkNewWithConfigCall(fset, call, arg, file, dm, maxSafe, issues)
 		}
 	}
-}
-
-func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
-	if call == nil || len(call.Args) == 0 {
-		return nil
-	}
-	dsnArgIdx := 0
-	if len(call.Args) >= 2 {
-		dsnArgIdx = 1
-	}
-	arg := call.Args[dsnArgIdx]
-
-	var results []string
-	switch e := arg.(type) {
-	case *ast.BasicLit:
-		if e.Kind == token.STRING {
-			results = append(results, strings.Trim(e.Value, "`\""))
-		}
-	case *ast.Ident:
-		enclosing := findEnclosingFunc(file, call)
-		if enclosing != nil && enclosing.Body != nil {
-			ast.Inspect(enclosing.Body, func(n ast.Node) bool {
-				assign, ok := n.(*ast.AssignStmt)
-				if !ok || assign.Pos() >= call.Pos() {
-					return true
-				}
-				for i, lhs := range assign.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
-						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							results = append(results, strings.Trim(lit.Value, "`\""))
-						}
-					}
-				}
-				return true
-			})
-		}
-	}
-
-	if len(results) == 0 {
-		if s, ok := callsite.ExtractQueryString(call); ok {
-			results = append(results, s)
-		}
-	}
-	return results
-}
-
-func isPgxPoolCall(fn ast.Expr) bool {
-	sel, ok := fn.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	pkgName := ""
-	if id, ok := sel.X.(*ast.Ident); ok {
-		pkgName = id.Name
-	}
-	lower := strings.ToLower(pkgName)
-	return lower == "pgxpool" || strings.Contains(lower, "pool")
 }
 
 func checkDSNCall(fset *token.FileSet, dsnExpr ast.Expr, dsn string, dm *directives.DirectiveMap, maxSafe int32, issues *[]Issue) {
@@ -174,7 +110,7 @@ func checkNewWithConfigCall(fset *token.FileSet, call *ast.CallExpr, cfgExpr ast
 		return
 	}
 
-	res := TrackConfig(cfgExpr, file, maxSafe)
+	res := TrackConfig(cfgExpr, call, file, maxSafe)
 	if !res.Valid {
 		reportPos := call.Pos()
 		if fset != nil && dm != nil {

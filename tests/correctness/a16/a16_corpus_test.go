@@ -93,6 +93,11 @@ func TestA16_AdversarialCorpus(t *testing.T) {
 		{"A5_NestedFunction", 62, true},
 		{"A6_Generic", 71, true},
 		{"A7_NegativeValue", 78, true},
+		{"A8_ExecutionOrder", 84, true},
+		{"A9_BranchImbalance", 94, true},
+		{"A10_NonMutatingHelper", 105, true},
+		{"A11_UnverifiedDynamic", 116, true},
+		{"A12_MultiHopAlias", 124, true},
 	}
 
 	for _, a := range assertions {

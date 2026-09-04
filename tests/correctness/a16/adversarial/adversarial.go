@@ -77,3 +77,50 @@ func A7_NegativeValue(ctx context.Context) {
 	cfgNeg.MaxConns = -5
 	_, _ = pgxpool.NewWithConfig(ctx, cfgNeg)
 }
+
+// A8: Execution Order — MaxConns assigned after NewWithConfig.
+func A8_ExecutionOrder(ctx context.Context) {
+	cfgPost, _ := pgxpool.ParseConfig("postgres://localhost/db")
+	_, _ = pgxpool.NewWithConfig(ctx, cfgPost)
+	cfgPost.MaxConns = 20
+}
+
+// A9: Branch Imbalance — MaxConns configured only in one branch without else.
+func A9_BranchImbalance(ctx context.Context, isProd bool) {
+	cfgBranch, _ := pgxpool.ParseConfig("postgres://localhost/db")
+	if isProd {
+		cfgBranch.MaxConns = 20
+	}
+	_, _ = pgxpool.NewWithConfig(ctx, cfgBranch)
+}
+
+func ValidatePoolConfig(cfg *Config) {
+	// Passive validator: does not set MaxConns
+}
+
+// A10: Non-Mutating Helper — helper does not set MaxConns.
+func A10_NonMutatingHelper(ctx context.Context) {
+	cfgHelper, _ := pgxpool.ParseConfig("postgres://localhost/db")
+	ValidatePoolConfig(cfgHelper)
+	_, _ = pgxpool.NewWithConfig(ctx, cfgHelper)
+}
+
+func getRuntimeConns() int32 {
+	return -999
+}
+
+// A11: Unverified Dynamic — dynamic unprovable function assigned to MaxConns.
+func A11_UnverifiedDynamic(ctx context.Context) {
+	cfgDyn, _ := pgxpool.ParseConfig("postgres://localhost/db")
+	cfgDyn.MaxConns = getRuntimeConns()
+	_, _ = pgxpool.NewWithConfig(ctx, cfgDyn)
+}
+
+// A12: Multi-Hop Alias — transitive alias chain without pool_max_conns.
+func A12_MultiHopAlias(ctx context.Context) {
+	rawDSN := "postgres://multihop:5432/db"
+	alias1 := rawDSN
+	alias2 := alias1
+	_, _ = pgxpool.New(ctx, alias2)
+}
+

@@ -64,3 +64,26 @@ func N5_ResolvedMaxConns(ctx context.Context) {
 	cfgResolved.MaxConns = ResolveMaxConns()
 	_, _ = pgxpool.NewWithConfig(ctx, cfgResolved)
 }
+
+type WorkerPool struct{}
+
+func (WorkerPool) New(ctx context.Context, dsn string) error {
+	return nil
+}
+
+// N6: Unrelated Pool — pool identifier that is not pgxpool.
+func N6_UnrelatedPool(ctx context.Context, workerPool WorkerPool) {
+	_ = workerPool.New(ctx, "postgres://worker:5432/db")
+}
+
+func ApplyPoolLimits(cfg *Config) {
+	cfg.MaxConns = 25
+}
+
+// N7: Proven Helper — helper function that genuinely configures MaxConns.
+func N7_ProvenHelper(ctx context.Context) {
+	cfgProven, _ := pgxpool.ParseConfig("postgres://localhost/db")
+	ApplyPoolLimits(cfgProven)
+	_, _ = pgxpool.NewWithConfig(ctx, cfgProven)
+}
+

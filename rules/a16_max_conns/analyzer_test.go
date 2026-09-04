@@ -1,7 +1,10 @@
 package a16_max_conns
 
 import (
+	"go/parser"
+	"go/token"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/analysis/analysistest"
@@ -39,5 +42,51 @@ func TestEvaluateDSN(t *testing.T) {
 			t.Errorf("[%s] expected configured=%v, valid=%v; got configured=%v, valid=%v",
 				tc.name, tc.configured, tc.valid, eval.Configured, eval.Valid)
 		}
+	}
+}
+
+func TestDynamicThresholdFormatting(t *testing.T) {
+	customMax := int32(50)
+	evalDSN := EvaluateDSN("postgres://localhost:5432/db?pool_max_conns=75", customMax)
+	if evalDSN.Valid {
+		t.Errorf("expected DSN with 75 conns to exceed custom max 50")
+	}
+	if !strings.Contains(evalDSN.Message, "threshold (50)") {
+		t.Errorf("expected DSN message to mention 'threshold (50)', got %q", evalDSN.Message)
+	}
+
+	expr, err := parser.ParseExpr("75")
+	if err != nil {
+		t.Fatalf("failed to parse expr: %v", err)
+	}
+	evalExpr := EvaluateExpr(expr, customMax)
+	if evalExpr.Valid {
+		t.Errorf("expected Expr with 75 conns to exceed custom max 50")
+	}
+	if !strings.Contains(evalExpr.Message, "limit (50)") {
+		t.Errorf("expected Expr message to mention 'limit (50)', got %q", evalExpr.Message)
+	}
+}
+
+func TestEvaluateExpr_Arithmetic(t *testing.T) {
+	fset := token.NewFileSet()
+	_ = fset
+
+	exprMul, err := parser.ParseExpr("10 * 2")
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	eval := EvaluateExpr(exprMul, DefaultMaxSafeConns)
+	if !eval.Valid || eval.Value != 20 {
+		t.Errorf("expected 10 * 2 to be valid with value 20, got valid=%v, val=%d", eval.Valid, eval.Value)
+	}
+
+	exprNeg, err := parser.ParseExpr("-10")
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	evalNeg := EvaluateExpr(exprNeg, DefaultMaxSafeConns)
+	if evalNeg.Valid {
+		t.Errorf("expected -10 to be invalid")
 	}
 }
