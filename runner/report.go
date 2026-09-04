@@ -113,6 +113,9 @@ func normalizeRuleCode(raw string) string {
 	if strings.HasPrefix(upper, "A") && len(upper) == 3 {
 		return "ARGUS-" + upper
 	}
+	if code, ok := RuleAliases[upper]; ok {
+		return code
+	}
 	for id, desc := range CanonicalDescriptions {
 		if desc == upper || id == upper {
 			return "ARGUS-" + id

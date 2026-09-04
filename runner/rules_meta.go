@@ -29,7 +29,7 @@ var CanonicalDescriptions = map[string]string{
 	"A15":  "FORBIDDEN_DDL_APP_ROLE_GRANT",
 	"A16":  "MAX_CONNS_CONFIG",
 	"A17":  "FORBIDDEN_QUERY_IN_LOOP",
-	"A18":  "ROWS_ERR",
+	"A18":  "MISSING_ROWS_ERR_CHECK",
 	"A19":  "UNBOUNDED_QUERY_LIMIT",
 	"A20":  "PARAM_LIMIT_65535",
 	"A21":  "UNBOUNDED_ROW_LOCK_BLOCKING",
@@ -43,6 +43,62 @@ var CanonicalDescriptions = map[string]string{
 	"A29":  "UNINDEXED_FOREIGN_KEY",
 	"A30":  "TIMESTAMP_WITHOUT_TIMEZONE",
 	"E001": "UNABLE_TO_ANALYZE_MIGRATION",
+}
+
+// RuleAliases maps scanner rule identifiers and descriptive names to standardized ARGUS-Axx rule codes.
+var RuleAliases = map[string]string{
+	"UNSAFE_SQL_CONCATENATION":          "ARGUS-A01",
+	"MISSING_DEFER_CLOSE":               "ARGUS-A02",
+	"UNBOUNDED_CONTEXT":                 "ARGUS-A03",
+	"UNSAFE_ORDER_BY":                   "ARGUS-A04",
+	"UNSAFE_DYNAMIC_ORDERBY":            "ARGUS-A04",
+	"AUDIT_LOG_IMMUTABILITY":            "ARGUS-A05",
+	"FORBIDDEN_AUDIT_MUTATION":          "ARGUS-A05",
+	"RUNTIME_DDL":                       "ARGUS-A06",
+	"RUNTIME_DDL_EXECUTION":             "ARGUS-A06",
+	"ERROR_LEAK":                        "ARGUS-A07",
+	"DATABASE_ERROR_LEAK":               "ARGUS-A07",
+	"TX_EXTERNAL_IO":                    "ARGUS-A08",
+	"TRANSACTION_BLOCKING_IO":           "ARGUS-A08",
+	"ADVISORY_LOCK":                     "ARGUS-A09",
+	"UNSAFE_ADVISORY_LOCK":              "ARGUS-A09",
+	"ISOLATION_LEVEL":                   "ARGUS-A10",
+	"WEAK_ISOLATION_LEVEL":              "ARGUS-A10",
+	"DESTRUCTIVE_MIGRATION":             "ARGUS-A11",
+	"TIMEOUT_CONFIG":                    "ARGUS-A12",
+	"TIMEOUT_CONFIG_MISSING":            "ARGUS-A12",
+	"MISSING_DOWN_MIGRATION":            "ARGUS-A13",
+	"FORBIDDEN_SELECT_STAR":             "ARGUS-A14",
+	"FORBIDDEN_DDL_APP_ROLE_GRANT":      "ARGUS-A15",
+	"MAX_CONNS_CONFIG":                  "ARGUS-A16",
+	"UNBOUNDED_MAX_CONNS":               "ARGUS-A16",
+	"FORBIDDEN_QUERY_IN_LOOP":           "ARGUS-A17",
+	"ROWS_ERR":                          "ARGUS-A18",
+	"MISSING_ROWS_ERR_CHECK":            "ARGUS-A18",
+	"UNCHECKED_ROWS_ERROR":              "ARGUS-A18",
+	"UNBOUNDED_QUERY_LIMIT":             "ARGUS-A19",
+	"UNBOUNDED_HIGH_CARDINALITY_QUERY":  "ARGUS-A19",
+	"PARAM_LIMIT_65535":                 "ARGUS-A20",
+	"UNBOUNDED_BATCH_PARAMS":            "ARGUS-A20",
+	"WIRE_PARAM_LIMIT":                  "ARGUS-A20",
+	"UNBOUNDED_ROW_LOCK_BLOCKING":       "ARGUS-A21",
+	"BLOCKING_ROW_LOCK":                 "ARGUS-A21",
+	"LOCK_CONVOY":                       "ARGUS-A21",
+	"SERIALIZATION_FAILURE_RETRY":       "ARGUS-A22",
+	"MISSING_SERIALIZABLE_RETRY":        "ARGUS-A22",
+	"RETRY_TRANSACTION":                 "ARGUS-A22",
+	"TRANSACTION_TIMEOUT_CONFIG":        "ARGUS-A23",
+	"MISSING_TX_TIMEOUT":                "ARGUS-A23",
+	"TX_TIMEOUT_GUC":                    "ARGUS-A23",
+	"TENANT_ISOLATION_LEAK":             "ARGUS-A24",
+	"EXPENSIVE_CPU_IN_TRANSACTION":      "ARGUS-A25",
+	"EXPENSIVE_CPU_IN_TX":               "ARGUS-A25",
+	"LIKE_WILDCARD_INJECTION":           "ARGUS-A26",
+	"NON_CONCURRENT_INDEX_CREATION":     "ARGUS-A27",
+	"TABLE_LOCKING_CONSTRAINT_ADDITION": "ARGUS-A28",
+	"UNINDEXED_FOREIGN_KEY":             "ARGUS-A29",
+	"TIMESTAMP_WITHOUT_TIMEZONE":        "ARGUS-A30",
+	"UNABLE_TO_ANALYZE_MIGRATION":       "ARGUS-E001",
 }
 
 // CalculateCheckedComponents determines the relevant component count for a rule.
@@ -86,7 +142,10 @@ func BuildDynamicRuleAuditInfo(analyzers []*analysis.Analyzer, cfg *config.Confi
 			continue
 		}
 
-		count := issueCounts[code] + issueCounts[id] + issueCounts[desc]
+		count := issueCounts[code]
+		if count == 0 {
+			count = issueCounts[id] + issueCounts[desc]
+		}
 		status := "PASS"
 		if count > 0 {
 			status = "FAILED"
@@ -114,7 +173,10 @@ func BuildDynamicRuleAuditInfo(analyzers []*analysis.Analyzer, cfg *config.Confi
 			}
 
 			desc := CanonicalDescriptions[id]
-			count := issueCounts[code] + issueCounts[id] + issueCounts[desc]
+			count := issueCounts[code]
+			if count == 0 {
+				count = issueCounts[id] + issueCounts[desc]
+			}
 			status := "PASS"
 			if count > 0 {
 				status = "FAILED"
@@ -147,14 +209,22 @@ func BuildDynamicRuleAuditInfo(analyzers []*analysis.Analyzer, cfg *config.Confi
 }
 
 func parseAnalyzerMeta(an *analysis.Analyzer) (id, code, desc string) {
-	name := an.Name
-	parts := strings.Split(name, "_")
-	if len(parts) >= 2 && strings.HasPrefix(parts[1], "a") {
-		id = strings.ToUpper(parts[1])
+	name := strings.TrimSpace(an.Name)
+	upper := strings.ToUpper(name)
+	parts := strings.Split(upper, "_")
+
+	if strings.HasPrefix(upper, "ARGUS-") {
+		id = strings.TrimPrefix(upper, "ARGUS-")
+		code = upper
+	} else if len(upper) >= 2 && upper[0] == 'A' {
+		id = parts[0]
+		code = "ARGUS-" + id
+	} else if len(parts) >= 2 && strings.HasPrefix(parts[1], "A") {
+		id = parts[1]
 		code = "ARGUS-" + id
 	} else {
-		id = strings.ToUpper(name)
-		code = id
+		id = upper
+		code = "ARGUS-" + upper
 	}
 
 	if canon, ok := CanonicalDescriptions[id]; ok {
@@ -162,7 +232,7 @@ func parseAnalyzerMeta(an *analysis.Analyzer) (id, code, desc string) {
 	} else if len(parts) >= 3 {
 		desc = strings.ToUpper(strings.Join(parts[2:], "_"))
 	} else {
-		desc = strings.ToUpper(name)
+		desc = upper
 	}
 
 	return id, code, desc
