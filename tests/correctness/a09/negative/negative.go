@@ -27,6 +27,7 @@ func N1_ObviousSafe(ctx context.Context, db DBExecutor, key int64) error {
 // N2: Legitimate Idiom — 2-parameter namespace constant classID + dynamic resource objID.
 func N2_LegitimateIdiom(ctx context.Context, db DBExecutor, objID int32) error {
 	const namespaceID = 1001
+	_ = namespaceID
 	_, err := db.Exec(ctx, "SELECT pg_advisory_xact_lock(1001, $1)", objID)
 	return err
 }

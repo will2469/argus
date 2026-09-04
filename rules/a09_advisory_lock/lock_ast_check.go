@@ -4,7 +4,6 @@
 package a09_advisory_lock
 
 import (
-	"regexp"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
@@ -46,52 +45,84 @@ var xactLockFuncs = map[string]bool{
 func InspectAdvisorySQL(sql string) []AdvisoryViolation {
 	tree, err := sqlparser.Parse(sql)
 	if err != nil {
-		return checkSubstrings(sql)
+		return nil
 	}
 
 	var violations []AdvisoryViolation
-
 	for _, stmt := range tree.Stmts {
 		if stmt.Stmt == nil {
 			continue
 		}
-		sel := stmt.Stmt.GetSelectStmt()
-		if sel == nil {
-			continue
+		if sel := stmt.Stmt.GetSelectStmt(); sel != nil {
+			inspectSelectStmt(sel, &violations)
 		}
+	}
 
-		for _, target := range sel.TargetList {
-			res := target.GetResTarget()
-			if res == nil || res.Val == nil {
-				continue
-			}
-			fn := res.Val.GetFuncCall()
-			if fn == nil {
-				continue
-			}
+	return violations
+}
 
-			fnName := extractFuncName(fn)
-			lowerName := strings.ToLower(fnName)
+func inspectSelectStmt(sel *pg_query.SelectStmt, violations *[]AdvisoryViolation) {
+	if sel == nil {
+		return
+	}
 
-			// 1. Check for session-level lock functions (forbidden on connection pools)
-			if sessionLockFuncs[lowerName] {
-				violations = append(violations, AdvisoryViolation{
-					Type:     ViolationSessionLock,
-					FuncName: fnName,
-				})
-				continue
-			}
-
-			// 2. Check for xact lock key semantics
-			if xactLockFuncs[lowerName] {
-				if v := checkXactLockArgs(fnName, fn.Args); v != nil {
-					violations = append(violations, *v)
+	// 1. Check TargetList
+	for _, target := range sel.TargetList {
+		if res := target.GetResTarget(); res != nil && res.Val != nil {
+			if fn := res.Val.GetFuncCall(); fn != nil {
+				if v := checkFuncCall(fn); v != nil {
+					*violations = append(*violations, *v)
 				}
 			}
 		}
 	}
 
-	return violations
+	// 2. Check WhereClause
+	if sel.WhereClause != nil {
+		if fn := sel.WhereClause.GetFuncCall(); fn != nil {
+			if v := checkFuncCall(fn); v != nil {
+				*violations = append(*violations, *v)
+			}
+		}
+	}
+
+	// 3. Check CTEs in WithClause
+	if sel.WithClause != nil {
+		for _, cteNode := range sel.WithClause.Ctes {
+			if cte := cteNode.GetCommonTableExpr(); cte != nil && cte.Ctequery != nil {
+				if cteSel := cte.Ctequery.GetSelectStmt(); cteSel != nil {
+					inspectSelectStmt(cteSel, violations)
+				}
+			}
+		}
+	}
+
+	// 4. Check Set Operations (UNION, INTERSECT, EXCEPT)
+	if sel.Larg != nil {
+		inspectSelectStmt(sel.Larg, violations)
+	}
+	if sel.Rarg != nil {
+		inspectSelectStmt(sel.Rarg, violations)
+	}
+}
+
+func checkFuncCall(fn *pg_query.FuncCall) *AdvisoryViolation {
+	if fn == nil {
+		return nil
+	}
+	fnName := extractFuncName(fn)
+	lowerName := strings.ToLower(fnName)
+
+	if sessionLockFuncs[lowerName] {
+		return &AdvisoryViolation{
+			Type:     ViolationSessionLock,
+			FuncName: fnName,
+		}
+	}
+	if xactLockFuncs[lowerName] {
+		return checkXactLockArgs(fnName, fn.Args)
+	}
+	return nil
 }
 
 func checkXactLockArgs(fnName string, args []*pg_query.Node) *AdvisoryViolation {
@@ -121,20 +152,17 @@ func checkXactLockArgs(fnName string, args []*pg_query.Node) *AdvisoryViolation 
 		arg2IsInt := isIntegerConstant(args[1])
 
 		if arg1IsInt && arg2IsInt {
-			// Both are hardcoded magic integers: e.g. pg_advisory_xact_lock(1, 2)
 			return &AdvisoryViolation{
 				Type:     ViolationHardcodedIntKey,
 				FuncName: fnName,
 			}
 		}
 		if arg2IsInt {
-			// Resource object ID is hardcoded magic integer: e.g. pg_advisory_xact_lock($1, 42)
 			return &AdvisoryViolation{
 				Type:     ViolationHardcodedIntKey,
 				FuncName: fnName,
 			}
 		}
-		// If arg1 is an integer constant and arg2 is a dynamic parameter ($1), this is VALID!
 	}
 
 	return nil
@@ -161,32 +189,4 @@ func extractFuncName(fn *pg_query.FuncCall) string {
 		return str.Sval
 	}
 	return ""
-}
-
-var (
-	re1ArgMagic = regexp.MustCompile(`(?i)pg_(?:try_)?advisory_xact_lock(?:_shared)?\s*\(\s*\d+\s*\)`)
-	re2ArgMagic = regexp.MustCompile(`(?i)pg_(?:try_)?advisory_xact_lock(?:_shared)?\s*\(\s*[^,]+,\s*\d+\s*\)`)
-)
-
-func checkSubstrings(sql string) []AdvisoryViolation {
-	var violations []AdvisoryViolation
-	lower := strings.ToLower(sql)
-
-	for fn := range sessionLockFuncs {
-		if strings.Contains(lower, fn) {
-			violations = append(violations, AdvisoryViolation{
-				Type:     ViolationSessionLock,
-				FuncName: fn,
-			})
-		}
-	}
-
-	if re1ArgMagic.MatchString(sql) || re2ArgMagic.MatchString(sql) {
-		violations = append(violations, AdvisoryViolation{
-			Type:     ViolationHardcodedIntKey,
-			FuncName: "pg_advisory_xact_lock",
-		})
-	}
-
-	return violations
 }
