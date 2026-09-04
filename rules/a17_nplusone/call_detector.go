@@ -19,7 +19,7 @@ func IsDBQueryCall(pass *analysis.Pass, call *ast.CallExpr) bool {
 	}
 
 	methodName := callsite.GetCallMethodName(call.Fun)
-	if !callsite.IsDBQueryMethod(methodName) {
+	if !callsite.IsDBQueryMethod(methodName) || methodName == "Queue" {
 		return false
 	}
 

@@ -59,3 +59,29 @@ func N7_DifferentSchemaAuditTable(ctx context.Context, db DBExecutor) error {
 	_, err := db.Exec(ctx, "UPDATE evil_schema.audit_logs SET action = 'SAFE'")
 	return err
 }
+
+// BatchQueue represents a batch query queue interface.
+type BatchQueue interface {
+	Queue(query string, args ...any)
+}
+
+// BatchSender represents a batch and utility execution interface.
+type BatchSender interface {
+	SendBatch(ctx context.Context, b any) any
+	CopyFrom(ctx context.Context, table any, cols any, src any) (int64, error)
+	Begin(ctx context.Context) (any, error)
+}
+
+// N8: Batch Queue and SendBatch — queueing and sending batch queries without false alarms.
+func N8_BatchQueueAndSendBatch(ctx context.Context, q BatchQueue, sender BatchSender) {
+	q.Queue("INSERT INTO audit_logs (id, action) VALUES ($1, $2)", "1", "CREATE")
+	q.Queue("UPDATE users SET status = $1 WHERE id = $2", "ACTIVE", 1)
+	sender.SendBatch(ctx, q)
+}
+
+// N9: CopyFrom and Begin — operations that do not accept SQL string expressions.
+func N9_CopyFromAndBegin(ctx context.Context, sender BatchSender) {
+	sender.CopyFrom(ctx, "archive_classifications", []string{"id"}, nil)
+	sender.Begin(ctx)
+}
+

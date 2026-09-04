@@ -59,3 +59,13 @@ func P_Ignored(ctx context.Context, db DBExecutor) error {
 	_, err := db.Exec(ctx, "DELETE FROM audit_logs WHERE action = 'DUPLICATE'")
 	return err
 }
+
+type BatchQueue interface {
+	Queue(query string, args ...any)
+}
+
+// P6: Batch Queue Violation — DELETE on audit table queued into batch.
+func P6_BatchQueue(q BatchQueue) {
+	q.Queue("DELETE FROM audit_logs WHERE id = '1'") // want `\[ARGUS-A05\] forbidden DELETE on audit table "audit_logs"`
+}
+

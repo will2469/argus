@@ -44,17 +44,13 @@ func (t *flowTracker) resolveExpr(expr ast.Expr, state *flowState, depth int) va
 		}
 		k := makeVarKey(t.pass, t.file, t.fn, e)
 		if vs, ok := state.get(k); ok {
-			// Return nil (Unknown) if the variable state is nil
-			// Return empty set if vs is empty (proven empty) - this is valid (no queries)
 			if vs == nil {
 				return nil
 			}
 			return vs.clone()
 		}
-		// Variable not found in state - try package-level fallback
 		pkgVals := t.findPackageDeclValues(e.Name, depth+1)
 		if pkgVals == nil {
-			// Package-level fallback also failed - Unknown (not provably safe)
 			return nil
 		}
 		return pkgVals
@@ -64,7 +60,7 @@ func (t *flowTracker) resolveExpr(expr ast.Expr, state *flowState, depth int) va
 
 func (t *flowTracker) findPackageDeclValues(name string, depth int) valueSet {
 	if t.file == nil {
-		return nil // Unknown - no file context
+		return nil
 	}
 	for _, decl := range t.file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
@@ -78,22 +74,18 @@ func (t *flowTracker) findPackageDeclValues(name string, depth int) valueSet {
 			}
 			for i, n := range valSpec.Names {
 				if n.Name == name && i < len(valSpec.Values) {
-					// Resolve the expression with a fresh empty state
-					// If it returns nil, that's Unknown (not provably safe)
 					return t.resolveExpr(valSpec.Values[i], newFlowState(), depth)
 				}
 			}
 		}
 	}
-	return nil // Unknown - declaration not found
+	return nil
 }
 
 func crossConcat(left, right valueSet) valueSet {
-	// Fail-closed: if either side is Unknown (nil), result is Unknown
 	if left == nil || right == nil {
 		return nil
 	}
-	// Empty sets should result in empty set (proven empty)
 	if len(left) == 0 && len(right) == 0 {
 		return valueSet{}
 	}
@@ -118,7 +110,7 @@ func (t *flowTracker) ResolveCallQueries(call *ast.CallExpr) []string {
 	}
 	sqlArg := callsite.ExtractSQLArg(call, t.pass)
 	if sqlArg == nil {
-		return nil // No SQL argument found
+		return nil
 	}
 
 	state := t.callStates[call]
@@ -127,10 +119,8 @@ func (t *flowTracker) ResolveCallQueries(call *ast.CallExpr) []string {
 	}
 
 	vs := t.resolveExpr(sqlArg, state, 0)
-	// nil valueSet means Unknown (not provably safe) - fail-closed
-	// Return empty slice []string{} to distinguish from nil (no SQL arg)
 	if vs == nil {
-		return []string{} // Unknown provenance - not provably safe
+		return []string{}
 	}
 	return vs.toSlice()
 }

@@ -16,6 +16,7 @@ var queryMethods = map[string]bool{
 	"QueryRow":    true,
 	"Exec":        true,
 	"ExecContext": true,
+	"Queue":       true,
 	"SendBatch":   true,
 	"CopyFrom":    true,
 	"Begin":       true,

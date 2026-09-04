@@ -232,3 +232,52 @@ func main() {
 		}
 	}
 }
+
+func TestExtractSQLArg_BatchQueueAndContextSuffix(t *testing.T) {
+	src := `package main
+
+import "context"
+
+func main() {
+	var taskCtx, reqCtx context.Context
+	batch.Queue("INSERT INTO batch_test VALUES ($1)", 123)
+	tx.SendBatch(taskCtx, batch)
+	tx.CopyFrom(reqCtx, table, cols, src)
+	db.Begin(taskCtx)
+	db.QueryRow(taskCtx, "SELECT 1 FROM health")
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	var extracted []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			sqlArg := ExtractSQLArg(call, nil)
+			if sqlArg != nil {
+				if s, ok := extractString(sqlArg); ok {
+					extracted = append(extracted, s)
+				}
+			}
+		}
+		return true
+	})
+
+	expected := []string{
+		"INSERT INTO batch_test VALUES ($1)",
+		"SELECT 1 FROM health",
+	}
+
+	if len(extracted) != len(expected) {
+		t.Fatalf("expected %d queries, got %d: %v", len(expected), len(extracted), extracted)
+	}
+	for i, want := range expected {
+		if extracted[i] != want {
+			t.Errorf("query %d mismatch: got %q, want %q", i, extracted[i], want)
+		}
+	}
+}
+

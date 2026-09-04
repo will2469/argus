@@ -19,7 +19,17 @@ func ExtractSQLArg(call *ast.CallExpr, pass *analysis.Pass) ast.Expr {
 
 	methodName := GetCallMethodName(call.Fun)
 
-	// In database/sql and standard drivers, *Context methods always take context as arg 0.
+	// 1. Methods that do NOT take a SQL query string argument
+	switch methodName {
+	case "SendBatch", "CopyFrom", "Begin", "BeginTx", "BeginFunc", "Commit", "Rollback":
+		return nil
+	case "Queue":
+		// pgx.Batch.Queue(query string, args ...any)
+		// Argument 0 is the SQL query expression
+		return call.Args[0]
+	}
+
+	// 2. In database/sql and standard drivers, *Context methods always take context as arg 0.
 	if strings.HasSuffix(methodName, "Context") {
 		if len(call.Args) >= 2 {
 			return call.Args[1]
@@ -72,7 +82,10 @@ func IsContextArg(arg ast.Expr, pass *analysis.Pass) bool {
 	// 3. Syntactic AST heuristics (standalone runner / untyped AST mode)
 	if id, ok := arg.(*ast.Ident); ok {
 		lower := strings.ToLower(id.Name)
-		return lower == "ctx" || lower == "context" || strings.HasPrefix(lower, "ctx")
+		return lower == "ctx" || lower == "context" ||
+			strings.HasPrefix(lower, "ctx") ||
+			strings.HasSuffix(lower, "ctx") ||
+			strings.HasSuffix(lower, "context")
 	}
 
 	if call, ok := arg.(*ast.CallExpr); ok {
