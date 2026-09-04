@@ -1,6 +1,7 @@
 package adversarial
 
 import (
+	"errors"
 	"net/http"
 )
 
@@ -67,3 +68,36 @@ func (r *Responder[T]) Fail(err error) {
 func A7_SensitiveField(pgErr *PgError) string {
 	return pgErr.Hint
 }
+
+// A8: Non-DB Struct with DB Receiver Name — receiver named db with non-DB type Calculator must NOT be flagged.
+type Calculator struct{}
+
+func (Calculator) Exec(string) error { return nil }
+
+func A8_CalculatorReceiverNamedDB(w http.ResponseWriter) {
+	var db Calculator
+	err := db.Exec("calculate")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// A9: Variable Shadowing — inner scope shadows DB error with clean errors.New, outer scope leaks DB error.
+func A9_VariableShadowing(w http.ResponseWriter, pgErr *PgError) {
+	err := pgErr
+	{
+		err := errors.New("sanitized client error")
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
+	http.Error(w, err.Error(), http.StatusInternalServerError)
+}
+
+// A10: Branch Reassignment — error conditionally assigned from PgError (MAYBE_DB must be caught).
+func A10_BranchReassignment(w http.ResponseWriter, pgErr *PgError, cond bool) {
+	var err error = errors.New("initial")
+	if cond {
+		err = pgErr
+	}
+	http.Error(w, err.Error(), http.StatusInternalServerError)
+}
+

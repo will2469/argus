@@ -1,5 +1,5 @@
 // Package a07_error_leak evaluates error masking contracts, compile-time static constants,
-// and factory envelope constructors to prevent leaking unmasked database errors across any HTTP status.
+// and factory envelope constructors to prevent leaking unmasked database errors.
 package a07_error_leak
 
 import (
@@ -45,7 +45,7 @@ func IsCompileTimeString(pass *analysis.Pass, expr ast.Expr) bool {
 
 // CheckErrorFactoryCall inspects constructor and envelope factory calls (e.g. NewBadRequest, NewNotFound, Wrap)
 // to verify that raw database errors are not directly passed as the user-facing message argument.
-func CheckErrorFactoryCall(pass *analysis.Pass, fset *token.FileSet, call *ast.CallExpr, fn *ast.FuncDecl, dm *directives.DirectiveMap, issues *[]Issue) {
+func CheckErrorFactoryCall(pass *analysis.Pass, fset *token.FileSet, file *ast.File, fn *ast.FuncDecl, call *ast.CallExpr, tracker *ErrorTracker, dm *directives.DirectiveMap, issues *[]Issue) {
 	if call == nil {
 		return
 	}
@@ -55,14 +55,12 @@ func CheckErrorFactoryCall(pass *analysis.Pass, fset *token.FileSet, call *ast.C
 		return
 	}
 
-	// Inspect non-cause string arguments for unmasked database error reflection
-	for idx, arg := range call.Args {
+	for _, arg := range call.Args {
 		if isCauseOptionCall(arg) {
-			// Wrapping cause in functional option (e.g. WithCause(err)) is permitted for internal logging
 			continue
 		}
 
-		if ContainsTaintedError(pass, arg, fn) {
+		if ContainsTaintedError(pass, file, fn, arg, tracker) {
 			if fset != nil && dm != nil && (dm.IsIgnored(fset, arg.Pos(), RuleCode) || dm.IsIgnored(fset, call.Pos(), RuleCode)) {
 				return
 			}
@@ -72,13 +70,12 @@ func CheckErrorFactoryCall(pass *analysis.Pass, fset *token.FileSet, call *ast.C
 			})
 			return
 		}
-		_ = idx
 	}
 }
 
 // ContainsTaintedError checks whether an expression directly or indirectly embeds an unmasked database error.
-func ContainsTaintedError(pass *analysis.Pass, expr ast.Expr, fn *ast.FuncDecl) bool {
-	if expr == nil {
+func ContainsTaintedError(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, expr ast.Expr, tracker *ErrorTracker) bool {
+	if expr == nil || IsCompileTimeString(pass, expr) {
 		return false
 	}
 
@@ -86,8 +83,8 @@ func ContainsTaintedError(pass *analysis.Pass, expr ast.Expr, fn *ast.FuncDecl) 
 	if IsErrorCall(expr) {
 		call := expr.(*ast.CallExpr)
 		sel := call.Fun.(*ast.SelectorExpr)
-		origin := GetErrorOrigin(pass, sel.X, fn)
-		return origin == OriginDatabase || origin == OriginGeneric
+		val := tracker.GetErrorStateAt(fn, sel.X, call)
+		return val.kind == errorKindDB || val.kind == errorKindGenericParam
 	}
 
 	// 2. Sensitive driver fields (pgErr.Detail, pgErr.Hint, pgErr.Where)
@@ -102,30 +99,22 @@ func ContainsTaintedError(pass *analysis.Pass, expr ast.Expr, fn *ast.FuncDecl) 
 
 	// 3. String concatenation
 	if bin, ok := expr.(*ast.BinaryExpr); ok && bin.Op == token.ADD {
-		return ContainsTaintedError(pass, bin.X, fn) || ContainsTaintedError(pass, bin.Y, fn)
+		return ContainsTaintedError(pass, file, fn, bin.X, tracker) || ContainsTaintedError(pass, file, fn, bin.Y, tracker)
 	}
 
 	// 4. fmt.Sprintf formatting
 	if call, ok := expr.(*ast.CallExpr); ok && isFormatCall(call) {
 		for _, a := range call.Args[1:] {
-			if ContainsTaintedError(pass, a, fn) {
+			if ContainsTaintedError(pass, file, fn, a, tracker) {
 				return true
 			}
 		}
 	}
 
-	// 5. Identifier assigned from tainted expression
+	// 5. Identifier assigned from error expression
 	if id, ok := expr.(*ast.Ident); ok {
-		origin := GetErrorOrigin(pass, id, fn)
-		if origin == OriginNonDatabase {
-			return false
-		}
-		if origin == OriginDatabase {
-			return true
-		}
-		if fn != nil && fn.Body != nil && IsVarAssignedFromError(pass, id.Name, fn.Body, fn) {
-			return true
-		}
+		val := tracker.GetErrorStateAt(fn, id, id)
+		return val.kind == errorKindDB || val.kind == errorKindGenericParam
 	}
 
 	return false

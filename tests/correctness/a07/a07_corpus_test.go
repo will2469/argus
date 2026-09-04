@@ -94,13 +94,17 @@ func TestA07_AdversarialCorpus(t *testing.T) {
 		line       int
 		mustDetect bool
 	}{
-		{"A1_Branch", 22, true},
-		{"A2_Reassignment", 31, true},
-		{"A3_Alias", 37, true},
-		{"A4_Wrapper", 46, true},
-		{"A5_NestedFunction", 52, true},
-		{"A6_Generic", 63, true},
-		{"A7_SensitiveField", 68, true},
+		{"A1_Branch", 23, true},
+		{"A2_Reassignment", 32, true},
+		{"A3_Alias", 38, true},
+		{"A4_Wrapper", 47, true},
+		{"A5_NestedFunction", 53, true},
+		{"A6_Generic", 64, true},
+		{"A7_SensitiveField", 69, true},
+		{"A8_CalculatorReceiverNamedDB", 81, false},
+		{"A9_ShadowedInner", 90, false},
+		{"A9_ShadowedOuter", 92, true},
+		{"A10_BranchReassignment", 101, true},
 	}
 
 	for _, a := range assertions {

@@ -1,182 +1,181 @@
-// Package a07_error_leak provides error provenance and origin classification,
-// distinguishing database errors from non-database (validation, format, client) errors.
+// Package a07_error_leak evaluates error provenance and origin classification,
+// distinguishing database errors from non-database (validation, client, custom) errors.
 package a07_error_leak
 
 import (
 	"go/ast"
+	"go/token"
+	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
 
-// ErrorOrigin represents the originating domain of an error variable or expression.
-type ErrorOrigin int
-
-const (
-	// OriginUnknown represents an unresolved error origin.
-	OriginUnknown ErrorOrigin = iota
-	// OriginDatabase represents an error originating from a database driver, query, or transaction.
-	OriginDatabase
-	// OriginNonDatabase represents an error originating from validation, parsing, or non-DB code.
-	OriginNonDatabase
-	// OriginGeneric represents a generic unclassified handler error parameter.
-	OriginGeneric
-)
-
-// GetErrorOrigin determines whether an error expression originates from a database source.
-func GetErrorOrigin(pass *analysis.Pass, expr ast.Expr, fn *ast.FuncDecl) ErrorOrigin {
+// evalExprOrigin determines the semantic error origin of an AST expression.
+func evalExprOrigin(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, expr ast.Expr, state *errorState) errorValue {
 	if expr == nil {
-		return OriginUnknown
+		return errorValue{kind: errorKindClean}
 	}
 
 	switch e := expr.(type) {
 	case *ast.CallExpr:
-		return getCallErrorOrigin(pass, e)
+		return evalCallOrigin(pass, file, fn, e, state)
 	case *ast.Ident:
-		return getIdentErrorOrigin(pass, e, fn)
+		return evalIdentOrigin(pass, file, fn, e, state)
+	case *ast.TypeAssertExpr:
+		if e.Type != nil {
+			if pass != nil && pass.TypesInfo != nil {
+				if t := pass.TypesInfo.TypeOf(e.Type); t != nil && IsPgErrorType(t) {
+					return errorValue{kind: errorKindDB, source: "typeassert PgError"}
+				}
+			}
+			if isPgErrorASTType(e.Type) {
+				return errorValue{kind: errorKindDB, source: "typeassert PgError"}
+			}
+		}
 	case *ast.SelectorExpr:
 		if IsPgErrorSelector(pass, e) {
-			return OriginDatabase
+			return errorValue{kind: errorKindDB, source: "pgError field"}
 		}
-		return getSelectorErrorOrigin(pass, e, fn)
+		if state != nil {
+			k := makeVarKey(pass, file, fn, getRootIdent(e.X))
+			if v := state.get(k); v.kind != errorKindClean {
+				return v
+			}
+		}
+	case *ast.BinaryExpr:
+		if e.Op == token.ADD {
+			v1 := evalExprOrigin(pass, file, fn, e.X, state)
+			v2 := evalExprOrigin(pass, file, fn, e.Y, state)
+			return joinValues(v1, v2)
+		}
+	case *ast.ParenExpr:
+		return evalExprOrigin(pass, file, fn, e.X, state)
 	}
-	return OriginUnknown
+
+	return errorValue{kind: errorKindClean}
 }
 
-func getCallErrorOrigin(pass *analysis.Pass, call *ast.CallExpr) ErrorOrigin {
-	if call == nil {
-		return OriginUnknown
-	}
-
+func evalCallOrigin(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call *ast.CallExpr, state *errorState) errorValue {
 	// 1. Is it a database call?
-	if isDatabaseCall(pass, call) {
-		return OriginDatabase
+	if isDatabaseCall(pass, file, fn, call) {
+		return errorValue{kind: errorKindDB, source: "database operation"}
 	}
 
-	// 2. Is it a known non-database call (validation, standard parser)?
-	if isNonDatabaseCall(pass, call) {
-		return OriginNonDatabase
+	// 2. Is it .Error() method invocation on an error object?
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Error" && len(call.Args) == 0 {
+		return evalExprOrigin(pass, file, fn, sel.X, state)
 	}
 
-	return OriginUnknown
+	// 3. Is it errors.New?
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+		if id, ok := sel.X.(*ast.Ident); ok && id.Name == "errors" && sel.Sel.Name == "New" {
+			return errorValue{kind: errorKindClean, source: "errors.New"}
+		}
+		// fmt.Errorf: check if any wrapped arg is DB tainted
+		if id, ok := sel.X.(*ast.Ident); ok && id.Name == "fmt" && sel.Sel.Name == "Errorf" {
+			for _, arg := range call.Args[1:] {
+				if v := evalExprOrigin(pass, file, fn, arg, state); v.kind == errorKindDB {
+					return errorValue{kind: errorKindDB, source: "fmt.Errorf wrapping DB error"}
+				}
+			}
+			return errorValue{kind: errorKindClean, source: "fmt.Errorf clean"}
+		}
+	}
+
+	return errorValue{kind: errorKindClean}
 }
 
-func getIdentErrorOrigin(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl) ErrorOrigin {
-	if id == nil {
-		return OriginUnknown
-	}
-
-	// 1. Explicit variable naming conventions for non-DB domain errors
-	lower := strings.ToLower(id.Name)
-	if isNonDBErrorName(lower) {
-		return OriginNonDatabase
-	}
-
-	// 2. Type-based resolution via go/types
+func evalIdentOrigin(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, id *ast.Ident, state *errorState) errorValue {
+	// 1. Check types.Info if it is a proven PgError type
 	if pass != nil && pass.TypesInfo != nil {
-		if t := pass.TypesInfo.TypeOf(id); t != nil {
-			if IsPgErrorType(t) {
-				return OriginDatabase
-			}
+		if t := pass.TypesInfo.TypeOf(id); t != nil && IsPgErrorType(t) {
+			return errorValue{kind: errorKindDB, source: "PgError object"}
 		}
 	}
 
-	// 3. Trace local assignments in the enclosing function body
-	if fn != nil && fn.Body != nil {
-		if origin := traceAssignOrigin(pass, id.Name, fn.Body, fn); origin != OriginUnknown {
-			return origin
-		}
-		// If it's a function parameter, check if it has a proven PgError type or is generic
-		if isFuncParam(id.Name, fn) {
-			if isPgErrorParam(id.Name, fn) {
-				return OriginDatabase
-			}
-			return OriginGeneric
+	// 2. Check flow state for tracked variable
+	if state != nil {
+		k := makeVarKey(pass, file, fn, id)
+		if val := state.get(k); val.kind != errorKindClean {
+			return val
 		}
 	}
 
-	return OriginUnknown
+	// 3. Function parameter check
+	if isFuncParam(id.Name, fn) {
+		if isPgErrorParam(id.Name, fn) {
+			return errorValue{kind: errorKindDB, source: "PgError param"}
+		}
+		return errorValue{kind: errorKindGenericParam, source: "error param"}
+	}
+
+	return errorValue{kind: errorKindClean}
 }
 
-func getSelectorErrorOrigin(pass *analysis.Pass, sel *ast.SelectorExpr, fn *ast.FuncDecl) ErrorOrigin {
+// IsPgErrorSelector determines whether a selector refers to a pgconn.PgError struct.
+func IsPgErrorSelector(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	if sel == nil {
-		return OriginUnknown
+		return false
 	}
-	lower := strings.ToLower(sel.Sel.Name)
-	if isNonDBErrorName(lower) {
-		return OriginNonDatabase
+	if pass != nil && pass.TypesInfo != nil {
+		if typ := pass.TypesInfo.TypeOf(sel.X); typ != nil && typ != types.Typ[types.Invalid] {
+			return IsPgErrorType(typ)
+		}
 	}
-	if origin := GetErrorOrigin(pass, sel.X, fn); origin != OriginUnknown {
-		return origin
-	}
-	return OriginUnknown
-}
-
-func traceAssignOrigin(pass *analysis.Pass, varName string, body *ast.BlockStmt, fn *ast.FuncDecl) ErrorOrigin {
-	var origin ErrorOrigin
-	ast.Inspect(body, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok {
+	// AST fallback
+	if id, ok := sel.X.(*ast.Ident); ok && id.Obj != nil {
+		if field, ok := id.Obj.Decl.(*ast.Field); ok && isPgErrorASTType(field.Type) {
 			return true
 		}
-		for i, lhs := range assign.Lhs {
-			id, ok := lhs.(*ast.Ident)
-			if !ok || id.Name != varName {
-				continue
-			}
+		if vs, ok := id.Obj.Decl.(*ast.ValueSpec); ok && isPgErrorASTType(vs.Type) {
+			return true
+		}
+	}
+	return false
+}
 
-			var rhs ast.Expr
-			if i < len(assign.Rhs) {
-				rhs = assign.Rhs[i]
-			} else if len(assign.Rhs) == 1 {
-				rhs = assign.Rhs[0]
-			} else {
-				continue
-			}
+// IsPgErrorType inspects whether a go/types Type is a pgconn.PgError or equivalent PostgreSQL error struct.
+func IsPgErrorType(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	for {
+		if ptr, ok := t.(*types.Pointer); ok {
+			t = ptr.Elem()
+		} else {
+			break
+		}
+	}
 
-			// Check if RHS is a call
-			if call, ok := rhs.(*ast.CallExpr); ok {
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Error" && len(call.Args) == 0 {
-					origin = GetErrorOrigin(pass, sel.X, fn)
-					return false
+	tStr := t.String()
+	if strings.Contains(tStr, "pgconn.PgError") || strings.Contains(tStr, "pq.Error") {
+		return true
+	}
+
+	if named, ok := t.(*types.Named); ok {
+		if named.Obj() != nil && named.Obj().Name() == "PgError" {
+			return true
+		}
+		if st, ok := named.Underlying().(*types.Struct); ok {
+			var hasDetail, hasHint, hasWhere bool
+			for i := 0; i < st.NumFields(); i++ {
+				switch st.Field(i).Name() {
+				case "Detail":
+					hasDetail = true
+				case "Hint":
+					hasHint = true
+				case "Where":
+					hasWhere = true
 				}
-				origin = getCallErrorOrigin(pass, call)
-				return false
 			}
-
-			// Check if RHS is type assertion, e.g. pgErr, ok := err.(*PgError)
-			if ta, ok := rhs.(*ast.TypeAssertExpr); ok && ta.Type != nil {
-				if pass != nil && pass.TypesInfo != nil {
-					if t := pass.TypesInfo.TypeOf(ta.Type); t != nil && IsPgErrorType(t) {
-						origin = OriginDatabase
-						return false
-					}
-				}
-				if isPgErrorASTType(ta.Type) {
-					origin = OriginDatabase
-					return false
-				}
-			}
-
-			// Check if RHS is another identifier (alias)
-			if rhsID, ok := rhs.(*ast.Ident); ok {
-				origin = getIdentErrorOrigin(pass, rhsID, fn)
-				return false
-			}
-
-			// Check if RHS is selector (e.g. pgErr.Detail or obj.Err)
-			if sel, ok := rhs.(*ast.SelectorExpr); ok {
-				if IsPgErrorSelector(pass, sel) {
-					origin = OriginDatabase
-					return false
-				}
-				origin = GetErrorOrigin(pass, sel.X, fn)
-				return false
+			if hasDetail && hasHint && hasWhere {
+				return true
 			}
 		}
-		return true
-	})
-	return origin
+	}
+
+	return false
 }
 
 func isFuncParam(name string, fn *ast.FuncDecl) bool {
@@ -225,4 +224,16 @@ func isPgErrorASTType(expr ast.Expr) bool {
 		}
 	}
 	return false
+}
+
+func getRootIdent(expr ast.Expr) *ast.Ident {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e
+	case *ast.UnaryExpr:
+		return getRootIdent(e.X)
+	case *ast.ParenExpr:
+		return getRootIdent(e.X)
+	}
+	return nil
 }
