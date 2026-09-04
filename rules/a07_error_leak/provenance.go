@@ -6,7 +6,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -135,7 +134,8 @@ func IsPgErrorSelector(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	return false
 }
 
-// IsPgErrorType inspects whether a go/types Type is a pgconn.PgError or equivalent PostgreSQL error struct.
+// IsPgErrorType inspects whether a go/types Type is a pgconn.PgError or pq.Error.
+// Fail-closed: only accepts exact package path verification, not structural heuristics.
 func IsPgErrorType(t types.Type) bool {
 	if t == nil {
 		return false
@@ -148,30 +148,19 @@ func IsPgErrorType(t types.Type) bool {
 		}
 	}
 
-	tStr := t.String()
-	if strings.Contains(tStr, "pgconn.PgError") || strings.Contains(tStr, "pq.Error") {
-		return true
-	}
-
-	if named, ok := t.(*types.Named); ok {
-		if named.Obj() != nil && named.Obj().Name() == "PgError" {
-			return true
+	// Fail-closed: only accept exact package path matches
+	if named, ok := t.(*types.Named); ok && named.Obj() != nil {
+		pkg := named.Obj().Pkg()
+		if pkg == nil {
+			return false
 		}
-		if st, ok := named.Underlying().(*types.Struct); ok {
-			var hasDetail, hasHint, hasWhere bool
-			for i := 0; i < st.NumFields(); i++ {
-				switch st.Field(i).Name() {
-				case "Detail":
-					hasDetail = true
-				case "Hint":
-					hasHint = true
-				case "Where":
-					hasWhere = true
-				}
-			}
-			if hasDetail && hasHint && hasWhere {
-				return true
-			}
+		path := pkg.Path()
+		name := named.Obj().Name()
+
+		// Exact package/type matches only
+		if (path == "github.com/jackc/pgx/v5/pgconn" && name == "PgError") ||
+			(path == "github.com/lib/pq" && name == "Error") {
+			return true
 		}
 	}
 
@@ -213,16 +202,16 @@ func isPgErrorASTType(expr ast.Expr) bool {
 	if star, ok := expr.(*ast.StarExpr); ok {
 		expr = star.X
 	}
-	if id, ok := expr.(*ast.Ident); ok {
-		return id.Name == "PgError" || id.Name == "Error"
-	}
+	// Fail-closed: only accept exact AST selectors with proven package context
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		if sel.Sel.Name == "PgError" || sel.Sel.Name == "Error" {
 			if pkgID, ok := sel.X.(*ast.Ident); ok {
-				return pkgID.Name == "pgconn" || pkgID.Name == "pq" || pkgID.Name == "pgdriver"
+				// Only accept known PostgreSQL driver packages
+				return pkgID.Name == "pgconn" || pkgID.Name == "pq"
 			}
 		}
 	}
+	// Fail-closed: reject bare "PgError" or "Error" identifiers without package context
 	return false
 }
 

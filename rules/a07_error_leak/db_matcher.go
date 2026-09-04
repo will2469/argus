@@ -54,18 +54,21 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call 
 	}
 
 	// 2. Standalone Mode (pass == nil or TypesInfo unavailable)
+	// Fail-closed: only check known database package identifiers
 	if id, ok := sel.X.(*ast.Ident); ok {
 		switch id.Name {
 		case "sql", "pgx", "pgxpool", "sqlx", "pq":
 			return true
 		}
 
+		// Check AST declaration for proven DB type
 		decl := findASTDeclForIdent(file, fn, id)
 		if decl != nil {
 			return isKnownDBASTDecl(decl)
 		}
 	}
 
+	// Fail-closed: if we cannot prove it's a DB call, don't check
 	return false
 }
 

@@ -101,3 +101,19 @@ func A10_BranchReassignment(w http.ResponseWriter, pgErr *PgError, cond bool) {
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
+// A11: Custom Struct with Detail/Hint/Where — custom struct with same field names should NOT be flagged as PgError.
+type CustomError struct {
+	Detail string
+	Hint   string
+	Where  string
+}
+
+func (c *CustomError) Error() string {
+	return c.Detail
+}
+
+func A11_CustomStructWithPgErrorFields(w http.ResponseWriter, customErr *CustomError) {
+	// Access Detail field directly - should NOT be flagged since it's not pgconn.PgError
+	_ = customErr.Detail
+}
+
