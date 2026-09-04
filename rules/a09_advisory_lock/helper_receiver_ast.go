@@ -181,6 +181,21 @@ func isImportedArgusPackage(file *ast.File, name string) bool {
 }
 
 func isIdentShadowed(file *ast.File, fn *ast.FuncDecl, pos token.Pos, name string) bool {
+	if file != nil {
+		for _, decl := range file.Decls {
+			if gen, ok := decl.(*ast.GenDecl); ok && (gen.Tok == token.VAR || gen.Tok == token.CONST) {
+				for _, spec := range gen.Specs {
+					if vs, ok := spec.(*ast.ValueSpec); ok {
+						for _, p := range vs.Names {
+							if p.Name == name {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	if fn == nil {
 		return false
 	}
