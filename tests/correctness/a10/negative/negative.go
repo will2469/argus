@@ -132,3 +132,39 @@ func N8_CorrelatedAdvisoryLock(ctx context.Context, pool Pool) error {
 	_ = tx.Exec(ctx, "UPDATE balances SET amount = amount - 100 WHERE id = 1")
 	return tx.Commit(ctx)
 }
+
+// Calculator has Exec + Query but is not a database transaction.
+type Calculator struct{}
+
+func (Calculator) Exec(query string) error  { return nil }
+func (Calculator) Query(query string) error { return nil }
+
+// N9: Non-DB Calculator with Exec + Query must produce 0 violations.
+func N9_NonDBCalculator() {
+	calc := Calculator{}
+	_ = calc.Exec("UPDATE balances SET amount = 0 WHERE id = 1")
+}
+
+// SearchEngine has Exec + Commit (no Rollback) and is not a database transaction.
+type SearchEngine struct{}
+
+func (SearchEngine) Exec(query string) error { return nil }
+func (SearchEngine) Commit() error           { return nil }
+
+// N10: Non-DB SearchEngine with Exec + Commit must produce 0 violations.
+func N10_NonDBSearchEngine() {
+	se := SearchEngine{}
+	_ = se.Exec("UPDATE balances SET amount = 0 WHERE id = 1")
+	_ = se.Commit()
+}
+
+// WorkerPool has Begin() but returns no transaction.
+type WorkerPool struct{}
+
+func (WorkerPool) Begin() {}
+
+// N11: Non-DB WorkerPool with Begin() must produce 0 violations.
+func N11_NonDBWorkerPool() {
+	wp := WorkerPool{}
+	wp.Begin()
+}

@@ -169,6 +169,8 @@ import "context"
 type Tx interface {
 	Exec(ctx context.Context, sql string, args ...any) error
 	Query(ctx context.Context, sql string, args ...any) error
+	Commit(ctx context.Context) error
+	Rollback(ctx context.Context) error
 }
 
 type Pool interface {

@@ -4,8 +4,6 @@ package a10_isolation_level
 
 import (
 	"go/ast"
-	"go/token"
-	"strings"
 
 	"github.com/will2469/argus/shared/callsite"
 )
@@ -65,26 +63,6 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 	return nil
 }
 
-func getASTTypeName(expr ast.Expr) string {
-	if expr == nil {
-		return ""
-	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.IndexExpr:
-		return getASTTypeName(e.X)
-	case *ast.IndexListExpr:
-		return getASTTypeName(e.X)
-	case *ast.SelectorExpr:
-		return e.Sel.Name
-	}
-	return ""
-}
-
 func isProvenDBPoolASTType(expr ast.Expr, file *ast.File) bool {
 	if expr == nil {
 		return false
@@ -110,47 +88,8 @@ func isProvenDBPoolASTType(expr ast.Expr, file *ast.File) bool {
 	return false
 }
 
-func findTypeSpec(name string, file *ast.File) *ast.TypeSpec {
-	if file == nil || name == "" {
-		return nil
-	}
-	for _, decl := range file.Decls {
-		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.TYPE {
-			for _, spec := range gen.Specs {
-				if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == name {
-					return ts
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func isKnownDBPackage(pkgName string, file *ast.File) bool {
-	if file != nil {
-		for _, imp := range file.Imports {
-			path := strings.Trim(imp.Path.Value, "`\"")
-			var alias string
-			if imp.Name != nil {
-				alias = imp.Name.Name
-			}
-			if (alias == pkgName) || (alias == "" && (path == "database/sql" && pkgName == "sql" ||
-				strings.HasSuffix(path, "/"+pkgName))) {
-				if strings.Contains(path, "pgx") || strings.Contains(path, "sql") || strings.Contains(path, "pq") {
-					return true
-				}
-			}
-		}
-	}
-	switch pkgName {
-	case "sql", "pgx", "pgxpool", "sqlx", "pq":
-		return true
-	}
-	return false
-}
-
 func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
-	if ts == nil {
+	if ts == nil || isKnownNonDBTypeName(ts.Name.Name) {
 		return false
 	}
 	switch t := ts.Type.(type) {
@@ -158,26 +97,42 @@ func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
 		if t.Methods == nil {
 			return false
 		}
-		var hasBegin, hasExec, hasQuery bool
+		var hasBegin, hasTxHelper bool
 		for _, m := range t.Methods.List {
+			if len(m.Names) == 0 {
+				if isProvenDBPoolASTType(m.Type, file) {
+					return true
+				}
+				continue
+			}
 			for _, name := range m.Names {
 				switch name.Name {
 				case "Begin", "BeginTx":
 					if ft, ok := m.Type.(*ast.FuncType); ok && ft.Results != nil && len(ft.Results.List) > 0 {
-						if isProvenDBTxASTType(ft.Results.List[0].Type, file) {
-							hasBegin = true
+						for _, res := range ft.Results.List {
+							if isProvenDBTxASTType(res.Type, file) {
+								hasBegin = true
+								break
+							}
 						}
-					} else {
-						hasBegin = true
 					}
-				case "Exec", "ExecContext":
-					hasExec = true
-				case "Query", "QueryContext", "QueryRow":
-					hasQuery = true
+				case "BeginFunc", "WithTx", "ExecuteTx":
+					if ft, ok := m.Type.(*ast.FuncType); ok && ft.Params != nil {
+						for _, p := range ft.Params.List {
+							if cb, ok := p.Type.(*ast.FuncType); ok && cb.Params != nil && len(cb.Params.List) > 0 {
+								for _, cbp := range cb.Params.List {
+									if isProvenClosureTxASTType(cbp.Type, file) {
+										hasTxHelper = true
+										break
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		}
-		return hasBegin || (hasExec && hasQuery)
+		return hasBegin || hasTxHelper
 	case *ast.StructType:
 		if t.Fields == nil {
 			return false
@@ -204,30 +159,64 @@ func isProvenDBTxASTType(expr ast.Expr, file *ast.File) bool {
 		}
 	}
 	if id, ok := expr.(*ast.Ident); ok {
+		if isKnownNonDBTypeName(id.Name) {
+			return false
+		}
 		if ts := findTypeSpec(id.Name, file); ts != nil {
 			if iface, ok := ts.Type.(*ast.InterfaceType); ok && iface.Methods != nil {
-				var hasExec, hasQuery, hasLifecycle bool
+				var hasExecOrQuery, hasCommit, hasRollback bool
 				for _, m := range iface.Methods.List {
+					if len(m.Names) == 0 {
+						if isProvenDBTxASTType(m.Type, file) {
+							return true
+						}
+						continue
+					}
 					for _, name := range m.Names {
 						switch name.Name {
-						case "Exec", "ExecContext", "SendBatch":
-							hasExec = true
-						case "Query", "QueryContext", "QueryRow":
-							hasQuery = true
-						case "Commit", "Rollback":
-							hasLifecycle = true
+						case "Exec", "ExecContext", "SendBatch", "Query", "QueryContext", "QueryRow", "QueryRowContext":
+							hasExecOrQuery = true
+						case "Commit":
+							hasCommit = true
+						case "Rollback":
+							hasRollback = true
 						}
 					}
 				}
-				return (hasExec && hasQuery) || (hasExec && hasLifecycle)
+				return hasCommit && hasRollback && hasExecOrQuery
 			}
 		}
 	}
 	return false
 }
 
-func isDBPoolConstructorCall(call *ast.CallExpr) bool {
-	if call == nil {
+func isProvenClosureTxASTType(expr ast.Expr, file *ast.File) bool {
+	if isProvenDBTxASTType(expr, file) {
+		return true
+	}
+	typeName := getASTTypeName(expr)
+	if isKnownNonDBTypeName(typeName) {
+		return false
+	}
+	if id, ok := expr.(*ast.Ident); ok {
+		if ts := findTypeSpec(id.Name, file); ts != nil {
+			if iface, ok := ts.Type.(*ast.InterfaceType); ok && iface.Methods != nil {
+				for _, m := range iface.Methods.List {
+					for _, name := range m.Names {
+						switch name.Name {
+						case "Exec", "ExecContext", "Query", "QueryRow", "QueryContext", "QueryRowContext", "Commit", "Rollback":
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func isDBPoolConstructorCall(call *ast.CallExpr, file *ast.File) bool {
+	if call == nil || file == nil {
 		return false
 	}
 	sel := callsite.GetCallSelector(call.Fun)
@@ -235,12 +224,13 @@ func isDBPoolConstructorCall(call *ast.CallExpr) bool {
 		return false
 	}
 	if pkgID, ok := sel.X.(*ast.Ident); ok {
-		switch pkgID.Name {
-		case "sql", "sqlx":
+		path := getPackageImportPath(pkgID.Name, file)
+		switch path {
+		case "database/sql", "github.com/jmoiron/sqlx":
 			return sel.Sel.Name == "Open" || sel.Sel.Name == "OpenDB" || sel.Sel.Name == "Connect"
-		case "pgx":
+		case "github.com/jackc/pgx/v5", "github.com/jackc/pgx/v4":
 			return sel.Sel.Name == "Connect" || sel.Sel.Name == "ConnectConfig"
-		case "pgxpool":
+		case "github.com/jackc/pgx/v5/pgxpool", "github.com/jackc/pgx/v4/pgxpool":
 			return sel.Sel.Name == "New" || sel.Sel.Name == "NewWithConfig"
 		}
 	}

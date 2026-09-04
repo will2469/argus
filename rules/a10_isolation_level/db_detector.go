@@ -41,17 +41,18 @@ func isDBExpr(pass *analysis.Pass, expr ast.Expr, fn *ast.FuncDecl, file *ast.Fi
 		}
 
 		if recvType != nil && recvType != types.Typ[types.Invalid] {
-			if callsite.IsPgxOrSQLType(recvType) || isProvenDBPoolInterface(recvType) {
+			if isProvenDBPoolInterface(recvType) {
 				return true
 			}
-			return false
+			if !hasInvalidType(recvType) {
+				return false
+			}
 		}
 	}
 
 	// 2. AST-level Symbol / Type Verification (pass == nil or unresolved)
 	if id, ok := expr.(*ast.Ident); ok {
-		switch id.Name {
-		case "sql", "pgx", "pgxpool", "sqlx", "pq":
+		if isKnownDBPackage(id.Name, file) && !isIdentShadowed(file, fn, id.Pos(), id.Name) {
 			return true
 		}
 	}
@@ -73,7 +74,7 @@ func isDBExpr(pass *analysis.Pass, expr ast.Expr, fn *ast.FuncDecl, file *ast.Fi
 					} else if len(as.Rhs) == 1 {
 						rhs = as.Rhs[0]
 					}
-					if rhsCall, ok := rhs.(*ast.CallExpr); ok && isDBPoolConstructorCall(rhsCall) {
+					if rhsCall, ok := rhs.(*ast.CallExpr); ok && isDBPoolConstructorCall(rhsCall, file) {
 						return true
 					}
 				}
@@ -121,7 +122,7 @@ func isProvenTxHelperCall(pass *analysis.Pass, call *ast.CallExpr, fn *ast.FuncD
 		firstParam := closure.Type.Params.List[0]
 		if len(firstParam.Names) > 0 {
 			if obj := pass.TypesInfo.Defs[firstParam.Names[0]]; obj != nil {
-				if !isProvenDBTxType(obj.Type()) && !callsite.IsPgxOrSQLType(obj.Type()) {
+				if !isProvenClosureTxType(obj.Type()) {
 					return false
 				}
 			}
@@ -131,96 +132,13 @@ func isProvenTxHelperCall(pass *analysis.Pass, call *ast.CallExpr, fn *ast.FuncD
 	return true
 }
 
-func isProvenDBPoolInterface(t types.Type) bool {
-	t = unwrapPointer(t)
-	if t == nil {
-		return false
-	}
-
-	var hasBeginWithTx bool
-	forEachTypeMethod(t, func(fn *types.Func) {
-		name := fn.Name()
-		if name != "Begin" && name != "BeginTx" {
-			return
-		}
-		sig, ok := fn.Type().(*types.Signature)
-		if !ok || sig.Results() == nil {
-			return
-		}
-		for i := 0; i < sig.Results().Len(); i++ {
-			if isProvenDBTxType(sig.Results().At(i).Type()) {
-				hasBeginWithTx = true
-			}
-		}
-	})
-	return hasBeginWithTx
-}
-
-// isProvenDBTxType verifies whether a Go type represents a genuine database transaction.
-// It accepts known database driver transaction types (e.g., *sql.Tx, pgx.Tx) or types that
-// structurally satisfy the database transaction contract by implementing BOTH query capability
-// (Query or QueryRow) AND write execution capability (Exec, ExecContext, or SendBatch).
-//
-// Capability Inference Boundary:
-// Types from unknown packages implementing both Exec and Query are recognized to support
-// application-level abstractions (DBTX, Querier). Single-method proxies (e.g., FakeDBProxy
-// with only Exec) are strictly rejected to prevent false alarms.
-func isProvenDBTxType(t types.Type) bool {
-	t = unwrapPointer(t)
-	if t == nil {
-		return false
-	}
-
-	// 1. Direct match for known DB driver transaction types
-	if named, ok := t.(*types.Named); ok {
-		if obj := named.Obj(); obj != nil && obj.Pkg() != nil {
-			switch obj.Pkg().Path() {
-			case "database/sql", "github.com/jackc/pgx/v5", "github.com/jackc/pgx/v4",
-				"github.com/jmoiron/sqlx", "github.com/lib/pq":
-				if obj.Name() == "Tx" {
-					return true
-				}
-			}
+func extractClosureArg(call *ast.CallExpr) *ast.FuncLit {
+	for _, arg := range call.Args {
+		if lit, ok := arg.(*ast.FuncLit); ok {
+			return lit
 		}
 	}
-
-	// 2. Structural capability verification: require write/exec capability AND either query or lifecycle methods.
-	var hasExec, hasQuery, hasLifecycle bool
-	forEachTypeMethod(t, func(fn *types.Func) {
-		switch fn.Name() {
-		case "Exec", "ExecContext", "SendBatch":
-			hasExec = true
-		case "Query", "QueryRow":
-			hasQuery = true
-		case "Commit", "Rollback":
-			hasLifecycle = true
-		}
-	})
-
-	return (hasExec && hasQuery) || (hasExec && hasLifecycle)
-}
-
-func unwrapPointer(t types.Type) types.Type {
-	for {
-		if ptr, ok := t.(*types.Pointer); ok {
-			t = ptr.Elem()
-		} else {
-			return t
-		}
-	}
-}
-
-func forEachTypeMethod(t types.Type, fn func(*types.Func)) {
-	if named, ok := t.(*types.Named); ok {
-		for i := 0; i < named.NumMethods(); i++ {
-			fn(named.Method(i))
-		}
-	}
-	if iface, ok := t.Underlying().(*types.Interface); ok {
-		for i := 0; i < iface.NumMethods(); i++ {
-			fn(iface.Method(i))
-		}
-	}
+	return nil
 }
 
 // isProvenTxReceiver verifies whether an expression is the expected transaction identifier

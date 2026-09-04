@@ -64,14 +64,6 @@ func isStrongIsoLevel(name string) bool {
 	return strings.Contains(lower, "repeatableread") || strings.Contains(lower, "serializable")
 }
 
-func extractClosureArg(call *ast.CallExpr) *ast.FuncLit {
-	for _, arg := range call.Args {
-		if lit, ok := arg.(*ast.FuncLit); ok {
-			return lit
-		}
-	}
-	return nil
-}
 
 func isTxEndStmt(pass *analysis.Pass, stmt ast.Stmt, txID *ast.Ident, body *ast.BlockStmt) bool {
 	if stmt == nil || txID == nil {
