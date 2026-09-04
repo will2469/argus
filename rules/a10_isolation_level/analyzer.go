@@ -57,13 +57,13 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			continue
 		}
 
-		inspectFunctionIsolation(fset, fn.Body, customTables, dm, &issues)
+		inspectFunctionIsolation(pass, fset, fn.Body, customTables, dm, &issues)
 	}
 
 	return issues
 }
 
-func inspectFunctionIsolation(fset *token.FileSet, body *ast.BlockStmt, customTables []string, dm *directives.DirectiveMap, issues *[]Issue) {
+func inspectFunctionIsolation(pass *analysis.Pass, fset *token.FileSet, body *ast.BlockStmt, customTables []string, dm *directives.DirectiveMap, issues *[]Issue) {
 	// 1. Inspect WithTx helper calls
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -81,8 +81,8 @@ func inspectFunctionIsolation(fset *token.FileSet, body *ast.BlockStmt, customTa
 			return true
 		}
 
-		hasWrite, hasRowLock, hasAdvisory := analyzeClosureQueries(closure.Body, customTables)
-		if !hasWrite || hasRowLock || hasAdvisory || isEnclosedInAdvisory(call, body) {
+		writtenCritical, lockedTables, advisoryCalls := analyzeClosureQueries(pass, closure.Body, customTables)
+		if len(writtenCritical) == 0 {
 			return true
 		}
 
@@ -90,8 +90,19 @@ func inspectFunctionIsolation(fset *token.FileSet, body *ast.BlockStmt, customTa
 		if len(call.Args) >= 4 {
 			hasIso = HasStrongIsolation(call.Args[3], body)
 		}
+		if hasIso {
+			return true
+		}
 
-		if !hasIso && (fset == nil || dm == nil || !dm.IsIgnored(fset, call.Pos(), RuleCode)) {
+		allProtected := true
+		for _, target := range writtenCritical {
+			if !isTableProtected(target, lockedTables, advisoryCalls) && !isEnclosedInCorrelatedAdvisory(call, body, target) {
+				allProtected = false
+				break
+			}
+		}
+
+		if !allProtected && (fset == nil || dm == nil || !dm.IsIgnored(fset, call.Pos(), RuleCode)) {
 			*issues = append(*issues, Issue{
 				Pos:     call.Pos(),
 				Message: violationMsgFmt,
@@ -102,7 +113,7 @@ func inspectFunctionIsolation(fset *token.FileSet, body *ast.BlockStmt, customTa
 	})
 
 	// 2. Inspect explicit transaction blocks (pool.Begin / pool.BeginTx)
-	inspectExplicitTxIsolation(fset, body, customTables, dm, issues)
+	inspectExplicitTxIsolation(pass, fset, body, customTables, dm, issues)
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {

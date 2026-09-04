@@ -6,18 +6,20 @@ import (
 	"go/token"
 	"strings"
 
+	"golang.org/x/tools/go/analysis"
+
 	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/directives"
 )
 
-func inspectExplicitTxIsolation(fset *token.FileSet, body *ast.BlockStmt, customTables []string, dm *directives.DirectiveMap, issues *[]Issue) {
+func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, body *ast.BlockStmt, customTables []string, dm *directives.DirectiveMap, issues *[]Issue) {
 	var inTx bool
 	var txVarName string
 	var beginPos ast.Node
 	var hasStrongIso bool
-	var hasWrite bool
-	var hasRowLock bool
-	var hasAdvisory bool
+	var writtenCritical []TableRef
+	var lockedTables []TableRef
+	var advisoryCalls []string
 
 	for _, stmt := range body.List {
 		if assign, ok := stmt.(*ast.AssignStmt); ok {
@@ -31,9 +33,9 @@ func inspectExplicitTxIsolation(fset *token.FileSet, body *ast.BlockStmt, custom
 								txVarName = id.Name
 								beginPos = call
 								hasStrongIso = false
-								hasWrite = false
-								hasRowLock = false
-								hasAdvisory = false
+								writtenCritical = nil
+								lockedTables = nil
+								advisoryCalls = nil
 							}
 						}
 					} else if name == "BeginTx" || strings.HasSuffix(name, ".BeginTx") {
@@ -42,11 +44,13 @@ func inspectExplicitTxIsolation(fset *token.FileSet, body *ast.BlockStmt, custom
 								inTx = true
 								txVarName = id.Name
 								beginPos = call
-								hasWrite = false
-								hasRowLock = false
-								hasAdvisory = false
+								writtenCritical = nil
+								lockedTables = nil
+								advisoryCalls = nil
 								if len(call.Args) >= 2 {
 									hasStrongIso = HasStrongIsolation(call.Args[1], body)
+								} else {
+									hasStrongIso = false
 								}
 							}
 						}
@@ -75,28 +79,31 @@ func inspectExplicitTxIsolation(fset *token.FileSet, body *ast.BlockStmt, custom
 						return true
 					}
 				}
-				queries := extractTxQueryStrings(call, body)
+				queries := extractTxQueryStrings(call, body, pass)
 				for _, query := range queries {
-					if IsCriticalTableWrite(query, customTables) {
-						hasWrite = true
+					if ref, ok := ExtractCriticalWriteTable(query, customTables); ok {
+						writtenCritical = append(writtenCritical, ref)
 					}
-					if HasPessimisticRowLock(query) {
-						hasRowLock = true
-					}
-					if HasAdvisoryLockCall(query) {
-						hasAdvisory = true
+					lockedTables = append(lockedTables, ExtractLockedTables(query)...)
+					if adv := ExtractAdvisoryLockTarget(query); adv != "" {
+						advisoryCalls = append(advisoryCalls, adv)
 					}
 				}
 				return true
 			})
 
 			if isTxEndStmt(stmt, txVarName) {
-				if hasWrite && !hasStrongIso && !hasRowLock && !hasAdvisory {
-					if beginPos != nil && (fset == nil || dm == nil || !dm.IsIgnored(fset, beginPos.Pos(), RuleCode)) {
-						*issues = append(*issues, Issue{
-							Pos:     beginPos.Pos(),
-							Message: violationMsgFmt,
-						})
+				if len(writtenCritical) > 0 && !hasStrongIso {
+					for _, target := range writtenCritical {
+						if !isTableProtected(target, lockedTables, advisoryCalls) {
+							if beginPos != nil && (fset == nil || dm == nil || !dm.IsIgnored(fset, beginPos.Pos(), RuleCode)) {
+								*issues = append(*issues, Issue{
+									Pos:     beginPos.Pos(),
+									Message: violationMsgFmt,
+								})
+								break
+							}
+						}
 					}
 				}
 				inTx = false
@@ -107,7 +114,7 @@ func inspectExplicitTxIsolation(fset *token.FileSet, body *ast.BlockStmt, custom
 	}
 }
 
-func analyzeClosureQueries(body *ast.BlockStmt, customTables []string) (hasWrite, hasRowLock, hasAdvisory bool) {
+func analyzeClosureQueries(pass *analysis.Pass, body *ast.BlockStmt, customTables []string) (writtenCritical []TableRef, lockedTables []TableRef, advisoryCalls []string) {
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -123,16 +130,14 @@ func analyzeClosureQueries(body *ast.BlockStmt, customTables []string) (hasWrite
 				return true
 			}
 		}
-		queries := extractTxQueryStrings(call, body)
+		queries := extractTxQueryStrings(call, body, pass)
 		for _, query := range queries {
-			if IsCriticalTableWrite(query, customTables) {
-				hasWrite = true
+			if ref, ok := ExtractCriticalWriteTable(query, customTables); ok {
+				writtenCritical = append(writtenCritical, ref)
 			}
-			if HasPessimisticRowLock(query) {
-				hasRowLock = true
-			}
-			if HasAdvisoryLockCall(query) {
-				hasAdvisory = true
+			lockedTables = append(lockedTables, ExtractLockedTables(query)...)
+			if adv := ExtractAdvisoryLockTarget(query); adv != "" {
+				advisoryCalls = append(advisoryCalls, adv)
 			}
 		}
 		return true
@@ -140,35 +145,38 @@ func analyzeClosureQueries(body *ast.BlockStmt, customTables []string) (hasWrite
 	return
 }
 
-func extractTxQueryStrings(call *ast.CallExpr, body *ast.BlockStmt) []string {
+func extractTxQueryStrings(call *ast.CallExpr, body *ast.BlockStmt, pass *analysis.Pass) []string {
 	if call == nil || len(call.Args) == 0 {
 		return nil
 	}
 
+	sqlArg := callsite.ExtractSQLArg(call, pass)
+	if sqlArg == nil {
+		return nil
+	}
+
 	var results []string
-	for _, arg := range call.Args {
-		switch e := arg.(type) {
-		case *ast.BasicLit:
-			if e.Kind == token.STRING {
-				results = append(results, strings.Trim(e.Value, "`\""))
-			}
-		case *ast.Ident:
-			if body != nil {
-				ast.Inspect(body, func(n ast.Node) bool {
-					assign, ok := n.(*ast.AssignStmt)
-					if !ok || assign.Pos() >= call.Pos() {
-						return true
-					}
-					for i, lhs := range assign.Lhs {
-						if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
-							if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-								results = append(results, strings.Trim(lit.Value, "`\""))
-							}
+	switch e := sqlArg.(type) {
+	case *ast.BasicLit:
+		if e.Kind == token.STRING {
+			results = append(results, strings.Trim(e.Value, "`\""))
+		}
+	case *ast.Ident:
+		if body != nil {
+			ast.Inspect(body, func(n ast.Node) bool {
+				assign, ok := n.(*ast.AssignStmt)
+				if !ok || assign.Pos() >= call.Pos() {
+					return true
+				}
+				for i, lhs := range assign.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
+						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							results = append(results, strings.Trim(lit.Value, "`\""))
 						}
 					}
-					return true
-				})
-			}
+				}
+				return true
+			})
 		}
 	}
 

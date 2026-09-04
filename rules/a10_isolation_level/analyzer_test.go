@@ -19,28 +19,50 @@ func TestAnalyzer(t *testing.T) {
 }
 
 func TestIsolationEval_Unit(t *testing.T) {
-	tests := []struct {
-		sql        string
-		isWrite    bool
-		hasRowLock bool
+	writeTests := []struct {
+		name          string
+		sql           string
+		expectTable   string
+		expectWritten bool
 	}{
-		{"SELECT * FROM balances WHERE id = 1 FOR UPDATE", false, true},
-		{"SELECT * FROM balances WHERE id = 1 FOR NO KEY UPDATE", false, true},
-		{"SELECT * FROM balances WHERE id = 1", false, false},
-		{"UPDATE balances SET amount = 100", true, false},
-		{"INSERT INTO inventory (id) VALUES (1)", true, false},
-		{"DELETE FROM accounts WHERE id = 1", true, false},
-		{"UPDATE user_preferences SET theme = 'dark'", false, false},
+		{"balances update", "UPDATE balances SET amount = 100", "balances", true},
+		{"inventory insert", "INSERT INTO inventory (id) VALUES (1)", "inventory", true},
+		{"accounts delete", "DELETE FROM accounts WHERE id = 1", "accounts", true},
+		{"non-critical table", "UPDATE user_preferences SET theme = 'dark'", "", false},
+		{"schema qualified non-public", "UPDATE archive.balances SET amount = 100", "", false},
+		{"audit log literal with balances", "INSERT INTO audit_log (message) VALUES ('updated balances successfully')", "", false},
 	}
 
-	for _, tc := range tests {
-		gotWrite := IsCriticalTableWrite(tc.sql, nil)
-		if gotWrite != tc.isWrite {
-			t.Errorf("for %q, expected isWrite=%v, got=%v", tc.sql, tc.isWrite, gotWrite)
+	for _, tc := range writeTests {
+		ref, ok := ExtractCriticalWriteTable(tc.sql, nil)
+		if ok != tc.expectWritten {
+			t.Errorf("[%s] expected write=%v, got=%v (ref=%+v)", tc.name, tc.expectWritten, ok, ref)
 		}
-		gotLock := HasPessimisticRowLock(tc.sql)
-		if gotLock != tc.hasRowLock {
-			t.Errorf("for %q, expected hasRowLock=%v, got=%v", tc.sql, tc.hasRowLock, gotLock)
+		if ok && ref.Name != tc.expectTable {
+			t.Errorf("[%s] expected table name %q, got %q", tc.name, tc.expectTable, ref.Name)
 		}
+	}
+
+	// Test Table-Correlated Row Locking
+	balancesRef := TableRef{Name: "balances"}
+	unrelatedLock := []TableRef{{Name: "unrelated_table"}}
+	balancesLock := []TableRef{{Name: "balances"}}
+
+	if isTableProtected(balancesRef, unrelatedLock, nil) {
+		t.Errorf("CORRECTNESS BUG: unrelated table row lock must NOT protect balances")
+	}
+	if !isTableProtected(balancesRef, balancesLock, nil) {
+		t.Errorf("CORRECTNESS BUG: balances row lock must protect balances")
+	}
+
+	// Test Advisory Lock Correlation
+	unrelatedAdvisory := []string{"select pg_advisory_xact_lock(999);"}
+	correlatedAdvisory := []string{"select pg_advisory_xact_lock(hashtext('balances:' || id));"}
+
+	if isTableProtected(balancesRef, nil, unrelatedAdvisory) {
+		t.Errorf("CORRECTNESS BUG: unrelated advisory lock (999) must NOT protect balances")
+	}
+	if !isTableProtected(balancesRef, nil, correlatedAdvisory) {
+		t.Errorf("CORRECTNESS BUG: correlated advisory lock must protect balances")
 	}
 }

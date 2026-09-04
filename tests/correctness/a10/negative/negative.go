@@ -95,3 +95,40 @@ func N5_AdvisoryLock(ctx context.Context, pool Pool) error {
 		})
 	})
 }
+
+// N6: Schema Qualification — modification of non-public table "archive.balances" is not in critical set.
+func N6_ArchiveBalances(ctx context.Context, pool Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_ = tx.Exec(ctx, "UPDATE archive.balances SET amount = 100 WHERE id = 1")
+	return tx.Commit(ctx)
+}
+
+// N7: String Literal Safety — query containing "balances" inside string literal is not a critical write.
+func N7_AuditLogMessage(ctx context.Context, pool Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_ = tx.Exec(ctx, "INSERT INTO audit_log (message) VALUES ('updated balances successfully')")
+	return tx.Commit(ctx)
+}
+
+// N8: Correlated SQL Advisory Lock — Advisory lock explicitly correlates to "balances".
+func N8_CorrelatedAdvisoryLock(ctx context.Context, pool Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_ = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext('balances:' || 1))")
+	_ = tx.Exec(ctx, "UPDATE balances SET amount = amount - 100 WHERE id = 1")
+	return tx.Commit(ctx)
+}

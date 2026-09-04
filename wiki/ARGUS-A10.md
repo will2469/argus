@@ -58,23 +58,44 @@ PostgreSQL implements true mathematical SSI (`src/backend/storage/lmgr/predicate
 
 ## 3. How Argus Detects Violations (Static Analysis Architecture)
 
-Argus inspects transaction scopes across database calls and helper closures:
+Argus inspects transaction scopes across database calls and helper closures using compiler-grade deterministic AST inspection:
 
 ```mermaid
-flowchart LR
+flowchart TD
     Scan["Inspect Go Functions<br/>(Exclude _test.go)"] --> DetectTx{"Identifies Transaction Scope?<br/>(Begin, BeginTx, WithTx)"}
-    DetectTx -->|Yes| CheckSQL["Inspect Queries in Tx Body"]
-    CheckSQL --> CriticalCheck{"Writes to Critical Table?<br/>(critical_tables.go)"}
-    CriticalCheck -->|Yes| GuardCheck{"Has Concurrency Guard?<br/>1. Serializable/RepeatableRead<br/>2. SELECT ... FOR UPDATE<br/>3. argus.WithAdvisoryLock"}
-    GuardCheck -->|No| Report["Report CRITICAL Violation:<br/>Unisolated Critical Table Write"]
-    GuardCheck -->|Yes| Pass["Pass (Safeguarded Mutation)"]
-    CriticalCheck -->|No| Pass
+    DetectTx -->|Yes| ExtractQueries["Extract SQL Arguments via callsite.ExtractSQLArg<br/>(Ignores arbitrary bind parameters)"]
+    ExtractQueries --> FindWrites["Extract Critical Table Writes<br/>(critical_tables.go)"]
+    FindWrites --> CheckWrites{"Any Critical Table Written?<br/>(balances, accounts, inventory, etc.)"}
+    CheckWrites -->|No| Pass["Pass (Safe Transaction)"]
+    CheckWrites -->|Yes| CheckIso{"Has Serializable / RepeatableRead?<br/>(tx_options_check.go)"}
+    CheckIso -->|Yes| Pass
+    CheckIso -->|No| CorrelateLocks{"For EVERY Written Critical Table T:<br/>Is T Protected?"}
+    CorrelateLocks --> Lock1{"1. SELECT ... FOR UPDATE on Table T?<br/>(pessimistic_lock.go)"}
+    Lock1 -->|Yes| NextTable{"All Written Tables Protected?"}
+    Lock1 -->|No| Lock2{"2. Correlated Advisory Lock for Table T?<br/>(e.g., 'lock:balances' or hashtext)"}
+    Lock2 -->|Yes| NextTable
+    Lock2 -->|No| Report["Report CRITICAL Violation:<br/>Table-Uncorrelated Lock or Weak Isolation"]
+    NextTable -->|Yes| Pass
+    NextTable -->|No| Report
     DetectTx -->|No| Pass
 ```
 
-1. **Critical Table Registry (`critical_tables.go`):** Analyzes SQL AST for `INSERT`, `UPDATE`, and `DELETE` statements targeting registered critical tables (`balances`, `accounts`, `inventory`, `wallets`, `ledger`, etc.).
-2. **Pessimistic Row Lock Detector (`pessimistic_lock.go`):** Parses PostgreSQL AST `LockingClause` to verify `SELECT ... FOR UPDATE` or `FOR NO KEY UPDATE`.
-3. **Transaction Options Validator (`tx_options_check.go`):** Analyzes `pgx.TxOptions` structs to verify `IsoLevel: Serializable` or `RepeatableRead`.
+### 3.1. Table-Correlated Lock Proof (Zero-Defect Concurrency Proof)
+
+A major correctness trap in concurrency linters is treating lock acquisition as a global boolean (`hasRowLock = true`). In reality:
+- `SELECT * FROM audit_log FOR UPDATE` does **NOT** protect `UPDATE balances SET amount = ...`.
+- `SELECT pg_advisory_xact_lock(999)` does **NOT** protect `balances` unless the lock identifier explicitly correlates with the critical table domain.
+
+Argus enforces a strict **Table-Correlated Lock Proof**:
+1. **Pessimistic Row Lock Correlation:** `ExtractLockedTables` parses PostgreSQL AST `LockingClause` (`LCS_FORUPDATE` / `LCS_FORNOKEYUPDATE`) and extracts relations from `FromClause`. The lock must match the mutated critical table (`TableRef.Matches`).
+2. **Advisory Lock Correlation:** Advisory locks (`WithAdvisoryLock` or `pg_advisory_xact_lock`) must explicitly correlate to the target critical table or domain name (e.g., `"lock:balances"`, `hashtext('balances:' || id)`).
+3. **Multi-Table Protection Completeness:** If a transaction writes to multiple critical tables (`balances` and `inventory`), **every** written critical table must be individually locked or the entire transaction must run under `Serializable` / `RepeatableRead`.
+
+### 3.2. Schema Identity & String-Literal Safety
+
+1. **Schema Qualification Identity:** Default critical tables (`balances`, `saldo`, `accounts`, etc.) only apply to the default or `public` schema. A query targeting `archive.balances` or `backup.accounts` is not mistakenly flagged as critical unless explicitly configured in `.argus.yaml`.
+2. **String-Literal Stripping:** SQL regex fallbacks automatically strip quoted string literals (`'...'`) before evaluating DML targets. Queries like `INSERT INTO audit_log (message) VALUES ('updated balances successfully')` are never misclassified as critical writes to `balances`.
+3. **Bound Argument Isolation:** Using `callsite.ExtractSQLArg(call, pass)`, Argus inspects only the SQL AST node, preventing bound parameters from leaking into query string analysis.
 
 ---
 
