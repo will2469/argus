@@ -154,32 +154,17 @@ func IsProvenDBPoolASTType(expr ast.Expr, file *ast.File) bool {
 }
 
 // IsProvenDBTxASTType checks whether expr is a proven DB transaction type
-// at the AST level: either a direct known type (sql.Tx), or a local
-// interface with Commit+Rollback+ExecOrQuery methods.
+// at the AST level: strictly a concrete transaction from a known database
+// package (sql.Tx, pgx.Tx) verified against file imports.
+// Custom interfaces (FakeTx) are NEVER accepted as database transactions.
 func IsProvenDBTxASTType(expr ast.Expr, file *ast.File) bool {
-	if IsKnownDBTxASTType(expr, file) {
-		return true
-	}
-
-	typeName := GetASTTypeName(expr)
-	if typeName == "" || file == nil {
-		return false
-	}
-	ts := FindTypeSpec(typeName, file)
-	if ts == nil {
-		return false
-	}
-	iface, ok := ts.Type.(*ast.InterfaceType)
-	if !ok {
-		return false
-	}
-	return HasASTTxMethods(iface, file)
+	return IsKnownDBTxASTType(expr, file)
 }
 
 // IsProvenClosureTxASTType checks whether expr is a suitable transaction
 // type for closure-based transaction APIs at the AST level.
 func IsProvenClosureTxASTType(expr ast.Expr, file *ast.File) bool {
-	return IsProvenDBTxASTType(expr, file)
+	return IsKnownDBTxASTType(expr, file)
 }
 
 // IsDBPoolConstructorCall checks whether call is a known database pool

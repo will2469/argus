@@ -141,6 +141,29 @@ func TestFakeTxInterface_MustBeRejected(t *testing.T) {
 	}
 }
 
+// TestFakeTxWithDriverProvenance_MustBeRejected verifies that even if an interface has
+// sql.Result in its Exec signature, it is STILL rejected as a DB transaction because
+// real DB transactions holding physical connection locks are strictly concrete driver types.
+func TestFakeTxWithDriverProvenance_MustBeRejected(t *testing.T) {
+	sqlPkg := types.NewPackage("database/sql", "sql")
+	resultNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Result", nil), types.NewInterfaceType(nil, nil), nil)
+	errType := types.Universe.Lookup("error").Type()
+
+	fakeTxWithProv := buildInterface(t,
+		method("Commit", nil, errorResult()),
+		method("Rollback", nil, errorResult()),
+		method("Exec", stringParam(), types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", resultNamed),
+			types.NewVar(token.NoPos, nil, "", errType),
+		)),
+	)
+
+	if IsProvenDBTxType(fakeTxWithProv) {
+		t.Fatal("PROVENANCE FAILURE: FakeTx with sql.Result was ACCEPTED as a DB transaction. " +
+			"Only concrete driver transactions (sql.Tx, pgx.Tx) can hold DB connection locks.")
+	}
+}
+
 // TestFakePoolInterface_MustBeRejected ensures that an interface with Begin
 // returning a non-DB type is not classified as a database pool.
 func TestFakePoolInterface_MustBeRejected(t *testing.T) {
@@ -153,20 +176,84 @@ func TestFakePoolInterface_MustBeRejected(t *testing.T) {
 	}
 }
 
-// TestFakeQuerier_MustBeRejected tests the exact user failure case:
-// type FakeQuerier interface { Exec(string) sql.Result }
-// without Query and without error return. It must NOT be classified as a DB querier.
-func TestFakeQuerier_MustBeRejected(t *testing.T) {
-	sqlPkg := types.NewPackage("database/sql", "sql")
-	resultNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Result", nil), types.NewInterfaceType(nil, nil), nil)
-
-	fakeQuerier := buildInterface(t,
-		method("Exec", stringParam(), types.NewTuple(types.NewVar(token.NoPos, nil, "", resultNamed))),
+// TestFakePoolReturningFakeTx_MustBeRejected ensures that FakePool -> Begin() FakeTx
+// is rejected because FakeTx is not an authentic driver transaction.
+func TestFakePoolReturningFakeTx_MustBeRejected(t *testing.T) {
+	fakeTx := buildInterface(t,
+		method("Commit", nil, errorResult()),
+		method("Rollback", nil, errorResult()),
+	)
+	errType := types.Universe.Lookup("error").Type()
+	fakePool := buildInterface(t,
+		method("Begin", nil, types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", fakeTx),
+			types.NewVar(token.NoPos, nil, "", errType),
+		)),
 	)
 
-	if IsProvenDBQuerierType(fakeQuerier) {
-		t.Fatal("PROVENANCE FAILURE: FakeQuerier{Exec(string) sql.Result} was ACCEPTED as a DB querier. " +
-			"Queriers must implement the complete query contract (Exec + Query with error return).")
+	if IsProvenDBPoolInterface(fakePool) {
+		t.Fatal("PROVENANCE FAILURE: FakePool returning FakeTx was ACCEPTED as a DB pool")
+	}
+}
+
+// TestRealPoolReturningSqlTx_MustBeAccepted ensures that Pool -> Begin() (*sql.Tx, error)
+// is correctly recognized as a genuine DB pool interface.
+func TestRealPoolReturningSqlTx_MustBeAccepted(t *testing.T) {
+	sqlPkg := types.NewPackage("database/sql", "sql")
+	txNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Tx", nil), types.NewStruct(nil, nil), nil)
+	txPtr := types.NewPointer(txNamed)
+	errType := types.Universe.Lookup("error").Type()
+
+	realPool := buildInterface(t,
+		method("Begin", nil, types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", txPtr),
+			types.NewVar(token.NoPos, nil, "", errType),
+		)),
+	)
+
+	if !IsProvenDBPoolInterface(realPool) {
+		t.Fatal("PROVENANCE FAILURE: RealPool returning *sql.Tx was REJECTED by IsProvenDBPoolInterface")
+	}
+}
+
+// TestCalculatorQuerier_MustBeRejected tests that a single-method Exec interface
+// (e.g. Calculator with Exec(string) (sql.Result, error)) is rejected because it lacks Query.
+func TestCalculatorQuerier_MustBeRejected(t *testing.T) {
+	sqlPkg := types.NewPackage("database/sql", "sql")
+	resultNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Result", nil), types.NewInterfaceType(nil, nil), nil)
+	errType := types.Universe.Lookup("error").Type()
+
+	calcQuerier := buildInterface(t,
+		method("Exec", stringParam(), types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", resultNamed),
+			types.NewVar(token.NoPos, nil, "", errType),
+		)),
+	)
+
+	if IsProvenDBQuerierType(calcQuerier) {
+		t.Fatal("PROVENANCE FAILURE: Calculator{Exec(string) (sql.Result, error)} was ACCEPTED as a DB querier. " +
+			"Queriers must implement BOTH Exec AND Query returning driver types.")
+	}
+}
+
+// TestSearchEngineQuerier_MustBeRejected tests that a single-method Query interface
+// (e.g. SearchEngine with Query(string) (*sql.Rows, error)) is rejected because it lacks Exec.
+func TestSearchEngineQuerier_MustBeRejected(t *testing.T) {
+	sqlPkg := types.NewPackage("database/sql", "sql")
+	rowsNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Rows", nil), types.NewStruct(nil, nil), nil)
+	rowsPtr := types.NewPointer(rowsNamed)
+	errType := types.Universe.Lookup("error").Type()
+
+	searchQuerier := buildInterface(t,
+		method("Query", stringParam(), types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", rowsPtr),
+			types.NewVar(token.NoPos, nil, "", errType),
+		)),
+	)
+
+	if IsProvenDBQuerierType(searchQuerier) {
+		t.Fatal("PROVENANCE FAILURE: SearchEngine{Query(string) (*sql.Rows, error)} was ACCEPTED as a DB querier. " +
+			"Queriers must implement BOTH Exec AND Query returning driver types.")
 	}
 }
 

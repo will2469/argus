@@ -178,10 +178,7 @@ func isConfirmedStorageReceiver(pass *analysis.Pass, expr ast.Expr, fn *ast.Func
 			}
 			// For generic methods (Upload, Download), require storage-like type name
 			typeName := getTypeNameFromType(t)
-			if isStorageLikeTypeName(typeName) {
-				return true
-			}
-			return false
+			return isStorageLikeTypeName(typeName)
 		}
 	}
 

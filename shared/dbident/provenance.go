@@ -47,14 +47,14 @@ func hasProvenDBQuerierMethods(iface *types.Interface) bool {
 			if isDBExecMethodSignature(sig) {
 				hasExec = true
 			}
-		case "Query", "QueryContext":
+		case "Query", "QueryContext", "QueryRow", "QueryRowContext":
 			if isDBQueryMethodSignature(sig) {
 				hasQuery = true
 			}
 		}
 	}
 
-	return hasExec || hasQuery
+	return hasExec && hasQuery
 }
 
 func isDBExecMethodSignature(sig *types.Signature) bool {
@@ -71,16 +71,25 @@ func isDBExecMethodSignature(sig *types.Signature) bool {
 }
 
 func isDBQueryMethodSignature(sig *types.Signature) bool {
-	if sig == nil || sig.Results() == nil || sig.Results().Len() != 2 {
+	if sig == nil || sig.Results() == nil {
 		return false
 	}
-	if !IsKnownDBDriverType(sig.Results().At(0).Type()) {
-		return false
+	if sig.Results().Len() == 2 {
+		if !IsKnownDBDriverType(sig.Results().At(0).Type()) {
+			return false
+		}
+		if sig.Results().At(1).Type().String() != "error" {
+			return false
+		}
+		return sigHasQueryString(sig)
 	}
-	if sig.Results().At(1).Type().String() != "error" {
-		return false
+	if sig.Results().Len() == 1 {
+		if !IsKnownDBDriverType(sig.Results().At(0).Type()) {
+			return false
+		}
+		return sigHasQueryString(sig)
 	}
-	return sigHasQueryString(sig)
+	return false
 }
 
 func sigHasQueryString(sig *types.Signature) bool {

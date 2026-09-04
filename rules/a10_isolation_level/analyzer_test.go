@@ -79,14 +79,8 @@ import (
 	"database/sql"
 )
 
-type Tx interface {
-	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
-	Commit(ctx context.Context) error
-	Rollback(ctx context.Context) error
-}
-
 type Pool interface {
-	Begin(ctx context.Context) (Tx, error)
+	Begin(ctx context.Context) (*sql.Tx, error)
 }
 
 type Calculator struct{}
@@ -103,17 +97,17 @@ func testNonDBBegin(p TokenParser) {
 func testCalculatorExec(ctx context.Context, pool Pool, calc Calculator) {
 	tx, _ := pool.Begin(ctx)
 	calc.Exec("UPDATE balances SET amount = 1")
-	tx.Commit(ctx)
+	_ = tx.Commit()
 }
 
 func testQueryShadowSafe(ctx context.Context, pool Pool) {
 	query := "UPDATE balances SET amount = 1"
 	tx, _ := pool.Begin(ctx)
 	if true {
-		query := "SELECT * FROM unrelated"
-		tx.Exec(ctx, query)
+		query = "SELECT * FROM unrelated"
+		_, _ = tx.Exec(query)
 	}
-	tx.Commit(ctx)
+	_ = tx.Commit()
 	_ = query
 }
 
@@ -121,10 +115,10 @@ func testQueryShadowViolated(ctx context.Context, pool Pool) {
 	query := "SELECT * FROM unrelated"
 	tx, _ := pool.Begin(ctx)
 	if true {
-		query := "UPDATE balances SET amount = 1"
-		tx.Exec(ctx, query)
+		query = "UPDATE balances SET amount = 1"
+		_, _ = tx.Exec(query)
 	}
-	tx.Commit(ctx)
+	_ = tx.Commit()
 	_ = query
 }
 `
@@ -172,15 +166,8 @@ import (
 	"database/sql"
 )
 
-type Tx interface {
-	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
-	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
-	Commit(ctx context.Context) error
-	Rollback(ctx context.Context) error
-}
-
 type Pool interface {
-	Begin(ctx context.Context) (Tx, error)
+	Begin(ctx context.Context) (*sql.Tx, error)
 }
 
 type OrderService struct{}
@@ -195,7 +182,7 @@ type WorkerPool struct {
 func (WorkerPool) Begin() {}
 
 type DBHelper struct{}
-func (DBHelper) WithTx(ctx context.Context, pool Pool, fn func(Tx) error) error {
+func (DBHelper) WithTx(ctx context.Context, pool Pool, fn func(*sql.Tx) error) error {
 	return nil
 }
 
@@ -214,8 +201,9 @@ func testWorkerPoolBegin(wp WorkerPool) {
 }
 
 func testGenuineHelperViolated(ctx context.Context, h DBHelper, p Pool) {
-	h.WithTx(ctx, p, func(tx Tx) error {
-		return tx.Exec(ctx, "UPDATE balances SET amount = 1")
+	h.WithTx(ctx, p, func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE balances SET amount = 1")
+		return err
 	})
 }
 `

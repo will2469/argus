@@ -5,28 +5,28 @@ import (
 	"database/sql"
 )
 
-type Tx interface {
-	Exec(ctx context.Context, sql string, args ...any) error
-	Query(ctx context.Context, sql string, args ...any) error
-	Commit(ctx context.Context) error
-	Rollback(ctx context.Context) error
-	Options() *sql.TxOptions
-}
-
 type TxOptions struct {
 	IsoLevel string
 }
 
 type Pool interface {
-	Begin(ctx context.Context) (Tx, error)
-	BeginTx(ctx context.Context, opts TxOptions) (Tx, error)
+	Begin(ctx context.Context) (*sql.Tx, error)
+	BeginTx(ctx context.Context, opts TxOptions) (*sql.Tx, error)
 }
 
 type Helper struct{}
 
-func (Helper) WithTx(ctx context.Context, pool Pool, fn func(Tx) error, opts ...TxOptions) error {
+func (Helper) WithTx(ctx context.Context, pool Pool, fn func(*sql.Tx) error, opts ...TxOptions) error {
 	return nil
 }
+
+//
+//
+//
+//
+//
+//
+//
 
 // A1: Branch — conditional write to critical table inside branch without strong isolation.
 func A1_Branch(ctx context.Context, pool Pool, isBonus bool) error {
@@ -34,12 +34,12 @@ func A1_Branch(ctx context.Context, pool Pool, isBonus bool) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
 	if isBonus {
-		_ = tx.Exec(ctx, "UPDATE balances SET amount = amount + 10 WHERE id = 1")
+		_, _ = tx.Exec("UPDATE balances SET amount = amount + 10 WHERE id = 1")
 	}
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 // A2: Reassignment — query variable reassigned to critical table update.
@@ -51,10 +51,10 @@ func A2_Reassignment(ctx context.Context, pool Pool) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
-	_ = tx.Exec(ctx, q)
-	return tx.Commit(ctx)
+	_, _ = tx.Exec(q)
+	return tx.Commit()
 }
 
 // A3: Alias — aliased query string targeting critical table.
@@ -65,10 +65,10 @@ func A3_Alias(ctx context.Context, pool Pool) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
-	_ = tx.Exec(ctx, alias)
-	return tx.Commit(ctx)
+	_, _ = tx.Exec(alias)
+	return tx.Commit()
 }
 
 // A4: Wrapper — repository struct method with default Begin on critical table.
@@ -81,10 +81,10 @@ func (w *WalletRepo) Deduct(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
-	_ = tx.Exec(ctx, "UPDATE balances SET amount = amount - 1 WHERE id = 1")
-	return tx.Commit(ctx)
+	_, _ = tx.Exec("UPDATE balances SET amount = amount - 1 WHERE id = 1")
+	return tx.Commit()
 }
 
 // A5: Nested Function — closure modifying critical table.
@@ -93,13 +93,13 @@ func A5_NestedFunction(ctx context.Context, pool Pool) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
 	deduct := func() error {
-		return tx.Exec(ctx, "UPDATE kuota SET sisa = 0 WHERE id = 1")
+		_, err := tx.Exec("UPDATE kuota SET sisa = 0 WHERE id = 1"); return err
 	}
 	_ = deduct()
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 // A6: Generic — generic transaction service modifying critical table without isolation options.
@@ -112,16 +112,16 @@ func (s *TxService[T]) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
-	_ = tx.Exec(ctx, "UPDATE nomor_urut SET counter = counter + 1 WHERE id = 1")
-	return tx.Commit(ctx)
+	_, _ = tx.Exec("UPDATE nomor_urut SET counter = counter + 1 WHERE id = 1")
+	return tx.Commit()
 }
 
 // A7: Interface / Helper — dynamic WithTx helper invocation without isolation level.
 func A7_HelperNoIso(ctx context.Context, pool Pool, h Helper) error {
-	return h.WithTx(ctx, pool, func(tx Tx) error {
-		return tx.Exec(ctx, "UPDATE balances SET amount = 0 WHERE id = 1")
+	return h.WithTx(ctx, pool, func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE balances SET amount = 0 WHERE id = 1"); return err
 	})
 }
 
@@ -141,7 +141,7 @@ func A8_NonDBWithTxHelper_MustBeSafe(ctx context.Context, svc OrderService) erro
 
 // A9: Non-DB WorkerPool — workerPool.Begin is not a database transaction and must NOT trigger false positive.
 type WorkerPool struct {
-	workers []int
+	Workers []int
 }
 
 func (WorkerPool) Begin() error {

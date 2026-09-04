@@ -42,10 +42,7 @@ func IsSanitized(e ast.Expr, pass *analysis.Pass) bool {
 
 		// 2. Qualified identifier sanitizers like pq.QuoteIdentifier, pgx.QuoteIdentifier
 		if method == "SanitizeIdentifier" || method == "QuoteIdentifier" || method == "QuoteIdent" {
-			if isTrustedSanitizerReceiver(fn.X, pass) {
-				return true
-			}
-			return false
+			return isTrustedSanitizerReceiver(fn.X, pass)
 		}
 
 	case *ast.Ident:

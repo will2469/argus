@@ -84,6 +84,7 @@ import (
 	"database/sql"
 )
 type DB interface {
+	Exec(ctx context.Context, sql string) (sql.Result, error)
 	Query(ctx context.Context, sql string) (*sql.Rows, error)
 }
 

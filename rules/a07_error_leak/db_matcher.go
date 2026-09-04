@@ -60,11 +60,6 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call 
 				if isQuery && dbident.IsProvenDBQuerierType(recvType) {
 					return true
 				}
-				if isAux {
-					if f, ok := selType.Obj().(*types.Func); ok && dbident.IsDBMethodWithDriverSignature(f) {
-						return true
-					}
-				}
 				if !dbident.HasInvalidType(recvType) {
 					return false
 				}

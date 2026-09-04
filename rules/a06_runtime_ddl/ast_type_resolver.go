@@ -164,14 +164,18 @@ func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
 			}
 			for _, nm := range m.Names {
 				switch nm.Name {
-				case "Exec", "ExecContext", "Query", "QueryContext":
+				case "Exec", "ExecContext":
 					if dbident.IsASTExecOrQueryMethod(m, file) {
 						hasExec = true
+					}
+				case "Query", "QueryContext", "QueryRow", "QueryRowContext":
+					if dbident.IsASTExecOrQueryMethod(m, file) {
+						hasQuery = true
 					}
 				}
 			}
 		}
-		return hasExec || hasQuery
+		return hasExec && hasQuery
 	}
 	return false
 }

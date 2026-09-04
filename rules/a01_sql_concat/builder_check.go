@@ -31,24 +31,15 @@ func IsFormattingCall(call *ast.CallExpr, tracker *TaintTracker, pass *analysis.
 	}
 
 	if pkg.Name == "fmt" && sel.Sel.Name == "Sprintf" {
-		if isSafeSprintf(call, tracker, pass) {
-			return false
-		}
-		return true
+		return !isSafeSprintf(call, tracker, pass)
 	}
 
 	if pkg.Name == "fmt" && sel.Sel.Name == "Sprint" {
-		if isSafeSprint(call, tracker, pass) {
-			return false
-		}
-		return true
+		return !isSafeSprint(call, tracker, pass)
 	}
 
 	if pkg.Name == "strings" && sel.Sel.Name == "Join" {
-		if isSafeStringsJoin(call, tracker, pass) {
-			return false
-		}
-		return true
+		return !isSafeStringsJoin(call, tracker, pass)
 	}
 
 	return false

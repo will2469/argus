@@ -68,10 +68,6 @@ func isProvenDBPoolASTType(expr ast.Expr, file *ast.File) bool {
 	return dbident.IsProvenDBPoolASTType(expr, file)
 }
 
-func isProvenDBTxASTType(expr ast.Expr, file *ast.File) bool {
-	return dbident.IsProvenDBTxASTType(expr, file)
-}
-
 func isProvenClosureTxASTType(expr ast.Expr, file *ast.File) bool {
 	return dbident.IsProvenClosureTxASTType(expr, file)
 }

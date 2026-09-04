@@ -100,19 +100,32 @@ func isProvenDBASTType(expr ast.Expr, file *ast.File) bool {
 }
 
 func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
-	if ts == nil || file == nil {
+	if ts == nil || file == nil || !dbident.HasDatabaseImports(file) {
 		return false
 	}
 	iface, ok := ts.Type.(*ast.InterfaceType)
 	if !ok || iface.Methods == nil {
 		return false
 	}
+	hasExec, hasQuery := false, false
 	for _, m := range iface.Methods.List {
-		if dbident.IsASTExecOrQueryMethod(m, file) {
-			return true
+		if _, ok := m.Type.(*ast.FuncType); !ok {
+			continue
+		}
+		for _, nm := range m.Names {
+			switch nm.Name {
+			case "Exec", "ExecContext":
+				if dbident.IsASTExecOrQueryMethod(m, file) {
+					hasExec = true
+				}
+			case "Query", "QueryContext", "QueryRow", "QueryRowContext":
+				if dbident.IsASTExecOrQueryMethod(m, file) {
+					hasQuery = true
+				}
+			}
 		}
 	}
-	return false
+	return hasExec && hasQuery
 }
 
 func isAssignedFromDBConstructor(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) bool {

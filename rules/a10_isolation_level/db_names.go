@@ -37,10 +37,6 @@ func getASTTypeName(expr ast.Expr) string {
 	return dbident.GetASTTypeName(expr)
 }
 
-func findTypeSpec(name string, file *ast.File) *ast.TypeSpec {
-	return dbident.FindTypeSpec(name, file)
-}
-
 func isIdentShadowed(file *ast.File, fn *ast.FuncDecl, pos token.Pos, name string) bool {
 	if file != nil {
 		for _, decl := range file.Decls {

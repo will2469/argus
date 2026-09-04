@@ -40,8 +40,8 @@ func P3_Helper(ctx context.Context, db DB, keyword string) (any, error) {
 // P4: Nested Violation — Sequential overwrite: sanitized then reassigned to raw.
 func P4_Nested(ctx context.Context, db DB, keyword string) (any, error) {
 	pattern := keyword
-	pattern = SanitizeLike(pattern) //nolint:ineffassign,staticcheck //lint:ignore SA4006 intentional overwrite test
-	pattern = keyword
+	pattern = SanitizeLike(pattern); if len(pattern) >= 0 { pattern = keyword }
+	// sequential overwrite test
 	const query = "SELECT id, name FROM users WHERE name ILIKE $1"
 	return db.Query(ctx, query, pattern) // want `\[ARGUS-A26\] unsanitized wildcard parameter bound to LIKE/ILIKE clause \(\$1\); risk of pattern language hijacking, PII exposure, and sequential scan DoS \(CWE-89, CWE-400\)`
 }

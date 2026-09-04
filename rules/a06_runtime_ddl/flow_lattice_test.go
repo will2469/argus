@@ -22,6 +22,7 @@ func TestLattice_BranchingConditionalDDL(t *testing.T) {
 import "database/sql"
 type DB interface {
 	Exec(ctx any, sql string, args ...any) (sql.Result, error)
+	Query(ctx any, sql string, args ...any) (*sql.Rows, error)
 }
 func BranchTest(ctx any, db DB, cond bool) {
 	query := "SELECT 1"
@@ -36,8 +37,8 @@ func BranchTest(ctx any, db DB, cond bool) {
 		t.Fatalf("expected 1 issue for conditional DDL (MAYBE_DDL), got %d: %+v", len(issues), issues)
 	}
 	pos := fset.Position(issues[0].Pos)
-	if pos.Line != 11 {
-		t.Errorf("expected issue at line 11, got line %d", pos.Line)
+	if pos.Line != 12 {
+		t.Errorf("expected issue at line 12, got line %d", pos.Line)
 	}
 }
 
@@ -46,6 +47,7 @@ func TestLattice_BranchingConditionalClean(t *testing.T) {
 import "database/sql"
 type DB interface {
 	Exec(ctx any, sql string, args ...any) (sql.Result, error)
+	Query(ctx any, sql string, args ...any) (*sql.Rows, error)
 }
 func BranchTest(ctx any, db DB, cond bool) {
 	query := "CREATE TABLE users (id int)"
@@ -60,8 +62,8 @@ func BranchTest(ctx any, db DB, cond bool) {
 		t.Fatalf("expected 1 issue when bypass path executes DDL, got %d: %+v", len(issues), issues)
 	}
 	pos := fset.Position(issues[0].Pos)
-	if pos.Line != 11 {
-		t.Errorf("expected issue at line 11, got line %d", pos.Line)
+	if pos.Line != 12 {
+		t.Errorf("expected issue at line 12, got line %d", pos.Line)
 	}
 }
 
@@ -70,6 +72,7 @@ func TestLattice_SequentialCleanOverride(t *testing.T) {
 import "database/sql"
 type DB interface {
 	Exec(ctx any, sql string, args ...any) (sql.Result, error)
+	Query(ctx any, sql string, args ...any) (*sql.Rows, error)
 }
 func CleanOverride(ctx any, db DB) {
 	query := "CREATE TABLE users (id int)"
@@ -88,6 +91,7 @@ func TestLattice_VariableShadowing_InnerDDLOuterSafe(t *testing.T) {
 import "database/sql"
 type DB interface {
 	Exec(ctx any, sql string, args ...any) (sql.Result, error)
+	Query(ctx any, sql string, args ...any) (*sql.Rows, error)
 }
 func ShadowTest(ctx any, db DB) {
 	query := "SELECT 1"
@@ -103,8 +107,8 @@ func ShadowTest(ctx any, db DB) {
 		t.Fatalf("expected exactly 1 issue for inner shadowed DDL, got %d: %+v", len(issues), issues)
 	}
 	pos := fset.Position(issues[0].Pos)
-	if pos.Line != 10 {
-		t.Errorf("expected issue at line 10, got line %d", pos.Line)
+	if pos.Line != 11 {
+		t.Errorf("expected issue at line 11, got line %d", pos.Line)
 	}
 }
 
@@ -113,6 +117,7 @@ func TestLattice_VariableShadowing_OuterDDLInnerSafe(t *testing.T) {
 import "database/sql"
 type DB interface {
 	Exec(ctx any, sql string, args ...any) (sql.Result, error)
+	Query(ctx any, sql string, args ...any) (*sql.Rows, error)
 }
 func ShadowTest(ctx any, db DB) {
 	query := "CREATE TABLE users (id int)"
@@ -128,8 +133,8 @@ func ShadowTest(ctx any, db DB) {
 		t.Fatalf("expected exactly 1 issue for outer DDL, got %d: %+v", len(issues), issues)
 	}
 	pos := fset.Position(issues[0].Pos)
-	if pos.Line != 12 {
-		t.Errorf("expected issue at line 12, got line %d", pos.Line)
+	if pos.Line != 13 {
+		t.Errorf("expected issue at line 13, got line %d", pos.Line)
 	}
 }
 
@@ -141,6 +146,7 @@ func (c *CustomLogger) WriteString(s string) {}
 func (c *CustomLogger) Reset() {}
 type DB interface {
 	Exec(ctx any, sql string, args ...any) (sql.Result, error)
+	Query(ctx any, sql string, args ...any) (*sql.Rows, error)
 }
 func NonBuilderTest(ctx any, db DB, logger *CustomLogger) {
 	logger.WriteString("CREATE TABLE evil (id int)")

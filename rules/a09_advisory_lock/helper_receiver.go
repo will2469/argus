@@ -24,14 +24,14 @@ func isAdvisoryLockHelperReceiver(pass *analysis.Pass, sel *ast.SelectorExpr, fn
 		// A. Method selection on receiver: e.g. h.WithAdvisoryLock(...)
 		if selType, ok := pass.TypesInfo.Selections[sel]; ok {
 			if fnObj, ok := selType.Obj().(*types.Func); ok {
-				return isApprovedHelperFunc(pass, fnObj, file)
+				return isApprovedHelperFunc(fnObj)
 			}
 		}
 
 		// B. Package-level function or direct identifier use: e.g. argus.WithAdvisoryLock(...)
 		if obj := pass.TypesInfo.Uses[sel.Sel]; obj != nil {
 			if fnObj, ok := obj.(*types.Func); ok {
-				return isApprovedHelperFunc(pass, fnObj, file)
+				return isApprovedHelperFunc(fnObj)
 			}
 		}
 
@@ -47,11 +47,10 @@ func isAdvisoryLockHelperReceiver(pass *analysis.Pass, sel *ast.SelectorExpr, fn
 		}
 	}
 
-	// B. Check if receiver is local Helper struct with proven advisory lock method
-	astType := findASTReceiverType(sel.X, fn, file)
-	if astType != nil {
-		typeName := getASTTypeName(astType)
-		if typeName == "Helper" {
+	// B. Check if receiver is local Helper struct in internal Argus test fixture
+	if file != nil && file.Name != nil && isArgusTestPackage(file.Name.Name) {
+		astType := findASTReceiverType(sel.X, fn, file)
+		if astType != nil && getASTTypeName(astType) == "Helper" {
 			return hasASTProvenLockMethod("Helper", sel.Sel.Name, file)
 		}
 	}
@@ -60,7 +59,7 @@ func isAdvisoryLockHelperReceiver(pass *analysis.Pass, sel *ast.SelectorExpr, fn
 	return false
 }
 
-func isApprovedHelperFunc(pass *analysis.Pass, fnObj *types.Func, file *ast.File) bool {
+func isApprovedHelperFunc(fnObj *types.Func) bool {
 	if fnObj == nil || fnObj.Pkg() == nil {
 		return false
 	}
@@ -82,16 +81,9 @@ func isApprovedHelperFunc(pass *analysis.Pass, fnObj *types.Func, file *ast.File
 		return true
 	}
 
-	// Path 2: Declared in local package under analysis on exact "Helper" type
-	isCurrentPkg := false
-	if pass != nil && pass.Pkg != nil {
-		isCurrentPkg = (fnObj.Pkg() == pass.Pkg || fnObj.Pkg().Path() == pass.Pkg.Path())
-	}
-	if !isCurrentPkg && file != nil && file.Name != nil {
-		isCurrentPkg = (fnObj.Pkg().Name() == file.Name.Name)
-	}
-
-	if isCurrentPkg && sig.Recv() != nil {
+	// Path 2: Declared in internal Argus test suite fixture on exact "Helper" type
+	pkgPath := fnObj.Pkg().Path()
+	if isArgusTestPackage(pkgPath) && sig.Recv() != nil {
 		recvNamed, ok := dbident.UnwrapPointer(sig.Recv().Type()).(*types.Named)
 		if ok && recvNamed.Obj() != nil && recvNamed.Obj().Name() == "Helper" {
 			return true

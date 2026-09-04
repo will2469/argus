@@ -56,10 +56,7 @@ func isLegitDatabaseQuery(pass *analysis.Pass, call *ast.CallExpr, sel *ast.Sele
 			return true
 		}
 		typeStr := strings.ToLower(recvType.String())
-		if isNonDBTypeString(typeStr) {
-			return false
-		}
-		return true
+		return !isNonDBTypeString(typeStr)
 	}
 
 	return isDatabaseQueryAST(call, sel)

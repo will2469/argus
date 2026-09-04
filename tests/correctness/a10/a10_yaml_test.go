@@ -87,15 +87,8 @@ import (
 	"database/sql"
 )
 
-type Tx interface {
-	Exec(ctx context.Context, sql string, args ...any) error
-	Commit(ctx context.Context) error
-	Rollback(ctx context.Context) error
-	Options() *sql.TxOptions
-}
-
 type Pool interface {
-	Begin(ctx context.Context) (Tx, error)
+	Begin(ctx context.Context) (*sql.Tx, error)
 }
 
 func UpdateBalances(ctx context.Context, pool Pool) error {
@@ -103,9 +96,9 @@ func UpdateBalances(ctx context.Context, pool Pool) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	_ = tx.Exec(ctx, "UPDATE balances SET amount = amount - 100 WHERE id = 1")
-	return tx.Commit(ctx)
+	defer func() { _ = tx.Rollback() }()
+	_, _ = tx.Exec("UPDATE balances SET amount = amount - 100 WHERE id = 1")
+	return tx.Commit()
 }
 `
 	if err := os.WriteFile(filepath.Join(tempDir, "handler.go"), []byte(goSrc), 0o600); err != nil {

@@ -6,7 +6,7 @@ import (
 )
 
 type DB interface {
-	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error); Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
 }
 
 // A1: Branch — conditional SELECT * inside branch.
@@ -59,7 +59,7 @@ func (s Service[T]) Fetch(ctx context.Context) {
 
 // A7: Interface — interface method call executing SELECT *.
 type Querier interface {
-	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error); Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
 }
 
 func A7_Interface(ctx context.Context, q Querier) {

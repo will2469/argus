@@ -93,6 +93,7 @@ import (
 )
 type DB interface {
 	Exec(ctx context.Context, query string) (sql.Result, error)
+	Query(ctx context.Context, query string) (*sql.Rows, error)
 }
 
 func BranchDivergence(ctx context.Context, db DB, cond bool) {

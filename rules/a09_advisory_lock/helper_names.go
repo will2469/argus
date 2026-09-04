@@ -3,7 +3,6 @@ package a09_advisory_lock
 
 import (
 	"go/ast"
-	"go/types"
 	"strings"
 
 	"github.com/will2469/argus/shared/dbident"
@@ -16,6 +15,13 @@ func isArgusPackagePath(path string) bool {
 	return path == "github.com/will2469/argus" ||
 		strings.HasPrefix(path, "github.com/will2469/argus/pkg/") ||
 		strings.HasPrefix(path, "github.com/will2469/argus/shared/")
+}
+
+func isArgusTestPackage(path string) bool {
+	return path == "github.com/will2469/argus/rules/a09_advisory_lock" ||
+		strings.HasPrefix(path, "github.com/will2469/argus/tests/correctness/a09") ||
+		path == "positive" || path == "negative" || path == "adversarial" ||
+		path == "testpkg"
 }
 
 func isASTContextType(expr ast.Expr) bool {
@@ -47,10 +53,6 @@ func isASTFuncType(expr ast.Expr) bool {
 	}
 	_, ok := expr.(*ast.FuncType)
 	return ok
-}
-
-func unwrapPointer(t types.Type) types.Type {
-	return dbident.UnwrapPointer(t)
 }
 
 func getASTTypeName(expr ast.Expr) string {

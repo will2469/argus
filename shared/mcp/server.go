@@ -87,20 +87,21 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 					"Unsupported protocol version in _meta"))
 				continue
 			}
-			if isStatelessEra(req.Meta.ProtocolVersion) {
-				// STATELESS PATH — spec 2026-07-28
-				// TIDAK ada sess.mu.Lock(), TIDAK ada pengecekan sess.state sama sekali.
-				// langsung lanjut ke penentuan cost + dispatch, skip seluruh switch state machine
-			}
-		} else if cfg.strictLifecycle {
-			// LEGACY PATH — kode existing statePreInit/stateInitializing/stateInitialized,
-			// TIDAK DIUBAH SAMA SEKALI.
+		}
+
+		isStateless := req.Meta != nil && isStatelessEra(req.Meta.ProtocolVersion)
+		if !isStateless && cfg.strictLifecycle {
+			// LEGACY PATH — statePreInit/stateInitializing/stateInitialized
 			sess.mu.Lock()
 			switch sess.state {
 			case statePreInit:
 				if req.Method == "initialize" {
 					resp := handleRequest(context.Background(), *req)
-					if resp != nil && resp.Error != nil {
+					if resp == nil {
+						sess.mu.Unlock()
+						continue
+					}
+					if resp.Error != nil {
 						sess.mu.Unlock()
 						_ = dispatcher.WriteResponse(*resp)
 						continue
@@ -112,10 +113,8 @@ func serve(r io.Reader, w io.Writer, opts ...ServerOption) error {
 						}
 					}
 					sess.mu.Unlock()
-					if resp != nil {
-						if err := dispatcher.WriteResponse(*resp); err != nil {
-							return fmt.Errorf("failed to write initialize response: %w", err)
-						}
+					if err := dispatcher.WriteResponse(*resp); err != nil {
+						return fmt.Errorf("failed to write initialize response: %w", err)
 					}
 					continue
 				} else if req.Method != "ping" && req.Method != "server/discover" {

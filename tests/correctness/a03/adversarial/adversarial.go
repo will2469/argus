@@ -1,3 +1,4 @@
+//lint:file-ignore ST1019 adversarial test fixture for package alias
 package adversarial
 
 import (
@@ -6,7 +7,6 @@ import (
 	"time"
 )
 
-// DBExecutor represents a database query engine interface.
 type DBExecutor interface {
 	Query(ctx context.Context, sql string, args ...any) (any, error)
 	Exec(ctx context.Context, sql string, args ...any) (any, error)
