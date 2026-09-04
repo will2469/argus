@@ -138,6 +138,12 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 		return inSet, false
 
 	case *ast.BlockStmt:
+		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
+			return evalDSNBlockFlow(file, s, targetPos, varName, inSet, depth)
+		}
+		if blockShadowsVar(s, varName) {
+			return inSet, false
+		}
 		return evalDSNBlockFlow(file, s, targetPos, varName, inSet, depth)
 
 	case *ast.IfStmt:
@@ -155,14 +161,28 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 			return evalDSNStmtFlow(file, s.Else, targetPos, varName, inSet, depth)
 		}
 
-		thenSet, _ := evalDSNBlockFlow(file, s.Body, targetPos, varName, inSet, depth)
-		thenTerm := isTerminating(s.Body)
+		var thenSet []string
+		thenTerm := false
+		if s.Body != nil {
+			if blockShadowsVar(s.Body, varName) {
+				thenSet = inSet
+			} else {
+				thenSet, _ = evalDSNBlockFlow(file, s.Body, targetPos, varName, inSet, depth)
+				thenTerm = isTerminating(s.Body)
+			}
+		} else {
+			thenSet = inSet
+		}
 
 		var elseSet []string
 		elseTerm := false
 		if s.Else != nil {
-			elseSet, _ = evalDSNStmtFlow(file, s.Else, targetPos, varName, inSet, depth)
-			elseTerm = isTerminating(s.Else)
+			if stmtShadowsVar(s.Else, varName) {
+				elseSet = inSet
+			} else {
+				elseSet, _ = evalDSNStmtFlow(file, s.Else, targetPos, varName, inSet, depth)
+				elseTerm = isTerminating(s.Else)
+			}
 		} else {
 			elseSet = inSet
 		}
@@ -180,66 +200,4 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 	}
 
 	return inSet, false
-}
-
-func evalDSNSwitchFlow(file *ast.File, s *ast.SwitchStmt, targetPos token.Pos, varName string, inSet []string, depth int) ([]string, bool) {
-	if s.Init != nil {
-		var reached bool
-		inSet, reached = evalDSNStmtFlow(file, s.Init, targetPos, varName, inSet, depth)
-		if reached {
-			return inSet, true
-		}
-	}
-	if s.Body == nil {
-		return inSet, false
-	}
-	if targetPos != token.NoPos && s.Body.Pos() <= targetPos && targetPos <= s.Body.End() {
-		for _, stmt := range s.Body.List {
-			if cc, ok := stmt.(*ast.CaseClause); ok {
-				if cc.Pos() <= targetPos && targetPos <= cc.End() {
-					return evalDSNStmtList(file, cc.Body, targetPos, varName, inSet, depth)
-				}
-			}
-		}
-		return inSet, true
-	}
-
-	var branchSets [][]string
-	hasDefault := false
-	allTerm := true
-	for _, stmt := range s.Body.List {
-		cc, ok := stmt.(*ast.CaseClause)
-		if !ok {
-			continue
-		}
-		if cc.List == nil {
-			hasDefault = true
-		}
-		caseSet, _ := evalDSNStmtList(file, cc.Body, targetPos, varName, inSet, depth)
-		if !isCaseTerminating(cc.Body) {
-			allTerm = false
-			branchSets = append(branchSets, caseSet)
-		}
-	}
-	if !hasDefault && !allTerm {
-		branchSets = append(branchSets, inSet)
-	}
-	var joined []string
-	for _, bs := range branchSets {
-		joined = append(joined, bs...)
-	}
-	return deduplicateStrings(joined), false
-}
-
-func isCaseTerminating(body []ast.Stmt) bool {
-	return len(body) > 0 && isTerminating(body[len(body)-1])
-}
-
-func exprListContainsPos(list []ast.Expr, pos token.Pos) bool {
-	for _, e := range list {
-		if e != nil && e.Pos() <= pos && pos <= e.End() {
-			return true
-		}
-	}
-	return false
 }

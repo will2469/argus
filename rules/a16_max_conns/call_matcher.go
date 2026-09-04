@@ -171,3 +171,58 @@ func deduplicateStrings(items []string) []string {
 	}
 	return out
 }
+
+func caseEndsWithFallthrough(body []ast.Stmt) bool {
+	if len(body) == 0 {
+		return false
+	}
+	bs, ok := body[len(body)-1].(*ast.BranchStmt)
+	return ok && bs.Tok == token.FALLTHROUGH
+}
+
+func blockShadowsVar(block *ast.BlockStmt, varName string) bool {
+	if block == nil {
+		return false
+	}
+	return stmtListShadowsVar(block.List, varName)
+}
+
+func stmtListShadowsVar(list []ast.Stmt, varName string) bool {
+	for _, stmt := range list {
+		if stmtShadowsVar(stmt, varName) {
+			return true
+		}
+	}
+	return false
+}
+
+func stmtShadowsVar(stmt ast.Stmt, varName string) bool {
+	if stmt == nil {
+		return false
+	}
+	switch s := stmt.(type) {
+	case *ast.BlockStmt:
+		return blockShadowsVar(s, varName)
+	case *ast.AssignStmt:
+		if s.Tok == token.DEFINE {
+			for _, lhs := range s.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok && id.Name == varName {
+					return true
+				}
+			}
+		}
+	case *ast.DeclStmt:
+		if gen, ok := s.Decl.(*ast.GenDecl); ok {
+			for _, spec := range gen.Specs {
+				if vs, ok := spec.(*ast.ValueSpec); ok {
+					for _, id := range vs.Names {
+						if id.Name == varName {
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
