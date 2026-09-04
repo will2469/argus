@@ -3,6 +3,7 @@ package negative
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -65,4 +66,48 @@ func N5_PostCommitIO(ctx context.Context, pool Pool) error {
 	time.Sleep(10 * time.Millisecond)
 	_, _ = http.Post("https://webhook.site/dispatch", "application/json", nil)
 	return nil
+}
+
+// N6: Channel Synchronization — channel send and receive inside transaction (not external I/O).
+func N6_ChannelSync(ctx context.Context, pool Pool, ch chan int) error {
+	return pool.BeginFunc(ctx, func(tx Tx) error {
+		ch <- 42
+		_ = <-ch
+		return tx.Exec(ctx, "UPDATE queue SET processed = true")
+	})
+}
+
+// N7: Mutex Synchronization — in-memory mutex locking inside transaction (not external I/O).
+func N7_MutexLock(ctx context.Context, pool Pool, mu *sync.Mutex) error {
+	return pool.BeginFunc(ctx, func(tx Tx) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return tx.Exec(ctx, "UPDATE balances SET locked = true")
+	})
+}
+
+// Calculator is an in-memory utility without external storage.
+type Calculator struct{}
+
+func (c *Calculator) Upload(val int) {}
+
+// N8: Non-Storage Method Call — calculator.Upload is an in-memory compute method, NOT cloud storage I/O.
+func N8_NonStorageUpload(ctx context.Context, pool Pool, calc *Calculator) error {
+	return pool.BeginFunc(ctx, func(tx Tx) error {
+		calc.Upload(999)
+		return tx.Exec(ctx, "UPDATE metrics SET value = 999")
+	})
+}
+
+// Parser is a non-database object that defines Begin/Commit.
+type Parser struct{}
+
+func (p *Parser) Begin() (*Parser, error) { return p, nil }
+func (p *Parser) Commit() error           { return nil }
+
+// N9: Non-Database Object — parser.Begin is not a database transaction.
+func N9_NonDBTransaction(parser *Parser) error {
+	p, _ := parser.Begin()
+	time.Sleep(10 * time.Millisecond) // Safe: parser is NOT a database transaction
+	return p.Commit()
 }

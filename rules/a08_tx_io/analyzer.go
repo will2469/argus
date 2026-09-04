@@ -77,7 +77,7 @@ func inspectFunctionTransactions(pass *analysis.Pass, fset *token.FileSet, body 
 			return true
 		}
 
-		closure := ExtractTxClosure(call)
+		closure := ExtractTxClosure(pass, call)
 		if closure != nil && closure.Body != nil {
 			ast.Inspect(closure.Body, func(innerNode ast.Node) bool {
 				CheckTxNode(pass, fset, innerNode, funcDecls, visited, dm, issues)
@@ -88,7 +88,7 @@ func inspectFunctionTransactions(pass *analysis.Pass, fset *token.FileSet, body 
 	})
 
 	// 2. Check explicit transaction blocks (pool.Begin ... tx.Commit)
-	InspectExplicitTxRanges(body, func(stmt ast.Stmt) {
+	InspectExplicitTxRanges(pass, body, func(stmt ast.Stmt) {
 		ast.Inspect(stmt, func(n ast.Node) bool {
 			CheckTxNode(pass, fset, n, funcDecls, visited, dm, issues)
 			return true

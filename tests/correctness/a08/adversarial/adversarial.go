@@ -88,10 +88,16 @@ func (r *Runner[T]) Run(ctx context.Context) error {
 	})
 }
 
-// A7: Channel I/O — channel send inside transaction causing potential lockup.
-func A7_ChannelSend(ctx context.Context, pool Pool, ch chan struct{}) error {
+type StorageUploader struct{}
+
+func (s *StorageUploader) Upload(ctx context.Context, name string, content []byte) error {
+	return nil
+}
+
+// A7: Storage Upload — cloud storage upload inside transaction closure.
+func A7_StorageUpload(ctx context.Context, pool Pool, storage *StorageUploader) error {
 	return pool.BeginFunc(ctx, func(tx Tx) error {
-		ch <- struct{}{}
+		_ = storage.Upload(ctx, "report.csv", []byte("a,b,c"))
 		return nil
 	})
 }

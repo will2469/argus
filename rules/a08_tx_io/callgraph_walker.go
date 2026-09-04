@@ -8,6 +8,7 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
+	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/directives"
 )
 
@@ -31,7 +32,7 @@ func CheckTxNode(pass *analysis.Pass, fset *token.FileSet, n ast.Node, funcDecls
 		return
 	}
 
-	funcName := getCallMethodName(call.Fun)
+	funcName := callsite.GetCallMethodName(call.Fun)
 	if funcName == "" || visited[funcName] {
 		return
 	}

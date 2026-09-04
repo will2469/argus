@@ -2,6 +2,7 @@ package positive
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +18,12 @@ type Tx interface {
 type Pool interface {
 	Begin(ctx context.Context) (Tx, error)
 	BeginFunc(ctx context.Context, fn func(Tx) error) error
+}
+
+type StorageUploader struct{}
+
+func (s *StorageUploader) Upload(ctx context.Context, key string, data []byte) error {
+	return nil
 }
 
 // P1: Obvious Violation — direct http.Post inside BeginFunc transaction closure.
@@ -70,6 +77,30 @@ func P5_Alias(ctx context.Context, pool Pool) error {
 		_ = exec.Command("echo", "done") // want `\[ARGUS-A08\] blocking external I/O \(exec\.Command\) detected inside database transaction`
 		return nil
 	})
+}
+
+// P6: Storage Upload Violation — cloud storage Upload inside transaction closure.
+func P6_StorageUpload(ctx context.Context, pool Pool, storage *StorageUploader) error {
+	return pool.BeginFunc(ctx, func(tx Tx) error {
+		_ = storage.Upload(ctx, "invoice.pdf", []byte("data")) // want `\[ARGUS-A08\] blocking external I/O \(storage\.Upload\) detected inside database transaction`
+		return nil
+	})
+}
+
+// P7: Net Dial Violation — blocking network socket dial inside explicit transaction block.
+func P7_NetDial(ctx context.Context, pool Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	conn, _ := net.Dial("tcp", "10.0.0.1:8080") // want `\[ARGUS-A08\] blocking external I/O \(net\.Dial\) detected inside database transaction`
+	if conn != nil {
+		_ = conn.Close()
+	}
+
+	return tx.Commit(ctx)
 }
 
 // P_Ignored: Suppressed violation using verified argus:ignore directive.

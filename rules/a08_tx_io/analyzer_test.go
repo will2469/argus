@@ -30,13 +30,24 @@ import (
 	"os/exec"
 	"time"
 )
-func foo(ch chan int) {
+
+type Calculator struct{}
+func (c *Calculator) Upload(val int) {}
+
+type StorageClient struct{}
+func (s *StorageClient) Upload(data []byte) {}
+
+func foo(ch chan int, calc *Calculator, storage *StorageClient) {
 	time.Sleep(1)
 	http.Get("http://example.com")
 	os.ReadFile("file.txt")
 	exec.Command("ls")
+	storage.Upload([]byte("data"))
+
+	// Non-blocking external I/O: in-memory synchronization & non-storage upload
 	ch <- 1
 	<-ch
+	calc.Upload(123)
 }
 `
 	file, err := parser.ParseFile(fset, "test.go", src, 0)
@@ -52,7 +63,7 @@ func foo(ch chan int) {
 		return true
 	})
 
-	if len(ops) < 6 {
-		t.Errorf("expected at least 6 blocking ops, got %d: %v", len(ops), ops)
+	if len(ops) != 5 {
+		t.Errorf("expected exactly 5 blocking external I/O ops (sleep, http, read, exec, storage), got %d: %v", len(ops), ops)
 	}
 }
