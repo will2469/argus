@@ -177,7 +177,7 @@ func (t *scanTool) Execute(ctx context.Context, id any, rawArgs json.RawMessage)
 	}
 
 	for i, issue := range result.Issues {
-		sb.WriteString(fmt.Sprintf("%d. [%s] %s:%d\n   %s\n", i+1, issue.Rule, issue.File, issue.Line, issue.Message))
+		sb.WriteString(fmt.Sprintf("%d. [%s] %s:%d\n   %s\n", i+1, issue.DisplayTag(), issue.File, issue.Line, issue.Message))
 		if issue.Snippet != "" {
 			sb.WriteString(fmt.Sprintf("   Snippet: %s\n", issue.Snippet))
 		}

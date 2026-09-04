@@ -226,7 +226,7 @@ func runStandalone() {
 	if len(result.Issues) > 0 {
 		fmt.Fprintf(os.Stderr, "\n Found %d Argus SQL hygiene violations:\n", len(result.Issues))
 		for _, issue := range result.Issues {
-			fmt.Fprintf(os.Stderr, "  - %s:%d [%s] %s\n", issue.File, issue.Line, issue.Rule, issue.Message)
+			fmt.Fprintf(os.Stderr, "  - %s:%d [%s] %s\n", issue.File, issue.Line, issue.DisplayTag(), issue.Message)
 		}
 		os.Exit(1)
 	} else {

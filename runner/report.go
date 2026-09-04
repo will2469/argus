@@ -78,7 +78,7 @@ func GenerateMarkdownReport(result *AuditResult, rootDir string) string {
 
 		for _, rule := range sortedRules {
 			issues := groupedByRule[rule]
-			desc := getRuleDescription(rule)
+			desc := GetRuleDescription(rule)
 			sb.WriteString(fmt.Sprintf("### %s (%s)\n\n", rule, desc))
 			for _, item := range issues {
 				relPath := item.File
@@ -93,10 +93,17 @@ func GenerateMarkdownReport(result *AuditResult, rootDir string) string {
 
 				linkPath := "/" + strings.TrimPrefix(filepath.ToSlash(absPath), "/")
 				sb.WriteString(fmt.Sprintf("- **[%s:%d](file://%s#L%d)**\n", relPath, item.Line, linkPath, item.Line))
+				sb.WriteString(fmt.Sprintf("  - *Rule:* %s\n", item.DisplayTag()))
 				sb.WriteString(fmt.Sprintf("  - *Message:* %s\n", item.Message))
 				if item.Snippet != "" {
 					sb.WriteString(fmt.Sprintf("  - *Snippet:* `%s`\n", item.Snippet))
 				}
+				directivePrefix := "//"
+				if strings.HasSuffix(strings.ToLower(item.File), ".sql") {
+					directivePrefix = "--"
+				}
+				shortID := strings.TrimPrefix(item.RuleCode(), "ARGUS-")
+				sb.WriteString(fmt.Sprintf("  - *Suppression:* `%s argus:ignore %s <reason (min 2 words)>`\n", directivePrefix, shortID))
 			}
 			sb.WriteString("\n")
 		}
@@ -105,7 +112,8 @@ func GenerateMarkdownReport(result *AuditResult, rootDir string) string {
 	return sb.String()
 }
 
-func normalizeRuleCode(raw string) string {
+// NormalizeRuleCode standardizes raw rule names, aliases, or identifiers to "ARGUS-Axx".
+func NormalizeRuleCode(raw string) string {
 	upper := strings.ToUpper(strings.TrimSpace(raw))
 	if strings.HasPrefix(upper, "ARGUS-") {
 		return upper
@@ -124,11 +132,20 @@ func normalizeRuleCode(raw string) string {
 	return upper
 }
 
-func getRuleDescription(ruleCode string) string {
-	norm := normalizeRuleCode(ruleCode)
+// GetRuleDescription retrieves the canonical uppercase identifier for a rule.
+func GetRuleDescription(ruleCode string) string {
+	norm := NormalizeRuleCode(ruleCode)
 	id := strings.TrimPrefix(norm, "ARGUS-")
 	if desc, ok := CanonicalDescriptions[id]; ok {
 		return desc
 	}
-	return norm
+	return ruleCode
+}
+
+func normalizeRuleCode(raw string) string {
+	return NormalizeRuleCode(raw)
+}
+
+func getRuleDescription(ruleCode string) string {
+	return GetRuleDescription(ruleCode)
 }

@@ -107,7 +107,7 @@ func (t *checkMigrationTool) Execute(ctx context.Context, id any, rawArgs json.R
 	}
 
 	for i, issue := range result.Issues {
-		sb.WriteString(fmt.Sprintf("%d. [%s] Line %d: %s\n", i+1, issue.Rule, issue.Line, issue.Message))
+		sb.WriteString(fmt.Sprintf("%d. [%s] Line %d: %s\n", i+1, issue.DisplayTag(), issue.Line, issue.Message))
 	}
 
 	if hasAnalysisFailure {

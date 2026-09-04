@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"fmt"
 	"regexp"
 	"sync"
 	"time"
@@ -16,6 +17,32 @@ type Issue struct {
 	Message  string
 	Snippet  string
 	Category string
+}
+
+// RuleCode returns the standardized ARGUS-Axx rule code (e.g. "ARGUS-A01").
+func (i Issue) RuleCode() string {
+	return NormalizeRuleCode(i.Rule)
+}
+
+// RuleDescription returns the canonical identifier/description for the issue (e.g. "UNSAFE_SQL_CONCATENATION").
+func (i Issue) RuleDescription() string {
+	return GetRuleDescription(i.Rule)
+}
+
+// DisplayTag formats the rule code and identifier together for clear reporting.
+// For example: "ARGUS-A01: UNSAFE_SQL_CONCATENATION" or "ARGUS-E001: UNABLE_TO_ANALYZE_MIGRATION".
+func (i Issue) DisplayTag() string {
+	code := NormalizeRuleCode(i.Rule)
+	desc := GetRuleDescription(i.Rule)
+	if desc != "" && desc != code {
+		return fmt.Sprintf("%s: %s", code, desc)
+	}
+	return code
+}
+
+// DisplayTitle returns DisplayTag for presentation in finding titles.
+func (i Issue) DisplayTitle() string {
+	return i.DisplayTag()
 }
 
 // RuleAuditInfo captures the dynamic execution state of a specific rule.

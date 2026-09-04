@@ -126,3 +126,80 @@ func TestBuildDynamicRuleAuditInfo_AnalyzerMetaAndScannerNameMapping(t *testing.
 	}
 }
 
+func TestIssue_DisplayTagAndRuleCode(t *testing.T) {
+	tests := []struct {
+		rawRule     string
+		file        string
+		wantCode    string
+		wantDesc    string
+		wantTag     string
+		wantIgnore  string
+	}{
+		{
+			rawRule:    "UNSAFE_SQL_CONCATENATION",
+			file:       "repo/user.go",
+			wantCode:   "ARGUS-A01",
+			wantDesc:   "UNSAFE_SQL_CONCATENATION",
+			wantTag:    "ARGUS-A01: UNSAFE_SQL_CONCATENATION",
+			wantIgnore: "// argus:ignore A01 <reason (min 2 words)>",
+		},
+		{
+			rawRule:    "ARGUS-A11",
+			file:       "migrations/001_init.sql",
+			wantCode:   "ARGUS-A11",
+			wantDesc:   "DESTRUCTIVE_MIGRATION",
+			wantTag:    "ARGUS-A11: DESTRUCTIVE_MIGRATION",
+			wantIgnore: "-- argus:ignore A11 <reason (min 2 words)>",
+		},
+		{
+			rawRule:    "A24",
+			file:       "service/tenant.go",
+			wantCode:   "ARGUS-A24",
+			wantDesc:   "TENANT_ISOLATION_LEAK",
+			wantTag:    "ARGUS-A24: TENANT_ISOLATION_LEAK",
+			wantIgnore: "// argus:ignore A24 <reason (min 2 words)>",
+		},
+		{
+			rawRule:    "ARGUS-E001",
+			file:       "migrations/invalid.sql",
+			wantCode:   "ARGUS-E001",
+			wantDesc:   "UNABLE_TO_ANALYZE_MIGRATION",
+			wantTag:    "ARGUS-E001: UNABLE_TO_ANALYZE_MIGRATION",
+			wantIgnore: "-- argus:ignore E001 <reason (min 2 words)>",
+		},
+		{
+			rawRule:    "CUSTOM_CHECK",
+			file:       "custom.go",
+			wantCode:   "CUSTOM_CHECK",
+			wantDesc:   "CUSTOM_CHECK",
+			wantTag:    "CUSTOM_CHECK",
+			wantIgnore: "// argus:ignore CUSTOM_CHECK <reason (min 2 words)>",
+		},
+	}
+
+	for _, tc := range tests {
+		iss := Issue{Rule: tc.rawRule, File: tc.file, Line: 10, Message: "test violation"}
+		if got := iss.RuleCode(); got != tc.wantCode {
+			t.Errorf("RuleCode(%q) = %q, want %q", tc.rawRule, got, tc.wantCode)
+		}
+		if got := iss.RuleDescription(); got != tc.wantDesc {
+			t.Errorf("RuleDescription(%q) = %q, want %q", tc.rawRule, got, tc.wantDesc)
+		}
+		if got := iss.DisplayTag(); got != tc.wantTag {
+			t.Errorf("DisplayTag(%q) = %q, want %q", tc.rawRule, got, tc.wantTag)
+		}
+		if got := iss.DisplayTitle(); got != tc.wantTag {
+			t.Errorf("DisplayTitle(%q) = %q, want %q", tc.rawRule, got, tc.wantTag)
+		}
+
+		res := &AuditResult{Issues: []Issue{iss}}
+		md := GenerateMarkdownReport(res, "/root")
+		if !strings.Contains(md, tc.wantTag) {
+			t.Errorf("GenerateMarkdownReport for %q should contain tag %q", tc.rawRule, tc.wantTag)
+		}
+		if !strings.Contains(md, tc.wantIgnore) {
+			t.Errorf("GenerateMarkdownReport for %q should contain suppression hint %q", tc.rawRule, tc.wantIgnore)
+		}
+	}
+}
+
