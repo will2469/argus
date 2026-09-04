@@ -79,7 +79,7 @@ func (dm *DirectiveMap) IsIgnored(fset *token.FileSet, pos token.Pos, ruleCode s
 }
 
 // IsLineIgnored checks whether a specific file and line is suppressed.
-// Checks the exact line or up to 5 lines above to cover multi-line expressions and stacked ignore comments.
+// Checks the exact line or up to 3 lines above to support stacked ignore comments while preventing suppression bleed.
 func (dm *DirectiveMap) IsLineIgnored(filename string, line int, ruleCode string) bool {
 	if dm == nil {
 		return false
@@ -91,7 +91,7 @@ func (dm *DirectiveMap) IsLineIgnored(filename string, line int, ruleCode string
 
 	canonical, base := normalizeRule(ruleCode)
 
-	for _, l := range []int{line, line - 1, line - 2, line - 3, line - 4, line - 5} {
+	for _, l := range []int{line, line - 1, line - 2, line - 3} {
 		if rules, exists := fileMap[l]; exists {
 			if _, matched := rules[canonical]; matched {
 				return true

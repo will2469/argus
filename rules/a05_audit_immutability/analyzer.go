@@ -81,12 +81,12 @@ func inspectFunction(pass *analysis.Pass, fset *token.FileSet, file *ast.File, f
 		// Filter non-db receivers
 		if id, ok := sel.X.(*ast.Ident); ok {
 			switch strings.ToLower(id.Name) {
-			case "search", "client", "http", "logger", "cmd", "runner", "cache", "ceremony":
+			case "search", "client", "http", "logger", "cmd", "runner", "cache":
 				return true
 			}
 		} else if selRecv, ok := sel.X.(*ast.SelectorExpr); ok {
 			switch strings.ToLower(selRecv.Sel.Name) {
-			case "search", "client", "http", "logger", "cmd", "runner", "cache", "ceremony":
+			case "search", "client", "http", "logger", "cmd", "runner", "cache":
 				return true
 			}
 		}
@@ -104,10 +104,6 @@ func inspectFunction(pass *analysis.Pass, fset *token.FileSet, file *ast.File, f
 		if len(queries) == 0 {
 			// Query and QueryRow are read operations; forensic SELECT on audit logs is explicitly permitted.
 			if sel.Sel.Name == "Query" || sel.Sel.Name == "QueryRow" {
-				return true
-			}
-			// If already vetted and explicitly suppressed for dynamic SQL (A01), do not double-flag under A05
-			if dm != nil && fset != nil && (dm.IsIgnored(fset, call.Pos(), "ARGUS-A01") || dm.IsIgnored(fset, call.Pos(), "A01")) {
 				return true
 			}
 
