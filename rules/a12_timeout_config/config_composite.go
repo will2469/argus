@@ -88,7 +88,7 @@ func evalRuntimeParamsExpr(expr ast.Expr, status *ConfigStatus) {
 	}
 }
 
-func evalConfigCallExpr(call *ast.CallExpr) ConfigStatus {
+func evalConfigCallExpr(file *ast.File, call *ast.CallExpr) ConfigStatus {
 	var status ConfigStatus
 	if call == nil {
 		return status
@@ -123,14 +123,45 @@ func evalConfigCallExpr(call *ast.CallExpr) ConfigStatus {
 		}
 		return status
 	}
-	if strings.Contains(fnName, "goodConfig") || strings.Contains(fnName, "DefaultConfig") || strings.Contains(fnName, "configurePostgresPool") {
-		status.HasStatementTimeout = true
-		status.HasLockTimeout = true
-		status.HasIdleInTransaction = true
-		status.HasMaxConnIdleTime = true
-		status.HasMaxConnLifetime = true
+
+	fnDecl := findFuncDeclByName(file, fnName)
+	if fnDecl != nil && fnDecl.Body != nil {
+		var hasReturn bool
+		var retStatus ConfigStatus
+		for _, stmt := range fnDecl.Body.List {
+			if ret, ok := stmt.(*ast.ReturnStmt); ok {
+				for _, res := range ret.Results {
+					s := resolveReturnExpr(file, fnDecl, res)
+					if !hasReturn {
+						retStatus = s
+						hasReturn = true
+					} else {
+						retStatus = meetStatus(retStatus, s)
+					}
+				}
+			}
+		}
+		if hasReturn {
+			return retStatus
+		}
 	}
+
 	return status
+}
+
+func resolveReturnExpr(file *ast.File, fnDecl *ast.FuncDecl, res ast.Expr) ConfigStatus {
+	if id, ok := res.(*ast.Ident); ok && fnDecl != nil && fnDecl.Body != nil {
+		for _, stmt := range fnDecl.Body.List {
+			if assign, ok := stmt.(*ast.AssignStmt); ok {
+				for i, lhs := range assign.Lhs {
+					if target, ok := lhs.(*ast.Ident); ok && target.Name == id.Name && i < len(assign.Rhs) {
+						return evalConfigRHS(file, assign.Rhs[i])
+					}
+				}
+			}
+		}
+	}
+	return evalConfigRHS(file, res)
 }
 
 func applyRuntimeParamMutation(key, val string, status *ConfigStatus) {

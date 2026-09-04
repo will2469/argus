@@ -2,7 +2,10 @@ package a12_timeout_config
 
 import (
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/analysis/analysistest"
@@ -111,5 +114,124 @@ func TestIsTerminating_Unit(t *testing.T) {
 	}
 	if isTerminating(normalBlock) {
 		t.Errorf("expected normal block not to be terminating")
+	}
+}
+
+func TestFakeConfigRejection_Unit(t *testing.T) {
+	src := `package testpkg
+
+import (
+	"context"
+	"time"
+)
+
+type ConnConfig struct {
+	RuntimeParams map[string]string
+}
+
+type FakeConfig struct {
+	ConnConfig      ConnConfig
+	MaxConnIdleTime time.Duration
+	MaxConnLifetime time.Duration
+}
+
+type pgxpoolPkg struct{}
+var pgxpool pgxpoolPkg
+func (pgxpoolPkg) NewWithConfig(ctx context.Context, cfg any) (any, error) { return nil, nil }
+
+func Run(ctx context.Context) {
+	fake := &FakeConfig{
+		ConnConfig: ConnConfig{
+			RuntimeParams: map[string]string{
+				"statement_timeout": "10s",
+				"lock_timeout": "2s",
+				"idle_in_transaction_session_timeout": "5s",
+			},
+		},
+		MaxConnIdleTime: 5 * time.Minute,
+		MaxConnLifetime: 1 * time.Hour,
+	}
+	_, _ = pgxpool.NewWithConfig(ctx, fake)
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "fake.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) == 0 {
+		t.Fatalf("expected FakeConfig to be rejected as invalid pgxpool.Config, got 0 issues")
+	}
+	found := false
+	for _, iss := range issues {
+		if strings.Contains(iss.Message, "actual *pgxpool.Config") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected message mentioning actual *pgxpool.Config, got: %v", issues)
+	}
+}
+
+func TestBranchReassignment_Unit(t *testing.T) {
+	src := `package testpkg
+
+import (
+	"context"
+	"time"
+)
+
+type ConnConfig struct {
+	RuntimeParams map[string]string
+}
+
+type Config struct {
+	ConnConfig      ConnConfig
+	MaxConnIdleTime time.Duration
+	MaxConnLifetime time.Duration
+}
+
+type pgxpoolPkg struct{}
+var pgxpool pgxpoolPkg
+func (pgxpoolPkg) NewWithConfig(ctx context.Context, cfg *Config) (any, error) { return nil, nil }
+
+func good() *Config {
+	return &Config{
+		ConnConfig: ConnConfig{
+			RuntimeParams: map[string]string{
+				"statement_timeout": "10s",
+				"lock_timeout": "2s",
+				"idle_in_transaction_session_timeout": "5s",
+			},
+		},
+		MaxConnIdleTime: 5 * time.Minute,
+		MaxConnLifetime: 1 * time.Hour,
+	}
+}
+
+func bad() *Config {
+	return &Config{}
+}
+
+func Run(ctx context.Context, condition bool) {
+	cfg := good()
+	if condition {
+		cfg = bad()
+	}
+	_, _ = pgxpool.NewWithConfig(ctx, cfg)
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "branch.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) == 0 {
+		t.Fatalf("expected branch reassignment cfg = bad() to fail closed, got 0 issues")
 	}
 }

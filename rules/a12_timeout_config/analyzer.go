@@ -91,6 +91,14 @@ func checkNewWithConfigCall(pass *analysis.Pass, fset *token.FileSet, call *ast.
 		return
 	}
 
+	if !isPgxpoolConfigArg(pass, file, cfgArg) {
+		*issues = append(*issues, Issue{
+			Pos:     call.Pos(),
+			Message: "pgxpool.NewWithConfig argument must be an actual *pgxpool.Config with explicit timeout configuration",
+		})
+		return
+	}
+
 	status := EvalConfigFlow(pass, file, cfgArg, call)
 	reportConfigStatus(fset, call.Pos(), status, dm, issues)
 }

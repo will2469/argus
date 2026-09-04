@@ -55,7 +55,7 @@ func isTerminating(stmt ast.Stmt) bool {
 	return false
 }
 
-func isSameTarget(pass *analysis.Pass, expr ast.Expr, targetObj types.Object, varName string) bool {
+func isSameTarget(pass *analysis.Pass, expr ast.Expr, targetObj types.Object, targetDeclPos token.Pos, body *ast.BlockStmt) bool {
 	id := getRootIdent(expr)
 	if id == nil {
 		return false
@@ -69,36 +69,50 @@ func isSameTarget(pass *analysis.Pass, expr ast.Expr, targetObj types.Object, va
 		}
 		return false
 	}
-	return id.Name == varName
+	if targetDeclPos != token.NoPos && body != nil {
+		declPos := findDeclPos(body, id)
+		return declPos == targetDeclPos
+	}
+	return false
 }
 
-func findDominatingBlock(body *ast.BlockStmt, pos token.Pos, varName string) *ast.BlockStmt {
-	var dominating *ast.BlockStmt
-	ast.Inspect(body, func(n ast.Node) bool {
-		block, ok := n.(*ast.BlockStmt)
-		if !ok || block.Pos() > pos || pos > block.End() {
-			return true
+func findDeclPos(body *ast.BlockStmt, id *ast.Ident) token.Pos {
+	if id == nil || body == nil {
+		return token.NoPos
+	}
+	if id.Obj != nil {
+		if f, ok := id.Obj.Decl.(*ast.Field); ok {
+			return f.Pos()
 		}
-		for _, stmt := range block.List {
-			if stmt.Pos() >= pos {
-				break
-			}
-			if assign, ok := stmt.(*ast.AssignStmt); ok && assign.Tok == token.DEFINE {
-				for _, lhs := range assign.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && id.Name == varName {
-						dominating = block
-						return true
+	}
+	blocks := getEnclosingBlocks(body, id.Pos())
+	for i := len(blocks) - 1; i >= 0; i-- {
+		b := blocks[i]
+		for _, stmt := range b.List {
+			switch s := stmt.(type) {
+			case *ast.AssignStmt:
+				if s.Tok == token.DEFINE {
+					for _, lhs := range s.Lhs {
+						if ident, ok := lhs.(*ast.Ident); ok {
+							if ident == id {
+								return ident.Pos()
+							}
+							if stmt.Pos() < id.Pos() && ident.Name == id.Name {
+								return ident.Pos()
+							}
+						}
 					}
 				}
-			}
-			if decl, ok := stmt.(*ast.DeclStmt); ok {
-				if gen, ok := decl.Decl.(*ast.GenDecl); ok && gen.Tok == token.VAR {
+			case *ast.DeclStmt:
+				if gen, ok := s.Decl.(*ast.GenDecl); ok {
 					for _, spec := range gen.Specs {
 						if valSpec, ok := spec.(*ast.ValueSpec); ok {
-							for _, id := range valSpec.Names {
-								if id.Name == varName {
-									dominating = block
-									return true
+							for _, name := range valSpec.Names {
+								if name == id {
+									return name.Pos()
+								}
+								if stmt.Pos() < id.Pos() && name.Name == id.Name {
+									return name.Pos()
 								}
 							}
 						}
@@ -106,10 +120,32 @@ func findDominatingBlock(body *ast.BlockStmt, pos token.Pos, varName string) *as
 				}
 			}
 		}
+	}
+	return id.Pos()
+}
+
+func getEnclosingBlocks(root *ast.BlockStmt, target token.Pos) []*ast.BlockStmt {
+	if root == nil {
+		return nil
+	}
+	var blocks []*ast.BlockStmt
+	ast.Inspect(root, func(n ast.Node) bool {
+		if b, ok := n.(*ast.BlockStmt); ok {
+			if b.Pos() <= target && target <= b.End() {
+				blocks = append(blocks, b)
+			}
+		}
 		return true
 	})
-	if dominating != nil {
-		return dominating
+
+	for i := 0; i < len(blocks); i++ {
+		for j := i + 1; j < len(blocks); j++ {
+			spanI := blocks[i].End() - blocks[i].Pos()
+			spanJ := blocks[j].End() - blocks[j].Pos()
+			if spanJ > spanI {
+				blocks[i], blocks[j] = blocks[j], blocks[i]
+			}
+		}
 	}
-	return body
+	return blocks
 }

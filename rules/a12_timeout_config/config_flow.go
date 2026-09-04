@@ -3,6 +3,7 @@ package a12_timeout_config
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"strings"
 
@@ -44,15 +45,13 @@ func EvalConfigFlow(pass *analysis.Pass, file *ast.File, cfgArg ast.Expr, call *
 	}
 
 	rootBlock := enclosingFunc.Body
-	if pass == nil {
-		rootBlock = findDominatingBlock(enclosingFunc.Body, cfgIdent.Pos(), cfgIdent.Name)
-	}
+	targetDeclPos := findDeclPos(rootBlock, cfgIdent)
 
-	finalState, _ := evalBlockStmtFlow(pass, file, rootBlock, call, targetObj, cfgIdent.Name, zeroStatus)
+	finalState, _ := evalBlockStmtFlow(pass, file, rootBlock, call, targetObj, targetDeclPos, cfgIdent.Name, rootBlock, zeroStatus)
 	return finalState
 }
 
-func evalStmtFlow(pass *analysis.Pass, file *ast.File, stmt ast.Stmt, call *ast.CallExpr, targetObj types.Object, varName string, inState ConfigStatus) (ConfigStatus, bool) {
+func evalStmtFlow(pass *analysis.Pass, file *ast.File, stmt ast.Stmt, call *ast.CallExpr, targetObj types.Object, targetDeclPos token.Pos, varName string, rootBlock *ast.BlockStmt, inState ConfigStatus) (ConfigStatus, bool) {
 	if stmt == nil {
 		return inState, false
 	}
@@ -65,7 +64,7 @@ func evalStmtFlow(pass *analysis.Pass, file *ast.File, stmt ast.Stmt, call *ast.
 		if s.Pos() <= call.Pos() && call.Pos() <= s.End() {
 			return inState, true
 		}
-		evalAssignStmt(pass, file, s, targetObj, varName, &inState)
+		evalAssignStmt(pass, file, s, targetObj, targetDeclPos, rootBlock, &inState)
 		return inState, false
 
 	case *ast.ExprStmt:
@@ -73,30 +72,30 @@ func evalStmtFlow(pass *analysis.Pass, file *ast.File, stmt ast.Stmt, call *ast.
 			return inState, true
 		}
 		if callExpr, ok := s.X.(*ast.CallExpr); ok {
-			checkHelperCall(callExpr, pass, targetObj, varName, &inState)
+			checkHelperCall(callExpr, pass, targetObj, targetDeclPos, rootBlock, &inState)
 		}
 		return inState, false
 
 	case *ast.IfStmt:
 		if s.Init != nil {
 			var reached bool
-			inState, reached = evalStmtFlow(pass, file, s.Init, call, targetObj, varName, inState)
+			inState, reached = evalStmtFlow(pass, file, s.Init, call, targetObj, targetDeclPos, varName, rootBlock, inState)
 			if reached {
 				return inState, true
 			}
 		}
 		if s.Body != nil && s.Body.Pos() <= call.Pos() && call.Pos() <= s.Body.End() {
-			return evalBlockStmtFlow(pass, file, s.Body, call, targetObj, varName, inState)
+			return evalBlockStmtFlow(pass, file, s.Body, call, targetObj, targetDeclPos, varName, rootBlock, inState)
 		}
 		if s.Else != nil && s.Else.Pos() <= call.Pos() && call.Pos() <= s.Else.End() {
-			return evalStmtFlow(pass, file, s.Else, call, targetObj, varName, inState)
+			return evalStmtFlow(pass, file, s.Else, call, targetObj, targetDeclPos, varName, rootBlock, inState)
 		}
 
-		thenState, _ := evalBlockStmtFlow(pass, file, s.Body, call, targetObj, varName, inState)
+		thenState, _ := evalBlockStmtFlow(pass, file, s.Body, call, targetObj, targetDeclPos, varName, rootBlock, inState)
 		thenTerm := isTerminating(s.Body)
 
 		if s.Else != nil {
-			elseState, _ := evalStmtFlow(pass, file, s.Else, call, targetObj, varName, inState)
+			elseState, _ := evalStmtFlow(pass, file, s.Else, call, targetObj, targetDeclPos, varName, rootBlock, inState)
 			elseTerm := isTerminating(s.Else)
 
 			if thenTerm && !elseTerm {
@@ -114,15 +113,15 @@ func evalStmtFlow(pass *analysis.Pass, file *ast.File, stmt ast.Stmt, call *ast.
 		return meetStatus(inState, thenState), false
 
 	case *ast.BlockStmt:
-		return evalBlockStmtFlow(pass, file, s, call, targetObj, varName, inState)
+		return evalBlockStmtFlow(pass, file, s, call, targetObj, targetDeclPos, varName, rootBlock, inState)
 
 	case *ast.DeclStmt:
 		if gen, ok := s.Decl.(*ast.GenDecl); ok {
 			for _, spec := range gen.Specs {
 				if valSpec, ok := spec.(*ast.ValueSpec); ok {
 					for i, name := range valSpec.Names {
-						if isSameTarget(pass, name, targetObj, varName) && i < len(valSpec.Values) {
-							inState = evalConfigRHS(valSpec.Values[i])
+						if isSameTarget(pass, name, targetObj, targetDeclPos, rootBlock) && i < len(valSpec.Values) {
+							inState = evalConfigRHS(file, valSpec.Values[i])
 						}
 					}
 				}
@@ -134,14 +133,14 @@ func evalStmtFlow(pass *analysis.Pass, file *ast.File, stmt ast.Stmt, call *ast.
 	return inState, false
 }
 
-func evalBlockStmtFlow(pass *analysis.Pass, file *ast.File, block *ast.BlockStmt, call *ast.CallExpr, targetObj types.Object, varName string, inState ConfigStatus) (ConfigStatus, bool) {
+func evalBlockStmtFlow(pass *analysis.Pass, file *ast.File, block *ast.BlockStmt, call *ast.CallExpr, targetObj types.Object, targetDeclPos token.Pos, varName string, rootBlock *ast.BlockStmt, inState ConfigStatus) (ConfigStatus, bool) {
 	if block == nil {
 		return inState, false
 	}
 	currState := inState
 	for _, stmt := range block.List {
 		var reached bool
-		currState, reached = evalStmtFlow(pass, file, stmt, call, targetObj, varName, currState)
+		currState, reached = evalStmtFlow(pass, file, stmt, call, targetObj, targetDeclPos, varName, rootBlock, currState)
 		if reached {
 			return currState, true
 		}
@@ -149,19 +148,21 @@ func evalBlockStmtFlow(pass *analysis.Pass, file *ast.File, block *ast.BlockStmt
 	return currState, false
 }
 
-func evalAssignStmt(pass *analysis.Pass, file *ast.File, assign *ast.AssignStmt, targetObj types.Object, varName string, status *ConfigStatus) {
+func evalAssignStmt(pass *analysis.Pass, file *ast.File, assign *ast.AssignStmt, targetObj types.Object, targetDeclPos token.Pos, rootBlock *ast.BlockStmt, status *ConfigStatus) {
 	for i, lhs := range assign.Lhs {
-		if !isSameTarget(pass, lhs, targetObj, varName) {
+		if !isSameTarget(pass, lhs, targetObj, targetDeclPos, rootBlock) {
 			continue
 		}
 		var rhsExpr ast.Expr
 		if i < len(assign.Rhs) {
 			rhsExpr = assign.Rhs[i]
+		} else if len(assign.Rhs) == 1 {
+			rhsExpr = assign.Rhs[0]
 		}
 
 		if _, isIdent := lhs.(*ast.Ident); isIdent {
 			if rhsExpr != nil {
-				*status = evalConfigRHS(rhsExpr)
+				*status = evalConfigRHS(file, rhsExpr)
 			}
 			continue
 		}
@@ -194,12 +195,12 @@ func evalAssignStmt(pass *analysis.Pass, file *ast.File, assign *ast.AssignStmt,
 
 	for _, rhsExpr := range assign.Rhs {
 		if call, ok := rhsExpr.(*ast.CallExpr); ok {
-			checkHelperCall(call, pass, targetObj, varName, status)
+			checkHelperCall(call, pass, targetObj, targetDeclPos, rootBlock, status)
 		}
 	}
 }
 
-func evalConfigRHS(expr ast.Expr) ConfigStatus {
+func evalConfigRHS(file *ast.File, expr ast.Expr) ConfigStatus {
 	var status ConfigStatus
 	switch e := expr.(type) {
 	case *ast.CompositeLit:
@@ -209,16 +210,16 @@ func evalConfigRHS(expr ast.Expr) ConfigStatus {
 			return EvalCompositeLit(lit)
 		}
 	case *ast.CallExpr:
-		return evalConfigCallExpr(e)
+		return evalConfigCallExpr(file, e)
 	case *ast.ParenExpr:
-		return evalConfigRHS(e.X)
+		return evalConfigRHS(file, e.X)
 	}
 	return status
 }
 
-func checkHelperCall(call *ast.CallExpr, pass *analysis.Pass, targetObj types.Object, varName string, status *ConfigStatus) {
+func checkHelperCall(call *ast.CallExpr, pass *analysis.Pass, targetObj types.Object, targetDeclPos token.Pos, rootBlock *ast.BlockStmt, status *ConfigStatus) {
 	for _, arg := range call.Args {
-		if isSameTarget(pass, arg, targetObj, varName) {
+		if isSameTarget(pass, arg, targetObj, targetDeclPos, rootBlock) {
 			fnName := exprToString(call.Fun)
 			if strings.Contains(fnName, "configurePostgresPool") || strings.Contains(fnName, "Configure") {
 				status.HasStatementTimeout = true

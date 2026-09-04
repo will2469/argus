@@ -125,114 +125,19 @@ func findCallArg(call *ast.CallExpr, pass *analysis.Pass) (ast.Expr, int) {
 	return nil, -1
 }
 
-// isPgxpoolConfigType verifies whether an expression represents a pgxpool.Config type.
-func isPgxpoolConfigType(pass *analysis.Pass, file *ast.File, expr ast.Expr) bool {
-	if expr == nil {
-		return false
+func findFuncDeclByName(file *ast.File, name string) *ast.FuncDecl {
+	if file == nil || name == "" {
+		return nil
 	}
-	if pass != nil && pass.TypesInfo != nil {
-		t := pass.TypesInfo.TypeOf(expr)
-		if t == nil {
-			if id, ok := expr.(*ast.Ident); ok && pass.TypesInfo.Uses[id] != nil {
-				t = pass.TypesInfo.Uses[id].Type()
-			}
-		}
-		if t != nil {
-			for ptr, ok := t.(*types.Pointer); ok; ptr, ok = t.(*types.Pointer) {
-				t = ptr.Elem()
-			}
-			if named, ok := t.(*types.Named); ok {
-				pkg := named.Obj().Pkg()
-				if pkg != nil {
-					if isPgxpoolPath(pkg.Path()) && named.Obj().Name() == "Config" {
-						return true
-					}
-					if isA12TestPackage(pkg.Path()) && named.Obj().Name() == "Config" {
-						if st, ok := named.Underlying().(*types.Struct); ok {
-							return isPgxpoolConfigStructType(st)
-						}
-					}
-				}
-			}
-		}
-		return false
-	}
-
-	// Syntactic resolution for standalone AST mode (pass == nil)
-	if file != nil {
-		if sel, ok := expr.(*ast.SelectorExpr); ok && sel.Sel.Name == "Config" {
-			if id, ok := sel.X.(*ast.Ident); ok {
-				if target, ok := findPgxpoolImport(file); ok && id.Name == target {
-					return true
-				}
-			}
-		}
-		if isA12TestFile(file) {
-			if sel, ok := expr.(*ast.SelectorExpr); ok && sel.Sel.Name == "Config" {
-				if id, ok := sel.X.(*ast.Ident); ok {
-					return id.Name == "pgxpool"
-				}
-			}
-			if id, ok := expr.(*ast.Ident); ok {
-				return isConfigStructDeclaredWithConnConfig(file, id.Name)
-			}
-		}
-	}
-	return false
-}
-
-func isPoolParam(name string) bool {
-	return name == "MaxConnIdleTime" || name == "MaxConnLifetime" || name == "MaxConns" || name == "MinConns"
-}
-
-func isPgxpoolConfigStructType(st *types.Struct) bool {
-	if st == nil {
-		return false
-	}
-	var hasConnConfig, hasPoolParam bool
-	for i := 0; i < st.NumFields(); i++ {
-		name := st.Field(i).Name()
-		if name == "ConnConfig" {
-			hasConnConfig = true
-		} else if isPoolParam(name) {
-			hasPoolParam = true
-		}
-	}
-	return hasConnConfig && hasPoolParam
-}
-
-func isConfigStructDeclaredWithConnConfig(file *ast.File, typeName string) bool {
-	if file == nil || typeName == "" {
-		return false
+	if idx := strings.LastIndex(name, "."); idx != -1 {
+		name = name[idx+1:]
 	}
 	for _, decl := range file.Decls {
-		gen, ok := decl.(*ast.GenDecl)
-		if !ok {
-			continue
-		}
-		for _, spec := range gen.Specs {
-			typeSpec, ok := spec.(*ast.TypeSpec)
-			if !ok || typeSpec.Name.Name != typeName {
-				continue
-			}
-			st, ok := typeSpec.Type.(*ast.StructType)
-			if !ok || st.Fields == nil {
-				continue
-			}
-			var hasConnConfig, hasPoolParam bool
-			for _, f := range st.Fields.List {
-				for _, name := range f.Names {
-					if name.Name == "ConnConfig" {
-						hasConnConfig = true
-					} else if isPoolParam(name.Name) {
-						hasPoolParam = true
-					}
-				}
-			}
-			return hasConnConfig && hasPoolParam
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name != nil && fn.Name.Name == name {
+			return fn
 		}
 	}
-	return false
+	return nil
 }
 
 func findEnclosingFunc(file *ast.File, pos token.Pos) *ast.FuncDecl {

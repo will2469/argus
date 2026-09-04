@@ -30,7 +30,7 @@ func (pgxpoolPkg) New(ctx context.Context, dsn string) (*Pool, error) {
 	return &Pool{}, nil
 }
 
-func (pgxpoolPkg) NewWithConfig(ctx context.Context, cfg *Config) (*Pool, error) {
+func (pgxpoolPkg) NewWithConfig(ctx context.Context, cfg any) (*Pool, error) {
 	return &Pool{}, nil
 }
 
@@ -97,7 +97,9 @@ func A8_Shadowing(ctx context.Context) {
 			},
 		},
 	}
-	_ = cfg
+	if cfg.MaxConnIdleTime > 0 && cfg.MaxConnLifetime > 0 && len(cfg.ConnConfig.RuntimeParams) > 0 {
+		_ = cfg
+	}
 
 	{
 		cfg := &Config{}
@@ -139,6 +141,55 @@ func A10_BranchZeroTimeout(ctx context.Context, condition bool) {
 	}
 	if condition {
 		cfg.ConnConfig.RuntimeParams["statement_timeout"] = "0"
+	}
+	_, _ = pgxpool.NewWithConfig(ctx, cfg)
+}
+
+// A11: Fake Config Struct — struct mimicking Config AST shape but not actual pgxpool.Config.
+type FakeConfig struct {
+	ConnConfig      ConnConfig
+	MaxConnIdleTime time.Duration
+	MaxConnLifetime time.Duration
+}
+
+func A11_FakeConfigStruct(ctx context.Context) {
+	fake := &FakeConfig{
+		ConnConfig: ConnConfig{
+			RuntimeParams: map[string]string{
+				"statement_timeout":                   "10s",
+				"lock_timeout":                        "2s",
+				"idle_in_transaction_session_timeout": "5s",
+			},
+		},
+		MaxConnIdleTime: 5 * time.Minute,
+		MaxConnLifetime: 1 * time.Hour,
+	}
+	_, _ = pgxpool.NewWithConfig(ctx, fake)
+}
+
+func goodConfigHelper() *Config {
+	return &Config{
+		MaxConnIdleTime: 5 * time.Minute,
+		MaxConnLifetime: 1 * time.Hour,
+		ConnConfig: ConnConfig{
+			RuntimeParams: map[string]string{
+				"statement_timeout":                   "10s",
+				"lock_timeout":                        "2s",
+				"idle_in_transaction_session_timeout": "5s",
+			},
+		},
+	}
+}
+
+func badConfigHelper() *Config {
+	return &Config{}
+}
+
+// A12: Branch Function Reassignment — good() reassigned to bad() in branch.
+func A12_BranchFunctionReassignment(ctx context.Context, condition bool) {
+	cfg := goodConfigHelper()
+	if condition {
+		cfg = badConfigHelper()
 	}
 	_, _ = pgxpool.NewWithConfig(ctx, cfg)
 }
