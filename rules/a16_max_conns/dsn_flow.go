@@ -99,11 +99,31 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 		}
 		for i, lhs := range s.Lhs {
 			if id, ok := lhs.(*ast.Ident); ok && id.Name == varName && i < len(s.Rhs) {
-				newVals := resolveExprToStringsWithFlow(file, s.Rhs[i], stmt.Pos(), depth+1)
-				if len(newVals) > 0 {
-					inSet = newVals
+				inSet = resolveExprToStringsWithFlow(file, s.Rhs[i], stmt.Pos(), depth+1)
+			}
+		}
+		return inSet, false
+
+	case *ast.DeclStmt:
+		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
+			return inSet, true
+		}
+		if gen, ok := s.Decl.(*ast.GenDecl); ok {
+			for _, spec := range gen.Specs {
+				if vs, ok := spec.(*ast.ValueSpec); ok {
+					for i, name := range vs.Names {
+						if name.Name == varName && i < len(vs.Values) {
+							inSet = resolveExprToStringsWithFlow(file, vs.Values[i], s.Pos(), depth+1)
+						}
+					}
 				}
 			}
+		}
+		return inSet, false
+
+	case *ast.ExprStmt:
+		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
+			return inSet, true
 		}
 		return inSet, false
 
