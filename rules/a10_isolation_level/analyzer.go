@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
+	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/directives"
 )
@@ -57,22 +58,29 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			continue
 		}
 
-		inspectFunctionIsolation(pass, fset, fn.Body, customTables, dm, &issues)
+		inspectFunctionIsolation(pass, fset, fn, file, customTables, dm, &issues)
 	}
 
 	return issues
 }
 
-func inspectFunctionIsolation(pass *analysis.Pass, fset *token.FileSet, body *ast.BlockStmt, customTables []string, dm *directives.DirectiveMap, issues *[]Issue) {
+func inspectFunctionIsolation(pass *analysis.Pass, fset *token.FileSet, fn *ast.FuncDecl, file *ast.File, customTables []string, dm *directives.DirectiveMap, issues *[]Issue) {
+	if fn == nil || fn.Body == nil {
+		return
+	}
+
 	// 1. Inspect WithTx helper calls
-	ast.Inspect(body, func(n ast.Node) bool {
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 
-		fnName := getCallTargetName(call.Fun)
-		if fnName != "WithTx" && !strings.HasSuffix(fnName, ".WithTx") {
+		fnName := callsite.GetCallMethodName(call.Fun)
+		if fnName != "WithTx" && fnName != "BeginFunc" && fnName != "ExecuteTx" {
+			return true
+		}
+		if !isDBReceiver(pass, call.Fun, fn, file) && !isWithTxHelperCall(call) {
 			return true
 		}
 
@@ -81,14 +89,14 @@ func inspectFunctionIsolation(pass *analysis.Pass, fset *token.FileSet, body *as
 			return true
 		}
 
-		writtenCritical, lockedTables, advisoryCalls := analyzeClosureQueries(pass, closure.Body, customTables)
+		writtenCritical, lockedTables, advisoryCalls := analyzeClosureQueries(pass, closure, customTables)
 		if len(writtenCritical) == 0 {
 			return true
 		}
 
 		var hasIso bool
 		if len(call.Args) >= 4 {
-			hasIso = HasStrongIsolation(call.Args[3], body)
+			hasIso = HasStrongIsolation(pass, call.Args[3], fn.Body)
 		}
 		if hasIso {
 			return true
@@ -96,7 +104,7 @@ func inspectFunctionIsolation(pass *analysis.Pass, fset *token.FileSet, body *as
 
 		allProtected := true
 		for _, target := range writtenCritical {
-			if !isTableProtected(target, lockedTables, advisoryCalls) && !isEnclosedInCorrelatedAdvisory(call, body, target) {
+			if !isTableProtected(target, lockedTables, advisoryCalls) && !isEnclosedInCorrelatedAdvisory(call, fn.Body, target) {
 				allProtected = false
 				break
 			}
@@ -113,7 +121,15 @@ func inspectFunctionIsolation(pass *analysis.Pass, fset *token.FileSet, body *as
 	})
 
 	// 2. Inspect explicit transaction blocks (pool.Begin / pool.BeginTx)
-	inspectExplicitTxIsolation(pass, fset, body, customTables, dm, issues)
+	inspectExplicitTxIsolation(pass, fset, fn, file, customTables, dm, issues)
+}
+
+func isWithTxHelperCall(call *ast.CallExpr) bool {
+	if call == nil {
+		return false
+	}
+	name := callsite.GetCallMethodName(call.Fun)
+	return (name == "WithTx" || name == "BeginFunc" || name == "ExecuteTx") && len(call.Args) >= 2
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {

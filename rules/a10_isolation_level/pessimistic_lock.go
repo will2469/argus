@@ -143,8 +143,8 @@ func isEnclosedInCorrelatedAdvisory(call *ast.CallExpr, body *ast.BlockStmt, tab
 		if !ok {
 			return true
 		}
-		name := getCallTargetName(c.Fun)
-		if name == "WithAdvisoryLock" || strings.HasSuffix(name, ".WithAdvisoryLock") {
+		name := callsite.GetCallMethodName(c.Fun)
+		if name == "WithAdvisoryLock" {
 			var lockArg string
 			for _, arg := range c.Args {
 				if callsite.IsContextArg(arg, nil) {

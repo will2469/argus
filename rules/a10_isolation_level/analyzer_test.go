@@ -1,6 +1,9 @@
 package a10_isolation_level
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"testing"
 
@@ -64,5 +67,95 @@ func TestIsolationEval_Unit(t *testing.T) {
 	}
 	if !isTableProtected(balancesRef, nil, correlatedAdvisory) {
 		t.Errorf("CORRECTNESS BUG: correlated advisory lock must protect balances")
+	}
+}
+
+func TestTxSoundness_CalculatorAndShadowing(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+
+import "context"
+
+type Tx interface {
+	Exec(ctx context.Context, sql string, args ...any) error
+	Commit(ctx context.Context) error
+	Rollback(ctx context.Context) error
+}
+
+type Pool interface {
+	Begin(ctx context.Context) (Tx, error)
+}
+
+type Calculator struct{}
+func (Calculator) Exec(sql string) {}
+
+type TokenParser struct{}
+func (TokenParser) Begin() *TokenParser { return &TokenParser{} }
+
+func testNonDBBegin(p TokenParser) {
+	tx := p.Begin()
+	_ = tx
+}
+
+func testCalculatorExec(ctx context.Context, pool Pool, calc Calculator) {
+	tx, _ := pool.Begin(ctx)
+	calc.Exec("UPDATE balances SET amount = 1")
+	tx.Commit(ctx)
+}
+
+func testQueryShadowSafe(ctx context.Context, pool Pool) {
+	query := "UPDATE balances SET amount = 1"
+	tx, _ := pool.Begin(ctx)
+	if true {
+		query := "SELECT * FROM unrelated"
+		tx.Exec(ctx, query)
+	}
+	tx.Commit(ctx)
+	_ = query
+}
+
+func testQueryShadowViolated(ctx context.Context, pool Pool) {
+	query := "SELECT * FROM unrelated"
+	tx, _ := pool.Begin(ctx)
+	if true {
+		query := "UPDATE balances SET amount = 1"
+		tx.Exec(ctx, query)
+	}
+	tx.Commit(ctx)
+	_ = query
+}
+`
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+
+		var issues []Issue
+		inspectFunctionIsolation(nil, fset, fn, file, nil, nil, &issues)
+
+		switch fn.Name.Name {
+		case "testNonDBBegin":
+			if len(issues) != 0 {
+				t.Fatalf("expected 0 issues for TokenParser.Begin(), got %d: %v", len(issues), issues)
+			}
+		case "testCalculatorExec":
+			if len(issues) != 0 {
+				t.Fatalf("expected 0 issues for Calculator.Exec, got %d: %v", len(issues), issues)
+			}
+		case "testQueryShadowSafe":
+			if len(issues) != 0 {
+				t.Fatalf("expected 0 issues for shadowed safe query, got %d: %v", len(issues), issues)
+			}
+		case "testQueryShadowViolated":
+			if len(issues) != 1 {
+				t.Fatalf("expected 1 issue for shadowed violating query, got %d: %v", len(issues), issues)
+			}
+		}
 	}
 }

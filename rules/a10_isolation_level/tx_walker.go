@@ -12,8 +12,13 @@ import (
 	"github.com/will2469/argus/shared/directives"
 )
 
-func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, body *ast.BlockStmt, customTables []string, dm *directives.DirectiveMap, issues *[]Issue) {
+func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, fn *ast.FuncDecl, file *ast.File, customTables []string, dm *directives.DirectiveMap, issues *[]Issue) {
+	if fn == nil || fn.Body == nil {
+		return
+	}
+
 	var inTx bool
+	var txID *ast.Ident
 	var txVarName string
 	var beginPos ast.Node
 	var hasStrongIso bool
@@ -21,34 +26,27 @@ func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, body *
 	var lockedTables []TableRef
 	var advisoryCalls []string
 
-	for _, stmt := range body.List {
+	for _, stmt := range fn.Body.List {
 		if assign, ok := stmt.(*ast.AssignStmt); ok {
 			for i, rhs := range assign.Rhs {
 				if call, ok := rhs.(*ast.CallExpr); ok {
-					name := getCallTargetName(call.Fun)
-					if name == "Begin" || strings.HasSuffix(name, ".Begin") {
+					name := callsite.GetCallMethodName(call.Fun)
+					if (name == "Begin" || name == "BeginTx") && isDBReceiver(pass, call.Fun, fn, file) {
+						targetIdx := 0
 						if i < len(assign.Lhs) {
-							if id, ok := assign.Lhs[i].(*ast.Ident); ok {
-								inTx = true
-								txVarName = id.Name
-								beginPos = call
-								hasStrongIso = false
-								writtenCritical = nil
-								lockedTables = nil
-								advisoryCalls = nil
-							}
+							targetIdx = i
 						}
-					} else if name == "BeginTx" || strings.HasSuffix(name, ".BeginTx") {
-						if i < len(assign.Lhs) {
-							if id, ok := assign.Lhs[i].(*ast.Ident); ok {
+						if len(assign.Lhs) > targetIdx {
+							if id, ok := assign.Lhs[targetIdx].(*ast.Ident); ok {
 								inTx = true
+								txID = id
 								txVarName = id.Name
 								beginPos = call
 								writtenCritical = nil
 								lockedTables = nil
 								advisoryCalls = nil
-								if len(call.Args) >= 2 {
-									hasStrongIso = HasStrongIsolation(call.Args[1], body)
+								if name == "BeginTx" && len(call.Args) >= 2 {
+									hasStrongIso = HasStrongIsolation(pass, call.Args[1], fn.Body)
 								} else {
 									hasStrongIso = false
 								}
@@ -73,13 +71,11 @@ func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, body *
 				if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
 					return true
 				}
-				if id, ok := sel.X.(*ast.Ident); ok {
-					switch strings.ToLower(id.Name) {
-					case "log", "logger", "search", "client", "http", "queue", "cmd", "runner", "cache":
-						return true
-					}
+				if !isProvenTxReceiver(pass, sel.X, txID) {
+					return true
 				}
-				queries := extractTxQueryStrings(call, body, pass)
+
+				queries := extractTxQueryStrings(call, fn.Body, pass)
 				for _, query := range queries {
 					if ref, ok := ExtractCriticalWriteTable(query, customTables); ok {
 						writtenCritical = append(writtenCritical, ref)
@@ -107,6 +103,7 @@ func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, body *
 					}
 				}
 				inTx = false
+				txID = nil
 				txVarName = ""
 				beginPos = nil
 			}
@@ -114,8 +111,20 @@ func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, body *
 	}
 }
 
-func analyzeClosureQueries(pass *analysis.Pass, body *ast.BlockStmt, customTables []string) (writtenCritical []TableRef, lockedTables []TableRef, advisoryCalls []string) {
-	ast.Inspect(body, func(n ast.Node) bool {
+func analyzeClosureQueries(pass *analysis.Pass, closure *ast.FuncLit, customTables []string) (writtenCritical []TableRef, lockedTables []TableRef, advisoryCalls []string) {
+	if closure == nil || closure.Body == nil {
+		return
+	}
+
+	var txParam *ast.Ident
+	if closure.Type != nil && closure.Type.Params != nil && len(closure.Type.Params.List) > 0 {
+		firstParam := closure.Type.Params.List[0]
+		if len(firstParam.Names) > 0 {
+			txParam = firstParam.Names[0]
+		}
+	}
+
+	ast.Inspect(closure.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -124,13 +133,11 @@ func analyzeClosureQueries(pass *analysis.Pass, body *ast.BlockStmt, customTable
 		if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
 			return true
 		}
-		if id, ok := sel.X.(*ast.Ident); ok {
-			switch strings.ToLower(id.Name) {
-			case "log", "logger", "search", "client", "http", "queue", "cmd", "runner", "cache":
-				return true
-			}
+		if !isProvenTxReceiver(pass, sel.X, txParam) {
+			return true
 		}
-		queries := extractTxQueryStrings(call, body, pass)
+
+		queries := extractTxQueryStrings(call, closure.Body, pass)
 		for _, query := range queries {
 			if ref, ok := ExtractCriticalWriteTable(query, customTables); ok {
 				writtenCritical = append(writtenCritical, ref)
@@ -162,21 +169,32 @@ func extractTxQueryStrings(call *ast.CallExpr, body *ast.BlockStmt, pass *analys
 			results = append(results, strings.Trim(e.Value, "`\""))
 		}
 	case *ast.Ident:
+		if constVal, ok := resolveStringConstant(pass, e); ok {
+			results = append(results, constVal)
+			return results
+		}
 		if body != nil {
+			var latestVal string
+			var found bool
 			ast.Inspect(body, func(n ast.Node) bool {
 				assign, ok := n.(*ast.AssignStmt)
 				if !ok || assign.Pos() >= call.Pos() {
 					return true
 				}
 				for i, lhs := range assign.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
+					if id, ok := lhs.(*ast.Ident); ok && isSameObject(pass, id, e) && i < len(assign.Rhs) {
 						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							results = append(results, strings.Trim(lit.Value, "`\""))
+							latestVal = strings.Trim(lit.Value, "`\"")
+							found = true
 						}
 					}
 				}
 				return true
 			})
+			if found {
+				results = append(results, latestVal)
+				return results
+			}
 		}
 	}
 

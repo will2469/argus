@@ -4,10 +4,12 @@ package a10_isolation_level
 import (
 	"go/ast"
 	"strings"
+
+	"golang.org/x/tools/go/analysis"
 )
 
 // HasStrongIsolation checks if the expression sets Serializable or RepeatableRead.
-func HasStrongIsolation(expr ast.Expr, body *ast.BlockStmt) bool {
+func HasStrongIsolation(pass *analysis.Pass, expr ast.Expr, body *ast.BlockStmt) bool {
 	if expr == nil {
 		return false
 	}
@@ -24,7 +26,7 @@ func HasStrongIsolation(expr ast.Expr, body *ast.BlockStmt) bool {
 				return true
 			}
 			for i, lhs := range assign.Lhs {
-				if lid, ok := lhs.(*ast.Ident); ok && lid.Name == id.Name && i < len(assign.Rhs) {
+				if lid, ok := lhs.(*ast.Ident); ok && isSameObject(pass, lid, id) && i < len(assign.Rhs) {
 					if c, ok := assign.Rhs[i].(*ast.CompositeLit); ok {
 						if checkTxOptionsComposite(c) {
 							found = true
@@ -69,19 +71,6 @@ func extractClosureArg(call *ast.CallExpr) *ast.FuncLit {
 		}
 	}
 	return nil
-}
-
-func getCallTargetName(e ast.Expr) string {
-	switch x := e.(type) {
-	case *ast.Ident:
-		return x.Name
-	case *ast.SelectorExpr:
-		if pkg, ok := x.X.(*ast.Ident); ok {
-			return pkg.Name + "." + x.Sel.Name
-		}
-		return x.Sel.Name
-	}
-	return ""
 }
 
 func isTxEndStmt(stmt ast.Stmt, txVarName string) bool {
