@@ -109,6 +109,10 @@ func TestContractTag_Valid(t *testing.T) {
 			"FileHeaderPhase",
 			"-- argus:phase contract release=v2.0.0 issue=MIG-123\nALTER TABLE users DROP COLUMN old_token;",
 		},
+		{
+			"MultiLineBlock",
+			"-- argus:phase=contract\n-- argus:release=v2.0.0\n-- argus:issue=DB-101\n-- argus:approved_by=dba-team\n-- argus:reason=\"drop legacy users table\"\nDROP TABLE users;",
+		},
 	}
 
 	for _, tc := range cases {
@@ -119,21 +123,26 @@ func TestContractTag_Valid(t *testing.T) {
 	}
 }
 
-func TestContractTag_DummyBypassRejected(t *testing.T) {
-	dummyBypasses := []struct {
+func TestContractTag_TortureTestEvasions(t *testing.T) {
+	evasions := []struct {
 		name string
 		sql  string
 	}{
 		{"AnythingDummy", "-- argus:contract anything\nDROP TABLE users;"},
+		{"QuestionMarksDummy", "-- argus:phase=contract\n-- argus:contract=???\nDROP TABLE users;"},
+		{"SingleQuestionMark", "-- argus:contract ?\nDROP TABLE users;"},
 		{"TestDummy", "-- argus:contract test\nDROP TABLE users;"},
 		{"FooDummy", "-- argus:contract foo\nDROP TABLE users;"},
-		{"NoAccountability", "-- argus:contract v1.0.0\nDROP TABLE users;"},
+		{"OnlyPhaseNoRelease", "-- argus:phase=contract\nDROP TABLE users;"},
+		{"ExpandPhaseNotContract", "-- argus:phase=expand\n-- argus:contract release=v2.0.0 issue=DB-101 approved_by=dba reason=\"drop table\"\nDROP TABLE users;"},
+		{"ReleaseWithoutAccountability", "-- argus:contract v1.0.0\nDROP TABLE users;"},
+		{"ReleaseWithSingleWordReason", "-- argus:contract release=v2.0.0 reason=cleanup\nDROP TABLE users;"},
 	}
 
-	for _, tc := range dummyBypasses {
+	for _, tc := range evasions {
 		issues := CheckMigration(tc.name+".sql", tc.sql, nil)
 		if len(issues) == 0 {
-			t.Errorf("[%s] CORRECTION NEEDED: dummy contract bypass must be REJECTED, but was allowed", tc.name)
+			t.Errorf("[%s] TORTURE TEST FAILED: evasive contract metadata MUST be rejected, but was allowed!", tc.name)
 		}
 	}
 }
