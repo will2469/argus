@@ -62,7 +62,7 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 				return true
 			}
 			checkDBCallAdvisoryLock(pass, fset, call, fn.Body, dm, &issues)
-			CheckAdvisoryHelperArgs(pass, fset, call, fn.Body, dm, &issues)
+			CheckAdvisoryHelperArgs(pass, fset, call, fn, file, dm, &issues)
 			return true
 		})
 	}

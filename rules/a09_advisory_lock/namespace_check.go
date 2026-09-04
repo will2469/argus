@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -15,20 +14,19 @@ import (
 )
 
 // CheckAdvisoryHelperArgs inspects Go calls to WithAdvisoryLock, ExecuteLockedTx, and TryAdvisoryLock.
-func CheckAdvisoryHelperArgs(pass *analysis.Pass, fset *token.FileSet, call *ast.CallExpr, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+func CheckAdvisoryHelperArgs(pass *analysis.Pass, fset *token.FileSet, call *ast.CallExpr, fn *ast.FuncDecl, file *ast.File, dm *directives.DirectiveMap, issues *[]Issue) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return
 	}
 
-	// Verify that the receiver is from an approved advisory lock helper package
-	// This prevents false positives from methods with the same names on unrelated types
+	// Verify that the method name is an approved advisory lock helper
 	if !isAdvisoryLockHelperMethod(sel) {
 		return
 	}
 
-	// Verify receiver approval via semantic analysis
-	if !isAdvisoryLockHelperReceiver(pass, sel) {
+	// Verify receiver approval via semantic and AST contract analysis
+	if !isAdvisoryLockHelperReceiver(pass, sel, fn, file) {
 		return
 	}
 
@@ -55,6 +53,10 @@ func CheckAdvisoryHelperArgs(pass *analysis.Pass, fset *token.FileSet, call *ast
 		return
 	}
 
+	var body *ast.BlockStmt
+	if fn != nil {
+		body = fn.Body
+	}
 	validateLockIdentifier(pass, lockArg, body, issues)
 }
 
@@ -213,80 +215,6 @@ func isFormatCall(call *ast.CallExpr) bool {
 	return false
 }
 
-// isAdvisoryLockHelperReceiver verifies whether a selector expression refers to an approved
-// advisory lock helper. This uses semantic type checking to prevent false positives from methods
-// with the same names on unrelated types (e.g., Calculator.WithAdvisoryLock).
-func isAdvisoryLockHelperReceiver(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
-	if sel == nil {
-		return false
-	}
-
-	// 1. Heuristic: accept identifier named "argus" (supports test fixtures and common usage)
-	if id, ok := sel.X.(*ast.Ident); ok && id.Name == "argus" {
-		return true
-	}
-
-	// 2. Semantic Type Checking via pass.TypesInfo (when available)
-	if pass != nil && pass.TypesInfo != nil {
-		var recvType types.Type
-
-		// Try to get the receiver type from various sources
-		if id, ok := sel.X.(*ast.Ident); ok {
-			if obj := pass.TypesInfo.Uses[id]; obj != nil {
-				recvType = obj.Type()
-			} else if obj := pass.TypesInfo.Defs[id]; obj != nil {
-				recvType = obj.Type()
-			}
-		}
-
-		if recvType != nil && recvType != types.Typ[types.Invalid] {
-			// Check if it's from the approved package
-			if isApprovedAdvisoryLockHelperType(recvType) {
-				return true
-			}
-			// Structural fallback: check if the type has advisory lock helper methods
-			// This catches wrapper types and local interfaces with matching method signatures
-			if hasAdvisoryLockMethod(recvType) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// 3. AST-only fallback (pass == nil, standalone CLI mode):
-	// The method name was already verified by isAdvisoryLockHelperMethod before reaching here.
-	// Method names like WithAdvisoryLock/ExecuteLockedTx/TryAdvisoryLock are domain-specific
-	// enough that accepting the receiver without type info is safe.
-	return true
-}
-
-// hasAdvisoryLockMethod checks whether a type's method set includes any advisory lock helper method.
-func hasAdvisoryLockMethod(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	// Check the method set of the type (includes pointer receivers)
-	mset := types.NewMethodSet(t)
-	for i := 0; i < mset.Len(); i++ {
-		switch mset.At(i).Obj().Name() {
-		case "WithAdvisoryLock", "ExecuteLockedTx", "TryAdvisoryLock":
-			return true
-		}
-	}
-	// Also check pointer-to-type method set if t is not already a pointer
-	if _, isPtr := t.(*types.Pointer); !isPtr {
-		mset = types.NewMethodSet(types.NewPointer(t))
-		for i := 0; i < mset.Len(); i++ {
-			switch mset.At(i).Obj().Name() {
-			case "WithAdvisoryLock", "ExecuteLockedTx", "TryAdvisoryLock":
-				return true
-			}
-		}
-	}
-	return false
-}
-
-
 // isAdvisoryLockHelperMethod checks if the selector expression refers to an approved helper method name.
 func isAdvisoryLockHelperMethod(sel *ast.SelectorExpr) bool {
 	if sel == nil {
@@ -297,40 +225,4 @@ func isAdvisoryLockHelperMethod(sel *ast.SelectorExpr) bool {
 		return true
 	}
 	return false
-}
-
-// isApprovedAdvisoryLockHelperType checks if the type is from an approved advisory lock helper package.
-func isApprovedAdvisoryLockHelperType(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	
-	// Unwrap pointers to get the underlying type
-	t = unwrapPointer(t)
-	
-	// Check for named types (types with package information)
-	if named, ok := t.(*types.Named); ok && named.Obj() != nil {
-		pkg := named.Obj().Pkg()
-		if pkg == nil {
-			return false
-		}
-		path := pkg.Path()
-		
-		// Approved advisory lock helper packages
-		switch path {
-		case "github.com/will2469/argus":
-			// Accept any type from the argus package
-			return true
-		}
-	}
-	
-	return false
-}
-
-// unwrapPointer unwraps pointer types to get the underlying type.
-func unwrapPointer(t types.Type) types.Type {
-	if ptr, ok := t.(*types.Pointer); ok {
-		return ptr.Elem()
-	}
-	return t
 }

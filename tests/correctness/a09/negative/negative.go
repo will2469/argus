@@ -69,3 +69,26 @@ func N7_SprintfHelper(ctx context.Context, tx any, orderID string) error {
 		return nil
 	})
 }
+
+// Calculator is a non-lock calculation utility.
+type Calculator struct{}
+
+func (Calculator) WithAdvisoryLock(ctx context.Context, tx any, lockName string, failFast bool, fn func() error) error {
+	return fn()
+}
+
+// N8: Calculator Utility — non-lock helper type must not be treated as an advisory lock helper.
+func N8_CalculatorWithAdvisoryLock(ctx context.Context, calc Calculator) error {
+	return calc.WithAdvisoryLock(ctx, nil, "unnamespaced_bare_key", true, func() error {
+		return nil
+	})
+}
+
+// N9: Shadowed Argus Variable — variable named argus with unrelated type must not trigger helper validation.
+func N9_ShadowedArgusIdent(ctx context.Context) error {
+	argus := &Calculator{}
+	return argus.WithAdvisoryLock(ctx, nil, "raw_string", false, func() error {
+		return nil
+	})
+}
+

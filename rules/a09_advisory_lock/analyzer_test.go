@@ -160,3 +160,38 @@ func testBareBlockShadowSafe() {
 		}
 	}
 }
+
+func TestCalculatorAndShadowedArgus_MustBeSafe(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+
+import (
+	"context"
+)
+
+type Calculator struct{}
+
+func (Calculator) WithAdvisoryLock(ctx context.Context, tx any, lockName string, failFast bool, fn func() error) error {
+	return fn()
+}
+
+func testCalc(ctx context.Context, calc Calculator) {
+	_ = calc.WithAdvisoryLock(ctx, nil, "bad_raw_key", true, func() error { return nil })
+}
+
+func testShadowed(ctx context.Context) {
+	argus := &Calculator{}
+	_ = argus.WithAdvisoryLock(ctx, nil, "another_bad_key", true, func() error { return nil })
+}
+`
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for Calculator and shadowed argus, got %d: %v", len(issues), issues)
+	}
+}
+
