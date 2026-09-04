@@ -8,7 +8,7 @@ import (
 )
 
 // DefaultVersion is the base semantic release of Argus.
-const DefaultVersion = "1.0.0"
+const DefaultVersion = "1.2.0"
 
 var (
 	// Version can be injected at build-time via -ldflags:
