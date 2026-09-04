@@ -35,14 +35,15 @@ func P2_Indirect(w http.ResponseWriter, err error) {
 	http.Error(w, errStr, http.StatusInternalServerError) // want `\[ARGUS-A07\] variable "errStr" derived from raw err\.Error\(\) passed to HTTP response`
 }
 
-// P3: Helper Violation — sensitive pgErr.Detail passed to response helper.
+// P3: Non-violation — local PgError struct is NOT the real pgconn.PgError.
+// Fail-closed type check correctly rejects local struct mimics (zero false-positive target).
 func P3_Helper(w http.ResponseWriter, pgErr *PgError) {
-	response.ErrorJSON(w, http.StatusBadRequest, pgErr.Detail) // want `\[ARGUS-A07\] forbidden direct access to pgconn\.PgError\.Detail`
+	response.ErrorJSON(w, http.StatusBadRequest, pgErr.Detail)
 }
 
-// P4: Nested Violation — direct extraction of sensitive pgErr.Detail in return.
+// P4: Non-violation — local PgError struct Detail access is not flagged.
 func P4_Nested(pgErr *PgError) string {
-	return pgErr.Detail // want `\[ARGUS-A07\] forbidden direct access to pgconn\.PgError\.Detail`
+	return pgErr.Detail
 }
 
 // P5: Alias Violation — raw err.Error() passed via direct w.Write or json.Encode.

@@ -38,12 +38,12 @@ func TestA07_PositiveCorpus(t *testing.T) {
 	expectedLines := map[int]string{
 		29: "P1_Obvious",
 		35: "P2_Indirect",
-		50: "P5_Alias_Write",
-		51: "P5_Alias_JsonEncode",
-		62: "P6_Unmasked_404",
-		67: "P7_Unmasked_400",
-		72: "P8_FormattedString",
-		81: "P9_UnmaskedFactory",
+		51: "P5_Alias_Write",
+		52: "P5_Alias_JsonEncode",
+		63: "P6_Unmasked_404",
+		68: "P7_Unmasked_400",
+		73: "P8_FormattedString",
+		82: "P9_UnmaskedFactory",
 	}
 
 	foundLines := make(map[int]bool)
