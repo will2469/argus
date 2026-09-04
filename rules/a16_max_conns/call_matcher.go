@@ -132,3 +132,42 @@ func findEnclosingFunc(file *ast.File, pos token.Pos) *ast.FuncDecl {
 	}
 	return nil
 }
+
+func findPackageLevelString(file *ast.File, name string) []string {
+	if file == nil {
+		return nil
+	}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			valSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, ident := range valSpec.Names {
+				if ident.Name == name && i < len(valSpec.Values) {
+					return resolveExprToStringsWithFlow(file, valSpec.Values[i], token.NoPos, 0)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func deduplicateStrings(items []string) []string {
+	if len(items) <= 1 {
+		return items
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, it := range items {
+		if !seen[it] {
+			seen[it] = true
+			out = append(out, it)
+		}
+	}
+	return out
+}

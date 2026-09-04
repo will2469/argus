@@ -1,4 +1,4 @@
-// Package a16_max_conns tracks DSN expressions and transitive aliases for pgxpool calls.
+// Package a16_max_conns tracks DSN expressions and reaching definitions for pgxpool calls.
 package a16_max_conns
 
 import (
@@ -21,7 +21,7 @@ func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
 		return nil
 	}
 
-	results := resolveExprToStringsWithFlow(file, dsnArg, call.Pos(), 0)
+	results := resolveExprToStringsWithFlow(file, dsnArg, dsnArg.Pos(), 0)
 	if len(results) == 0 {
 		if s, ok := callsite.ExtractQueryString(call); ok {
 			results = append(results, s)
@@ -73,8 +73,12 @@ func evalDSNBlockFlow(file *ast.File, block *ast.BlockStmt, targetPos token.Pos,
 	if block == nil || depth > 10 {
 		return inSet, false
 	}
+	return evalDSNStmtList(file, block.List, targetPos, varName, inSet, depth)
+}
+
+func evalDSNStmtList(file *ast.File, list []ast.Stmt, targetPos token.Pos, varName string, inSet []string, depth int) ([]string, bool) {
 	curr := inSet
-	for _, stmt := range block.List {
+	for _, stmt := range list {
 		var reached bool
 		curr, reached = evalDSNStmtFlow(file, stmt, targetPos, varName, curr, depth)
 		if reached {
@@ -88,29 +92,32 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 	if stmt == nil {
 		return inSet, false
 	}
-	if targetPos != token.NoPos && targetPos < stmt.Pos() {
+	if targetPos != token.NoPos && targetPos <= stmt.Pos() {
 		return inSet, true
 	}
 
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
-		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
+		if targetPos != token.NoPos && exprListContainsPos(s.Rhs, targetPos) {
 			return inSet, true
 		}
 		for i, lhs := range s.Lhs {
 			if id, ok := lhs.(*ast.Ident); ok && id.Name == varName && i < len(s.Rhs) {
-				inSet = resolveExprToStringsWithFlow(file, s.Rhs[i], stmt.Pos(), depth+1)
+				inSet = resolveExprToStringsWithFlow(file, s.Rhs[i], s.Pos(), depth+1)
 			}
+		}
+		if targetPos != token.NoPos && targetPos <= s.End() {
+			return inSet, true
 		}
 		return inSet, false
 
 	case *ast.DeclStmt:
-		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
-			return inSet, true
-		}
 		if gen, ok := s.Decl.(*ast.GenDecl); ok {
 			for _, spec := range gen.Specs {
 				if vs, ok := spec.(*ast.ValueSpec); ok {
+					if targetPos != token.NoPos && exprListContainsPos(vs.Values, targetPos) {
+						return inSet, true
+					}
 					for i, name := range vs.Names {
 						if name.Name == varName && i < len(vs.Values) {
 							inSet = resolveExprToStringsWithFlow(file, vs.Values[i], s.Pos(), depth+1)
@@ -119,13 +126,19 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 				}
 			}
 		}
-		return inSet, false
-
-	case *ast.ExprStmt:
-		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
+		if targetPos != token.NoPos && targetPos <= s.End() {
 			return inSet, true
 		}
 		return inSet, false
+
+	case *ast.ExprStmt:
+		if targetPos != token.NoPos && targetPos <= s.End() {
+			return inSet, true
+		}
+		return inSet, false
+
+	case *ast.BlockStmt:
+		return evalDSNBlockFlow(file, s, targetPos, varName, inSet, depth)
 
 	case *ast.IfStmt:
 		if s.Init != nil {
@@ -160,48 +173,73 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 		if elseTerm && !thenTerm {
 			return thenSet, false
 		}
-
 		return deduplicateStrings(append(append([]string{}, thenSet...), elseSet...)), false
+
+	case *ast.SwitchStmt:
+		return evalDSNSwitchFlow(file, s, targetPos, varName, inSet, depth)
 	}
 
 	return inSet, false
 }
 
-func findPackageLevelString(file *ast.File, name string) []string {
-	if file == nil {
-		return nil
-	}
-	for _, decl := range file.Decls {
-		gen, ok := decl.(*ast.GenDecl)
-		if !ok {
-			continue
+func evalDSNSwitchFlow(file *ast.File, s *ast.SwitchStmt, targetPos token.Pos, varName string, inSet []string, depth int) ([]string, bool) {
+	if s.Init != nil {
+		var reached bool
+		inSet, reached = evalDSNStmtFlow(file, s.Init, targetPos, varName, inSet, depth)
+		if reached {
+			return inSet, true
 		}
-		for _, spec := range gen.Specs {
-			valSpec, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			for i, ident := range valSpec.Names {
-				if ident.Name == name && i < len(valSpec.Values) {
-					return resolveExprToStringsWithFlow(file, valSpec.Values[i], token.NoPos, 0)
+	}
+	if s.Body == nil {
+		return inSet, false
+	}
+	if targetPos != token.NoPos && s.Body.Pos() <= targetPos && targetPos <= s.Body.End() {
+		for _, stmt := range s.Body.List {
+			if cc, ok := stmt.(*ast.CaseClause); ok {
+				if cc.Pos() <= targetPos && targetPos <= cc.End() {
+					return evalDSNStmtList(file, cc.Body, targetPos, varName, inSet, depth)
 				}
 			}
 		}
+		return inSet, true
 	}
-	return nil
-}
 
-func deduplicateStrings(items []string) []string {
-	if len(items) <= 1 {
-		return items
-	}
-	seen := make(map[string]bool)
-	var out []string
-	for _, it := range items {
-		if !seen[it] {
-			seen[it] = true
-			out = append(out, it)
+	var branchSets [][]string
+	hasDefault := false
+	allTerm := true
+	for _, stmt := range s.Body.List {
+		cc, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			continue
+		}
+		if cc.List == nil {
+			hasDefault = true
+		}
+		caseSet, _ := evalDSNStmtList(file, cc.Body, targetPos, varName, inSet, depth)
+		if !isCaseTerminating(cc.Body) {
+			allTerm = false
+			branchSets = append(branchSets, caseSet)
 		}
 	}
-	return out
+	if !hasDefault && !allTerm {
+		branchSets = append(branchSets, inSet)
+	}
+	var joined []string
+	for _, bs := range branchSets {
+		joined = append(joined, bs...)
+	}
+	return deduplicateStrings(joined), false
+}
+
+func isCaseTerminating(body []ast.Stmt) bool {
+	return len(body) > 0 && isTerminating(body[len(body)-1])
+}
+
+func exprListContainsPos(list []ast.Expr, pos token.Pos) bool {
+	for _, e := range list {
+		if e != nil && e.Pos() <= pos && pos <= e.End() {
+			return true
+		}
+	}
+	return false
 }
