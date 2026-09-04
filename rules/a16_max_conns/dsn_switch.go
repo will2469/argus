@@ -6,10 +6,10 @@ import (
 	"go/token"
 )
 
-func evalDSNSwitchFlow(file *ast.File, s *ast.SwitchStmt, targetPos token.Pos, varName string, inSet []string, depth int) ([]string, bool) {
+func evalDSNSwitchFlow(file *ast.File, s *ast.SwitchStmt, targetPos token.Pos, varName string, targetObj *ast.Object, inSet []string, depth int) ([]string, bool) {
 	if s.Init != nil {
 		var reached bool
-		inSet, reached = evalDSNStmtFlow(file, s.Init, targetPos, varName, inSet, depth)
+		inSet, reached = evalDSNStmtFlow(file, s.Init, targetPos, varName, targetObj, inSet, depth)
 		if reached {
 			return inSet, true
 		}
@@ -18,21 +18,27 @@ func evalDSNSwitchFlow(file *ast.File, s *ast.SwitchStmt, targetPos token.Pos, v
 		return inSet, false
 	}
 	if targetPos != token.NoPos && s.Body.Pos() <= targetPos && targetPos <= s.Body.End() {
-		fallthroughIn := inSet
+		hasFallthrough := false
+		fallthroughSet := []string(nil)
 		for _, stmt := range s.Body.List {
 			cc, ok := stmt.(*ast.CaseClause)
 			if !ok {
 				continue
 			}
-			caseIn := deduplicateStrings(append(append([]string{}, inSet...), fallthroughIn...))
-			if cc.Pos() <= targetPos && targetPos <= cc.End() {
-				return evalDSNStmtList(file, cc.Body, targetPos, varName, caseIn, depth)
+			caseIn := inSet
+			if hasFallthrough {
+				caseIn = deduplicateStrings(append(append([]string{}, inSet...), fallthroughSet...))
 			}
-			outSet, _ := evalDSNStmtList(file, cc.Body, targetPos, varName, caseIn, depth)
+			if cc.Pos() <= targetPos && targetPos <= cc.End() {
+				return evalDSNStmtList(file, cc.Body, targetPos, varName, targetObj, caseIn, depth)
+			}
+			outSet, _ := evalDSNStmtList(file, cc.Body, targetPos, varName, targetObj, caseIn, depth)
 			if caseEndsWithFallthrough(cc.Body) {
-				fallthroughIn = outSet
+				hasFallthrough = true
+				fallthroughSet = outSet
 			} else {
-				fallthroughIn = nil
+				hasFallthrough = false
+				fallthroughSet = nil
 			}
 		}
 		return inSet, true
@@ -41,7 +47,8 @@ func evalDSNSwitchFlow(file *ast.File, s *ast.SwitchStmt, targetPos token.Pos, v
 	var branchSets [][]string
 	hasDefault := false
 	allTerm := true
-	fallthroughIn := []string(nil)
+	hasFallthrough := false
+	fallthroughSet := []string(nil)
 
 	for _, stmt := range s.Body.List {
 		cc, ok := stmt.(*ast.CaseClause)
@@ -52,19 +59,17 @@ func evalDSNSwitchFlow(file *ast.File, s *ast.SwitchStmt, targetPos token.Pos, v
 			hasDefault = true
 		}
 		caseIn := inSet
-		if len(fallthroughIn) > 0 {
-			caseIn = deduplicateStrings(append(append([]string{}, inSet...), fallthroughIn...))
+		if hasFallthrough {
+			caseIn = deduplicateStrings(append(append([]string{}, inSet...), fallthroughSet...))
 		}
-		if stmtListShadowsVar(cc.Body, varName) {
-			fallthroughIn = nil
-			continue
-		}
-		caseSet, _ := evalDSNStmtList(file, cc.Body, targetPos, varName, caseIn, depth)
+		caseSet, _ := evalDSNStmtList(file, cc.Body, targetPos, varName, targetObj, caseIn, depth)
 		if caseEndsWithFallthrough(cc.Body) {
-			fallthroughIn = caseSet
+			hasFallthrough = true
+			fallthroughSet = caseSet
 			continue
 		}
-		fallthroughIn = nil
+		hasFallthrough = false
+		fallthroughSet = nil
 		if !isCaseTerminating(cc.Body) {
 			allTerm = false
 			branchSets = append(branchSets, caseSet)

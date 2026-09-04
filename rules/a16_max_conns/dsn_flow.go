@@ -21,7 +21,12 @@ func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
 		return nil
 	}
 
-	results := resolveExprToStringsWithFlow(file, dsnArg, dsnArg.Pos(), 0)
+	var targetObj *ast.Object
+	if id, ok := dsnArg.(*ast.Ident); ok {
+		targetObj = id.Obj
+	}
+
+	results := resolveExprToStringsWithFlow(file, dsnArg, dsnArg.Pos(), targetObj, 0)
 	if len(results) == 0 {
 		if s, ok := callsite.ExtractQueryString(call); ok {
 			results = append(results, s)
@@ -31,7 +36,7 @@ func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
 	return deduplicateStrings(results)
 }
 
-func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, depth int) []string {
+func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, targetObj *ast.Object, depth int) []string {
 	if expr == nil || depth > 10 {
 		return nil
 	}
@@ -43,8 +48,8 @@ func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, 
 		}
 	case *ast.BinaryExpr:
 		if e.Op == token.ADD {
-			lefts := resolveExprToStringsWithFlow(file, e.X, pos, depth+1)
-			rights := resolveExprToStringsWithFlow(file, e.Y, pos, depth+1)
+			lefts := resolveExprToStringsWithFlow(file, e.X, pos, targetObj, depth+1)
+			rights := resolveExprToStringsWithFlow(file, e.Y, pos, targetObj, depth+1)
 			var combined []string
 			for _, l := range lefts {
 				for _, r := range rights {
@@ -54,33 +59,37 @@ func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, 
 			return combined
 		}
 	case *ast.Ident:
+		identObj := e.Obj
+		if identObj == nil {
+			identObj = targetObj
+		}
 		enclosing := findEnclosingFunc(file, pos)
 		if enclosing != nil && enclosing.Body != nil {
-			reached, _ := evalDSNBlockFlow(file, enclosing.Body, pos, e.Name, nil, depth+1)
+			reached, _ := evalDSNBlockFlow(file, enclosing.Body, pos, e.Name, identObj, nil, depth+1)
 			if len(reached) > 0 {
 				return reached
 			}
 		}
 		return findPackageLevelString(file, e.Name)
 	case *ast.ParenExpr:
-		return resolveExprToStringsWithFlow(file, e.X, pos, depth+1)
+		return resolveExprToStringsWithFlow(file, e.X, pos, targetObj, depth+1)
 	}
 
 	return nil
 }
 
-func evalDSNBlockFlow(file *ast.File, block *ast.BlockStmt, targetPos token.Pos, varName string, inSet []string, depth int) ([]string, bool) {
+func evalDSNBlockFlow(file *ast.File, block *ast.BlockStmt, targetPos token.Pos, varName string, targetObj *ast.Object, inSet []string, depth int) ([]string, bool) {
 	if block == nil || depth > 10 {
 		return inSet, false
 	}
-	return evalDSNStmtList(file, block.List, targetPos, varName, inSet, depth)
+	return evalDSNStmtList(file, block.List, targetPos, varName, targetObj, inSet, depth)
 }
 
-func evalDSNStmtList(file *ast.File, list []ast.Stmt, targetPos token.Pos, varName string, inSet []string, depth int) ([]string, bool) {
+func evalDSNStmtList(file *ast.File, list []ast.Stmt, targetPos token.Pos, varName string, targetObj *ast.Object, inSet []string, depth int) ([]string, bool) {
 	curr := inSet
 	for _, stmt := range list {
 		var reached bool
-		curr, reached = evalDSNStmtFlow(file, stmt, targetPos, varName, curr, depth)
+		curr, reached = evalDSNStmtFlow(file, stmt, targetPos, varName, targetObj, curr, depth)
 		if reached {
 			return curr, true
 		}
@@ -88,7 +97,7 @@ func evalDSNStmtList(file *ast.File, list []ast.Stmt, targetPos token.Pos, varNa
 	return curr, false
 }
 
-func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName string, inSet []string, depth int) ([]string, bool) {
+func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName string, targetObj *ast.Object, inSet []string, depth int) ([]string, bool) {
 	if stmt == nil {
 		return inSet, false
 	}
@@ -102,8 +111,8 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 			return inSet, true
 		}
 		for i, lhs := range s.Lhs {
-			if id, ok := lhs.(*ast.Ident); ok && id.Name == varName && i < len(s.Rhs) {
-				inSet = resolveExprToStringsWithFlow(file, s.Rhs[i], s.Pos(), depth+1)
+			if id, ok := lhs.(*ast.Ident); ok && matchesVar(id, varName, targetObj) && i < len(s.Rhs) {
+				inSet = resolveExprToStringsWithFlow(file, s.Rhs[i], s.Pos(), targetObj, depth+1)
 			}
 		}
 		if targetPos != token.NoPos && targetPos <= s.End() {
@@ -119,8 +128,8 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 						return inSet, true
 					}
 					for i, name := range vs.Names {
-						if name.Name == varName && i < len(vs.Values) {
-							inSet = resolveExprToStringsWithFlow(file, vs.Values[i], s.Pos(), depth+1)
+						if matchesVar(name, varName, targetObj) && i < len(vs.Values) {
+							inSet = resolveExprToStringsWithFlow(file, vs.Values[i], s.Pos(), targetObj, depth+1)
 						}
 					}
 				}
@@ -138,51 +147,31 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 		return inSet, false
 
 	case *ast.BlockStmt:
-		if targetPos != token.NoPos && s.Pos() <= targetPos && targetPos <= s.End() {
-			return evalDSNBlockFlow(file, s, targetPos, varName, inSet, depth)
-		}
-		if blockShadowsVar(s, varName) {
-			return inSet, false
-		}
-		return evalDSNBlockFlow(file, s, targetPos, varName, inSet, depth)
+		return evalDSNBlockFlow(file, s, targetPos, varName, targetObj, inSet, depth)
 
 	case *ast.IfStmt:
 		if s.Init != nil {
 			var reached bool
-			inSet, reached = evalDSNStmtFlow(file, s.Init, targetPos, varName, inSet, depth)
+			inSet, reached = evalDSNStmtFlow(file, s.Init, targetPos, varName, targetObj, inSet, depth)
 			if reached {
 				return inSet, true
 			}
 		}
 		if targetPos != token.NoPos && s.Body != nil && s.Body.Pos() <= targetPos && targetPos <= s.Body.End() {
-			return evalDSNBlockFlow(file, s.Body, targetPos, varName, inSet, depth)
+			return evalDSNBlockFlow(file, s.Body, targetPos, varName, targetObj, inSet, depth)
 		}
 		if targetPos != token.NoPos && s.Else != nil && s.Else.Pos() <= targetPos && targetPos <= s.Else.End() {
-			return evalDSNStmtFlow(file, s.Else, targetPos, varName, inSet, depth)
+			return evalDSNStmtFlow(file, s.Else, targetPos, varName, targetObj, inSet, depth)
 		}
 
-		var thenSet []string
-		thenTerm := false
-		if s.Body != nil {
-			if blockShadowsVar(s.Body, varName) {
-				thenSet = inSet
-			} else {
-				thenSet, _ = evalDSNBlockFlow(file, s.Body, targetPos, varName, inSet, depth)
-				thenTerm = isTerminating(s.Body)
-			}
-		} else {
-			thenSet = inSet
-		}
+		thenSet, _ := evalDSNBlockFlow(file, s.Body, targetPos, varName, targetObj, inSet, depth)
+		thenTerm := isTerminating(s.Body)
 
 		var elseSet []string
 		elseTerm := false
 		if s.Else != nil {
-			if stmtShadowsVar(s.Else, varName) {
-				elseSet = inSet
-			} else {
-				elseSet, _ = evalDSNStmtFlow(file, s.Else, targetPos, varName, inSet, depth)
-				elseTerm = isTerminating(s.Else)
-			}
+			elseSet, _ = evalDSNStmtFlow(file, s.Else, targetPos, varName, targetObj, inSet, depth)
+			elseTerm = isTerminating(s.Else)
 		} else {
 			elseSet = inSet
 		}
@@ -196,7 +185,7 @@ func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName
 		return deduplicateStrings(append(append([]string{}, thenSet...), elseSet...)), false
 
 	case *ast.SwitchStmt:
-		return evalDSNSwitchFlow(file, s, targetPos, varName, inSet, depth)
+		return evalDSNSwitchFlow(file, s, targetPos, varName, targetObj, inSet, depth)
 	}
 
 	return inSet, false

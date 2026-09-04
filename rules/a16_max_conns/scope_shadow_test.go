@@ -166,3 +166,61 @@ func Run(ctx context.Context, mode int) {
 		t.Fatalf("expected 0 issues when all-terminating switch preserves inSet, got %d", len(issues))
 	}
 }
+
+func TestDSNReachingDefinitions_NestedShadowDoesNotDropOuterMutation(t *testing.T) {
+	src := `package main
+import "context"
+type pgxpoolPkg struct{}
+var pgxpool pgxpoolPkg
+func (pgxpoolPkg) New(ctx context.Context, dsn string) {}
+func use(s string) {}
+func Run(ctx context.Context, prod, debug bool) {
+	dsn := "postgres://good/db?pool_max_conns=20"
+	if prod {
+		dsn = "postgres://bad/db"
+		if debug {
+			dsn := "postgres://something-else"
+			use(dsn)
+		}
+	}
+	pgxpool.New(ctx, dsn)
+}`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", src, 0)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	issues := InspectFile(nil, fset, file, nil, 100)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue when outer mutation reaches call despite inner nested shadow, got %d", len(issues))
+	}
+}
+
+func TestDSNReachingDefinitions_FallthroughExplicitBoolTracking(t *testing.T) {
+	src := `package main
+import "context"
+type pgxpoolPkg struct{}
+var pgxpool pgxpoolPkg
+func (pgxpoolPkg) New(ctx context.Context, dsn string) {}
+func getDynamicDSN() string { return "" }
+func Run(ctx context.Context, mode int) {
+	dsn := "postgres://good/db?pool_max_conns=20"
+	switch mode {
+	case 1:
+		dsn = getDynamicDSN()
+		fallthrough
+	case 2:
+		dsn = "postgres://bad/db"
+	}
+	pgxpool.New(ctx, dsn)
+}`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", src, 0)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	issues := InspectFile(nil, fset, file, nil, 100)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue when fallthrough path with dynamic input leads to bad DSN, got %d", len(issues))
+	}
+}

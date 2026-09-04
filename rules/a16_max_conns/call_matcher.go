@@ -149,7 +149,7 @@ func findPackageLevelString(file *ast.File, name string) []string {
 			}
 			for i, ident := range valSpec.Names {
 				if ident.Name == name && i < len(valSpec.Values) {
-					return resolveExprToStringsWithFlow(file, valSpec.Values[i], token.NoPos, 0)
+					return resolveExprToStringsWithFlow(file, valSpec.Values[i], token.NoPos, ident.Obj, 0)
 				}
 			}
 		}
@@ -180,49 +180,12 @@ func caseEndsWithFallthrough(body []ast.Stmt) bool {
 	return ok && bs.Tok == token.FALLTHROUGH
 }
 
-func blockShadowsVar(block *ast.BlockStmt, varName string) bool {
-	if block == nil {
+func matchesVar(id *ast.Ident, varName string, targetObj *ast.Object) bool {
+	if id == nil {
 		return false
 	}
-	return stmtListShadowsVar(block.List, varName)
-}
-
-func stmtListShadowsVar(list []ast.Stmt, varName string) bool {
-	for _, stmt := range list {
-		if stmtShadowsVar(stmt, varName) {
-			return true
-		}
+	if targetObj != nil && id.Obj != nil {
+		return id.Obj == targetObj
 	}
-	return false
-}
-
-func stmtShadowsVar(stmt ast.Stmt, varName string) bool {
-	if stmt == nil {
-		return false
-	}
-	switch s := stmt.(type) {
-	case *ast.BlockStmt:
-		return blockShadowsVar(s, varName)
-	case *ast.AssignStmt:
-		if s.Tok == token.DEFINE {
-			for _, lhs := range s.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && id.Name == varName {
-					return true
-				}
-			}
-		}
-	case *ast.DeclStmt:
-		if gen, ok := s.Decl.(*ast.GenDecl); ok {
-			for _, spec := range gen.Specs {
-				if vs, ok := spec.(*ast.ValueSpec); ok {
-					for _, id := range vs.Names {
-						if id.Name == varName {
-							return true
-						}
-					}
-				}
-			}
-		}
-	}
-	return false
+	return id.Name == varName
 }
