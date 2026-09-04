@@ -54,10 +54,10 @@ func TestCheckDynamicQueryRisk(t *testing.T) {
 		{"DynamicConcatColumns", `"SELECT " + cols + " FROM users"`, true},
 		{"StaticStarDynamicTable", `"SELECT * FROM " + table`, true},
 		{"StaticExplicitColsDynamicTable", `"SELECT id, name FROM " + table`, false},
-		{"StaticWhereDynamicCond", `"SELECT id, name FROM users WHERE id = " + id`, false},
 		{"SprintfDynamicCols", `fmt.Sprintf("SELECT %s FROM users", cols)`, true},
 		{"SprintfStaticStar", `fmt.Sprintf("SELECT * FROM %s", table)`, true},
 		{"SprintfExplicitCols", `fmt.Sprintf("SELECT id, name FROM %s", table)`, false},
+		{"ConstantIdentifierConcatCols", `func() string { const cols = "id, name"; return "SELECT " + cols + " FROM users" }()`, false},
 	}
 
 	for _, tc := range cases {

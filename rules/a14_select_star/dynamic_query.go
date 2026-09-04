@@ -36,10 +36,10 @@ func CheckDynamicQueryRisk(pass *analysis.Pass, file *ast.File, expr ast.Expr, p
 	}
 
 	// 2. Direct inspection of expression
-	return inspectExprForDynamicRisk(expr)
+	return inspectExprForDynamicRisk(pass, file, expr, pos)
 }
 
-func inspectExprForDynamicRisk(expr ast.Expr) (bool, string) {
+func inspectExprForDynamicRisk(pass *analysis.Pass, file *ast.File, expr ast.Expr, pos token.Pos) (bool, string) {
 	if expr == nil {
 		return false, ""
 	}
@@ -59,7 +59,7 @@ func inspectExprForDynamicRisk(expr ast.Expr) (bool, string) {
 
 	// Check for binary expression string concatenation
 	if bin, ok := expr.(*ast.BinaryExpr); ok && bin.Op == token.ADD {
-		parts := flattenConcatParts(bin)
+		parts := flattenConcatParts(pass, file, bin, pos)
 		return analyzeConcatParts(parts)
 	}
 
@@ -71,7 +71,7 @@ type concatPart struct {
 	val   string
 }
 
-func flattenConcatParts(expr ast.Expr) []concatPart {
+func flattenConcatParts(pass *analysis.Pass, file *ast.File, expr ast.Expr, pos token.Pos) []concatPart {
 	var parts []concatPart
 	var walk func(e ast.Expr)
 	walk = func(e ast.Expr) {
@@ -93,6 +93,12 @@ func flattenConcatParts(expr ast.Expr) []concatPart {
 		case *ast.ParenExpr:
 			walk(node.X)
 			return
+		case *ast.Ident:
+			resolved := resolveExprStrings(pass, file, node, pos, 0)
+			if len(resolved) == 1 {
+				parts = append(parts, concatPart{isLit: true, val: resolved[0]})
+				return
+			}
 		}
 		parts = append(parts, concatPart{isLit: false})
 	}
