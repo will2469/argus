@@ -184,7 +184,7 @@ func matchesVar(id *ast.Ident, varName string, targetObj *ast.Object) bool {
 	if id == nil {
 		return false
 	}
-	if targetObj != nil && id.Obj != nil {
+	if targetObj != nil {
 		return id.Obj == targetObj
 	}
 	return id.Name == varName

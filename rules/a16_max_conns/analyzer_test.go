@@ -1,6 +1,7 @@
 package a16_max_conns
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"path/filepath"
@@ -121,6 +122,62 @@ func Run() {
 	issues := InspectFile(nil, fset, file, nil, 100)
 	if len(issues) != 0 {
 		t.Errorf("expected 0 issues for unrelated WorkerPool variable named pgxpool, got %d", len(issues))
+	}
+}
+
+func TestMatchesVar_StrictTargetObj(t *testing.T) {
+	objA := &ast.Object{Name: "dsn"}
+	idWithObj := &ast.Ident{Name: "dsn", Obj: objA}
+	idWithoutObj := &ast.Ident{Name: "dsn", Obj: nil}
+	idDifferentObj := &ast.Ident{Name: "dsn", Obj: &ast.Object{Name: "dsn"}}
+
+	if !matchesVar(idWithObj, "dsn", objA) {
+		t.Errorf("expected matching object to return true")
+	}
+	if matchesVar(idWithoutObj, "dsn", objA) {
+		t.Errorf("expected id without obj to NOT match when targetObj is set")
+	}
+	if matchesVar(idDifferentObj, "dsn", objA) {
+		t.Errorf("expected different obj to NOT match when targetObj is set")
+	}
+	if !matchesVar(idWithoutObj, "dsn", nil) {
+		t.Errorf("expected name-based fallback when targetObj is nil")
+	}
+}
+
+func TestDSNReachingDefinitions_DeepAliasChain(t *testing.T) {
+	src := `package main
+import "context"
+type pgxpoolPkg struct{}
+var pgxpool pgxpoolPkg
+func (pgxpoolPkg) New(ctx context.Context, dsn string) {}
+func Run(ctx context.Context) {
+	a0 := "postgres://bad/db"
+	a1 := a0
+	a2 := a1
+	a3 := a2
+	a4 := a3
+	a5 := a4
+	a6 := a5
+	a7 := a6
+	a8 := a7
+	a9 := a8
+	a10 := a9
+	a11 := a10
+	a12 := a11
+	a13 := a12
+	a14 := a13
+	a15 := a14
+	pgxpool.New(ctx, a15)
+}`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", src, 0)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	issues := InspectFile(nil, fset, file, nil, 100)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue when 15-hop alias chain propagates unsafe DSN, got %d", len(issues))
 	}
 }
 

@@ -36,8 +36,10 @@ func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
 	return deduplicateStrings(results)
 }
 
+const maxFlowDepth = 64
+
 func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, targetObj *ast.Object, depth int) []string {
-	if expr == nil || depth > 10 {
+	if expr == nil || depth > maxFlowDepth {
 		return nil
 	}
 
@@ -79,7 +81,7 @@ func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, 
 }
 
 func evalDSNBlockFlow(file *ast.File, block *ast.BlockStmt, targetPos token.Pos, varName string, targetObj *ast.Object, inSet []string, depth int) ([]string, bool) {
-	if block == nil || depth > 10 {
+	if block == nil || depth > maxFlowDepth {
 		return inSet, false
 	}
 	return evalDSNStmtList(file, block.List, targetPos, varName, targetObj, inSet, depth)
