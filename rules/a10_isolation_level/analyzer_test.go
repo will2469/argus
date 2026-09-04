@@ -159,3 +159,89 @@ func testQueryShadowViolated(ctx context.Context, pool Pool) {
 		}
 	}
 }
+
+func TestSemanticHelperAndPoolRejection(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+
+import "context"
+
+type Tx interface {
+	Exec(ctx context.Context, sql string, args ...any) error
+}
+
+type Pool interface {
+	Begin(ctx context.Context) (Tx, error)
+}
+
+type OrderService struct{}
+func (OrderService) WithTx(a, b any) {}
+
+type Calculator struct{}
+func (Calculator) BeginFunc(a, b any) {}
+
+type WorkerPool struct {
+	workers []int
+}
+func (WorkerPool) Begin() {}
+
+type DBHelper struct{}
+func (DBHelper) WithTx(ctx context.Context, pool Pool, fn func(Tx) error) error {
+	return nil
+}
+
+func testOrderServiceWithTx(svc OrderService) {
+	svc.WithTx("balances", func() {
+		_ = "UPDATE balances SET amount = 1"
+	})
+}
+
+func testCalculatorBeginFunc(calc Calculator) {
+	calc.BeginFunc("balances", "UPDATE balances SET amount = 1")
+}
+
+func testWorkerPoolBegin(wp WorkerPool) {
+	wp.Begin()
+}
+
+func testGenuineHelperViolated(ctx context.Context, h DBHelper, p Pool) {
+	h.WithTx(ctx, p, func(tx Tx) error {
+		return tx.Exec(ctx, "UPDATE balances SET amount = 1")
+	})
+}
+`
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+
+		var issues []Issue
+		inspectFunctionIsolation(nil, fset, fn, file, nil, nil, &issues)
+
+		switch fn.Name.Name {
+		case "testOrderServiceWithTx":
+			if len(issues) != 0 {
+				t.Fatalf("expected 0 issues for OrderService.WithTx, got %d: %v", len(issues), issues)
+			}
+		case "testCalculatorBeginFunc":
+			if len(issues) != 0 {
+				t.Fatalf("expected 0 issues for Calculator.BeginFunc, got %d: %v", len(issues), issues)
+			}
+		case "testWorkerPoolBegin":
+			if len(issues) != 0 {
+				t.Fatalf("expected 0 issues for WorkerPool.Begin, got %d: %v", len(issues), issues)
+			}
+		case "testGenuineHelperViolated":
+			if len(issues) != 1 {
+				t.Fatalf("expected 1 issue for genuine DBHelper.WithTx, got %d: %v", len(issues), issues)
+			}
+		}
+	}
+}
+

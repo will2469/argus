@@ -9,7 +9,6 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/directives"
 )
@@ -76,11 +75,7 @@ func inspectFunctionIsolation(pass *analysis.Pass, fset *token.FileSet, fn *ast.
 			return true
 		}
 
-		fnName := callsite.GetCallMethodName(call.Fun)
-		if fnName != "WithTx" && fnName != "BeginFunc" && fnName != "ExecuteTx" {
-			return true
-		}
-		if !isDBReceiver(pass, call.Fun, fn, file) && !isWithTxHelperCall(call) {
+		if !isProvenTxHelperCall(pass, call, fn, file) {
 			return true
 		}
 
@@ -95,8 +90,13 @@ func inspectFunctionIsolation(pass *analysis.Pass, fset *token.FileSet, fn *ast.
 		}
 
 		var hasIso bool
-		if len(call.Args) >= 4 {
-			hasIso = HasStrongIsolation(pass, call.Args[3], fn.Body)
+		for _, arg := range call.Args {
+			if _, isLit := arg.(*ast.FuncLit); !isLit {
+				if HasStrongIsolation(pass, arg, fn.Body) {
+					hasIso = true
+					break
+				}
+			}
 		}
 		if hasIso {
 			return true
@@ -122,14 +122,6 @@ func inspectFunctionIsolation(pass *analysis.Pass, fset *token.FileSet, fn *ast.
 
 	// 2. Inspect explicit transaction blocks (pool.Begin / pool.BeginTx)
 	inspectExplicitTxIsolation(pass, fset, fn, file, customTables, dm, issues)
-}
-
-func isWithTxHelperCall(call *ast.CallExpr) bool {
-	if call == nil {
-		return false
-	}
-	name := callsite.GetCallMethodName(call.Fun)
-	return (name == "WithTx" || name == "BeginFunc" || name == "ExecuteTx") && len(call.Args) >= 2
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {

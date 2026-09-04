@@ -98,6 +98,8 @@ func TestA10_AdversarialCorpus(t *testing.T) {
 		{"A5_NestedFunction", 90, true},
 		{"A6_Generic", 109, true},
 		{"A7_HelperNoIso", 121, true},
+		{"A8_NonDBWithTxHelper", 133, false},
+		{"A9_WorkerPoolBegin", 149, false},
 	}
 
 	for _, a := range assertions {

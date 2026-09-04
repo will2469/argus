@@ -19,7 +19,6 @@ func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, fn *as
 
 	var inTx bool
 	var txID *ast.Ident
-	var txVarName string
 	var beginPos ast.Node
 	var hasStrongIso bool
 	var writtenCritical []TableRef
@@ -40,7 +39,6 @@ func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, fn *as
 							if id, ok := assign.Lhs[targetIdx].(*ast.Ident); ok {
 								inTx = true
 								txID = id
-								txVarName = id.Name
 								beginPos = call
 								writtenCritical = nil
 								lockedTables = nil
@@ -71,7 +69,7 @@ func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, fn *as
 				if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
 					return true
 				}
-				if !isProvenTxReceiver(pass, sel.X, txID) {
+				if !isProvenTxReceiver(pass, sel.X, txID, fn.Body) {
 					return true
 				}
 
@@ -88,7 +86,7 @@ func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, fn *as
 				return true
 			})
 
-			if isTxEndStmt(stmt, txVarName) {
+			if isTxEndStmt(pass, stmt, txID, fn.Body) {
 				if len(writtenCritical) > 0 && !hasStrongIso {
 					for _, target := range writtenCritical {
 						if !isTableProtected(target, lockedTables, advisoryCalls) {
@@ -104,7 +102,6 @@ func inspectExplicitTxIsolation(pass *analysis.Pass, fset *token.FileSet, fn *as
 				}
 				inTx = false
 				txID = nil
-				txVarName = ""
 				beginPos = nil
 			}
 		}
@@ -133,7 +130,7 @@ func analyzeClosureQueries(pass *analysis.Pass, closure *ast.FuncLit, customTabl
 		if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
 			return true
 		}
-		if !isProvenTxReceiver(pass, sel.X, txParam) {
+		if !isProvenTxReceiver(pass, sel.X, txParam, closure.Body) {
 			return true
 		}
 
@@ -182,7 +179,7 @@ func extractTxQueryStrings(call *ast.CallExpr, body *ast.BlockStmt, pass *analys
 					return true
 				}
 				for i, lhs := range assign.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && isSameObject(pass, id, e) && i < len(assign.Rhs) {
+					if id, ok := lhs.(*ast.Ident); ok && isSameObject(pass, id, e, body) && i < len(assign.Rhs) {
 						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
 							latestVal = strings.Trim(lit.Value, "`\"")
 							found = true

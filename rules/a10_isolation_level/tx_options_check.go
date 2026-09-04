@@ -26,7 +26,7 @@ func HasStrongIsolation(pass *analysis.Pass, expr ast.Expr, body *ast.BlockStmt)
 				return true
 			}
 			for i, lhs := range assign.Lhs {
-				if lid, ok := lhs.(*ast.Ident); ok && isSameObject(pass, lid, id) && i < len(assign.Rhs) {
+				if lid, ok := lhs.(*ast.Ident); ok && isSameObject(pass, lid, id, body) && i < len(assign.Rhs) {
 					if c, ok := assign.Rhs[i].(*ast.CompositeLit); ok {
 						if checkTxOptionsComposite(c) {
 							found = true
@@ -73,7 +73,10 @@ func extractClosureArg(call *ast.CallExpr) *ast.FuncLit {
 	return nil
 }
 
-func isTxEndStmt(stmt ast.Stmt, txVarName string) bool {
+func isTxEndStmt(pass *analysis.Pass, stmt ast.Stmt, txID *ast.Ident, body *ast.BlockStmt) bool {
+	if stmt == nil || txID == nil {
+		return false
+	}
 	var isEnd bool
 	ast.Inspect(stmt, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -85,7 +88,7 @@ func isTxEndStmt(stmt ast.Stmt, txVarName string) bool {
 			return true
 		}
 		if (sel.Sel.Name == "Commit" || sel.Sel.Name == "Rollback") && sel.X != nil {
-			if id, ok := sel.X.(*ast.Ident); ok && id.Name == txVarName {
+			if id, ok := sel.X.(*ast.Ident); ok && isSameObject(pass, id, txID, body) {
 				isEnd = true
 				return false
 			}

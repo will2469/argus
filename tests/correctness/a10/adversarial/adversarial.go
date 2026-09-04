@@ -122,3 +122,31 @@ func A7_HelperNoIso(ctx context.Context, pool Pool, h Helper) error {
 		return tx.Exec(ctx, "UPDATE balances SET amount = 0 WHERE id = 1")
 	})
 }
+
+// A8: Non-DB WithTx Helper — orderService.WithTx is a non-DB helper and must NOT trigger false positive.
+type OrderService struct{}
+
+func (OrderService) WithTx(ctx context.Context, fn func() error) error {
+	return fn()
+}
+
+func A8_NonDBWithTxHelper_MustBeSafe(ctx context.Context, svc OrderService) error {
+	return svc.WithTx(ctx, func() error {
+		_ = "UPDATE balances SET amount = 0 WHERE id = 1"
+		return nil
+	})
+}
+
+// A9: Non-DB WorkerPool — workerPool.Begin is not a database transaction and must NOT trigger false positive.
+type WorkerPool struct {
+	workers []int
+}
+
+func (WorkerPool) Begin() error {
+	return nil
+}
+
+func A9_WorkerPoolBegin_MustBeSafe(wp WorkerPool) error {
+	return wp.Begin()
+}
+
