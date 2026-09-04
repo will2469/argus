@@ -117,7 +117,7 @@ func extractSQLQueryString(call *ast.CallExpr, body *ast.BlockStmt, pass *analys
 					return true
 				}
 				for i, lhs := range assign.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && isSameObject(pass, id, e) && i < len(assign.Rhs) {
+					if id, ok := lhs.(*ast.Ident); ok && isSameObject(pass, id, e, body) && i < len(assign.Rhs) {
 						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
 							query = strings.Trim(lit.Value, "`\"")
 							return false

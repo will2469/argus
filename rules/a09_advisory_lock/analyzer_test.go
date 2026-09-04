@@ -106,6 +106,24 @@ func testShadowSafe() {
 	}()
 	_ = lockName
 }
+
+func testBareBlockShadowViolated() {
+	lockName := "orders:user"
+	{
+		lockName := "global"
+		argus.WithAdvisoryLock(lockName, func() {})
+	}
+	_ = lockName
+}
+
+func testBareBlockShadowSafe() {
+	lockName := "global"
+	{
+		lockName := "orders:user"
+		argus.WithAdvisoryLock(lockName, func() {})
+	}
+	_ = lockName
+}
 `
 	file, err := parser.ParseFile(fset, "test.go", src, 0)
 	if err != nil {
@@ -131,13 +149,13 @@ func testShadowSafe() {
 		})
 
 		switch fn.Name.Name {
-		case "testShadowViolated":
+		case "testShadowViolated", "testBareBlockShadowViolated":
 			if len(issues) != 1 {
-				t.Fatalf("expected 1 issue for inner shadowed unnamespaced lockName, got %d: %v", len(issues), issues)
+				t.Fatalf("%s: expected 1 issue for inner shadowed unnamespaced lockName, got %d: %v", fn.Name.Name, len(issues), issues)
 			}
-		case "testShadowSafe":
+		case "testShadowSafe", "testBareBlockShadowSafe":
 			if len(issues) != 0 {
-				t.Fatalf("expected 0 issues for inner shadowed valid lockName, got %d: %v", len(issues), issues)
+				t.Fatalf("%s: expected 0 issues for inner shadowed valid lockName, got %d: %v", fn.Name.Name, len(issues), issues)
 			}
 		}
 	}

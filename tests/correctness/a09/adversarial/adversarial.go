@@ -76,3 +76,41 @@ func A7_HelperEmptyName(ctx context.Context, tx any, h Helper) error {
 		return nil
 	})
 }
+
+// A8: Shadowed Block — inner shadowed variable has unnamespaced lock name.
+func A8_ShadowedBlockUnnamespaced(ctx context.Context, tx any, h Helper) error {
+	lockName := "orders:user"
+	var err error
+	{
+		lockName := "global"
+		err = h.WithAdvisoryLock(ctx, tx, lockName, false, func() error {
+			return nil
+		})
+	}
+	_ = lockName
+	return err
+}
+
+// A9: Dot Delimiter Rejected — "foo.bar" is not a valid structured namespace (must use ':' or '/').
+func A9_DotDelimiterRejected(ctx context.Context, tx any, h Helper) error {
+	lockName := "foo.bar"
+	return h.WithAdvisoryLock(ctx, tx, lockName, false, func() error {
+		return nil
+	})
+}
+
+// A10: Shadowed Block Safe — outer variable is unnamespaced, but inner is valid namespaced lock.
+func A10_ShadowedBlockSafe(ctx context.Context, tx any, h Helper) error {
+	lockName := "global"
+	var err error
+	{
+		lockName := "orders:user"
+		err = h.WithAdvisoryLock(ctx, tx, lockName, false, func() error {
+			return nil
+		})
+	}
+	_ = lockName
+	return err
+}
+
+

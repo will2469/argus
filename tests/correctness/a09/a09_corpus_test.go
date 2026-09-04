@@ -98,6 +98,9 @@ func TestA09_AdversarialCorpus(t *testing.T) {
 		{"A5_NestedFunction", 57, true},
 		{"A6_Generic", 69, true},
 		{"A7_HelperEmptyName", 75, true},
+		{"A8_ShadowedBlockUnnamespaced", 86, true},
+		{"A9_DotDelimiterRejected", 97, true},
+		{"A10_ShadowedBlockSafe", 108, false},
 	}
 
 	for _, a := range assertions {

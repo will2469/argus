@@ -80,11 +80,10 @@ func validateLockIdentifier(pass *analysis.Pass, arg ast.Expr, body *ast.BlockSt
 			return
 		}
 
-		// 4b. Local assignment tracing via exact lexical object identity
+		// 4b. Local assignment tracing via scope-hierarchy object identity
 		if body != nil {
-			var latestVal string
-			var found bool
-			var isConcat bool
+			var assignedVals []string
+			var hasConcat bool
 			var concatValid bool
 
 			ast.Inspect(body, func(n ast.Node) bool {
@@ -94,28 +93,22 @@ func validateLockIdentifier(pass *analysis.Pass, arg ast.Expr, body *ast.BlockSt
 				}
 				for i, lhs := range assign.Lhs {
 					targetID, ok := lhs.(*ast.Ident)
-					if ok && isSameObject(pass, targetID, id) && i < len(assign.Rhs) {
+					if ok && isSameObject(pass, targetID, id, body) && i < len(assign.Rhs) {
 						rhs := assign.Rhs[i]
 						if lit, ok := rhs.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							latestVal = strings.Trim(lit.Value, "`\"")
-							found = true
-							isConcat = false
+							assignedVals = append(assignedVals, strings.Trim(lit.Value, "`\""))
 						} else if call, ok := rhs.(*ast.CallExpr); ok && isFormatCall(call) {
 							if len(call.Args) > 0 {
 								if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-									latestVal = strings.Trim(lit.Value, "`\"")
-									found = true
-									isConcat = false
+									assignedVals = append(assignedVals, strings.Trim(lit.Value, "`\""))
 								}
 							}
 						} else if bin, ok := rhs.(*ast.BinaryExpr); ok && bin.Op == token.ADD {
-							isConcat = true
-							concatValid = isNamespacePrefixExpr(bin.X) || isNamespacePrefixExpr(bin.Y)
-							if !concatValid {
-								if lit, ok := bin.X.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-									latestVal = strings.Trim(lit.Value, "`\"")
-									found = true
-								}
+							hasConcat = true
+							if isNamespacePrefixExpr(bin.X) || isNamespacePrefixExpr(bin.Y) {
+								concatValid = true
+							} else if lit, ok := bin.X.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+								assignedVals = append(assignedVals, strings.Trim(lit.Value, "`\""))
 							}
 						}
 					}
@@ -123,11 +116,20 @@ func validateLockIdentifier(pass *analysis.Pass, arg ast.Expr, body *ast.BlockSt
 				return true
 			})
 
-			if isConcat && concatValid {
+			if hasConcat && !concatValid && len(assignedVals) == 0 {
+				*issues = append(*issues, Issue{
+					Pos:     arg.Pos(),
+					Message: fmt.Sprintf("unnamespaced advisory lock identifier %q; lock keys must use a structured namespace format (e.g. \"domain:resource\")", id.Name),
+				})
 				return
 			}
-			if found {
-				checkStringNamespace(arg.Pos(), latestVal, issues)
+
+			// Fail-closed lattice: If any reaching assigned value is unnamespaced, report violation
+			for _, val := range assignedVals {
+				if !isStructuredNamespace(val) {
+					checkStringNamespace(arg.Pos(), val, issues)
+					return
+				}
 			}
 		}
 	}
@@ -155,7 +157,8 @@ func isStructuredNamespace(raw string) bool {
 	if raw == "" {
 		return false
 	}
-	// Must contain canonical delimiter ':' or '/'
+	// Structured namespaces must contain canonical delimiter ':' or '/'
+	// Delimiters like '.' (e.g. "foo.bar") are rejected as unnamespaced.
 	delimIdx := strings.IndexAny(raw, ":/")
 	if delimIdx <= 0 || delimIdx >= len(raw)-1 {
 		return false
