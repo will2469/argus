@@ -78,8 +78,9 @@ import (
 	"database/sql"
 )
 
-type DB struct{ *sql.DB }
-func (DB) Exec(ctx context.Context, sql string, args ...any) (sql.Result, error) { return nil, nil }
+type DB interface {
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
+}
 
 func Run(ctx context.Context, db DB) error {
 	_, err := db.Exec(ctx, "TRUNCATE TABLE logs")

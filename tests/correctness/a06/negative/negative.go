@@ -101,3 +101,18 @@ func N11_NonDBQuerier(ctx context.Context, engine SearchEngine) error {
 	_, err := engine.Exec(ctx, "CREATE TABLE index_data (id int)")
 	return err
 }
+
+// FakeStore represents a struct containing a DB field that implements non-delegating Query/Exec stubs.
+type FakeStore struct {
+	DB *sql.DB
+}
+
+func (s FakeStore) Exec(ctx context.Context, cmd string) error {
+	return nil
+}
+
+// N12: Non-delegating wrapper struct with DB field calling Exec with DDL string.
+func N12_NonDelegatingWrapperStruct(ctx context.Context, store FakeStore) error {
+	return store.Exec(ctx, "CREATE TABLE dummy (id int)")
+}
+

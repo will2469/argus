@@ -91,8 +91,9 @@ import (
 	"context"
 	"database/sql"
 )
-type DB struct{ *sql.DB }
-func (DB) Exec(ctx context.Context, query string) (sql.Result, error) { return nil, nil }
+type DB interface {
+	Exec(ctx context.Context, query string) (sql.Result, error)
+}
 
 func BranchDivergence(ctx context.Context, db DB, cond bool) {
 	var query string
@@ -125,8 +126,9 @@ import (
 	"context"
 	"database/sql"
 )
-type DB struct{ *sql.DB }
-func (DB) Exec(ctx context.Context, query string) (sql.Result, error) { return nil, nil }
+type DB interface {
+	Exec(ctx context.Context, query string) (sql.Result, error)
+}
 
 type Calculator struct{}
 func (c *Calculator) WriteString(s string) {}
