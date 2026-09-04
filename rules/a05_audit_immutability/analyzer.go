@@ -100,10 +100,25 @@ func inspectFunction(pass *analysis.Pass, fset *token.FileSet, file *ast.File, f
 		if queries == nil {
 			return true
 		}
-		// empty slice []string{} means Unknown provenance (not provably safe) - fail-closed
+		// empty slice []string{} means Unknown provenance (not provably safe) - evaluate skeletal prefix
 		if len(queries) == 0 {
 			// Query and QueryRow are read operations; forensic SELECT on audit logs is explicitly permitted.
 			if sel.Sel.Name == "Query" || sel.Sel.Name == "QueryRow" {
+				return true
+			}
+
+			// Attempt skeletal / prefix DML table extraction for dynamic queries
+			if op, tbl, ok := tracker.ExtractSkeletalDML(call); ok {
+				if isTargetAuditTableFromQualified(tbl, auditTables) {
+					if op == "UPDATE" || op == "DELETE" || op == "MERGE" || op == "TRUNCATE" || op == "DROP" {
+						*issues = append(*issues, Issue{
+							Pos:     call.Pos(),
+							Message: fmt.Sprintf("forbidden %s on audit table %q; audit trails must be strictly append-only", op, formatTableNameFromQualified(tbl)),
+						})
+					}
+					return true
+				}
+				// Target table is provably not an audit table -> safe
 				return true
 			}
 

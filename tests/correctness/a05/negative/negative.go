@@ -81,7 +81,6 @@ func N8_BatchQueueAndSendBatch(ctx context.Context, q BatchQueue, sender BatchSe
 
 // N9: CopyFrom and Begin — operations that do not accept SQL string expressions.
 func N9_CopyFromAndBegin(ctx context.Context, sender BatchSender) {
-	sender.CopyFrom(ctx, "archive_classifications", []string{"id"}, nil)
-	sender.Begin(ctx)
+	_, _ = sender.CopyFrom(ctx, "archive_classifications", []string{"id"}, nil)
+	_, _ = sender.Begin(ctx)
 }
-

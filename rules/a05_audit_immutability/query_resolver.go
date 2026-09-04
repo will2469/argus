@@ -230,4 +230,3 @@ func (t *flowTracker) handleRange(s *ast.RangeStmt, state *flowState) {
 	}
 	*state = *state.join(loopState)
 }
-

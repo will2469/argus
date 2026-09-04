@@ -176,4 +176,3 @@ func DeepChain(ctx context.Context, db DB) {
 		t.Fatalf("expected 0 issues for deep safe expression chain, got %d: %+v", len(issues), issues)
 	}
 }
-

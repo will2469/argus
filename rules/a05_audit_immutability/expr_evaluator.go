@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"go/types"
 	"strconv"
+	"strings"
 
 	"github.com/will2469/argus/shared/callsite"
 )
@@ -33,7 +34,16 @@ func (t *flowTracker) resolveExpr(expr ast.Expr, state *flowState, depth int) va
 	case *ast.CallExpr:
 		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Sprintf" {
 			if len(e.Args) > 0 {
-				return t.resolveExpr(e.Args[0], state, depth+1)
+				formatVals := t.resolveExpr(e.Args[0], state, depth+1)
+				if formatVals == nil {
+					return nil
+				}
+				for f := range formatVals {
+					if strings.Contains(f, "%") {
+						return nil
+					}
+				}
+				return formatVals
 			}
 		}
 	case *ast.Ident:
