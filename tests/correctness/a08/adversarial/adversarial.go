@@ -101,3 +101,36 @@ func A7_StorageUpload(ctx context.Context, pool Pool, storage *StorageUploader) 
 		return nil
 	})
 }
+
+type Calculator struct{}
+
+func (c *Calculator) Upload(val int) {}
+
+// A8: Calculator Upload — in-memory compute method must NEVER be treated as storage I/O.
+func A8_CalculatorUploadInTx(ctx context.Context, pool Pool, calc *Calculator) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	calc.Upload(42)
+	return tx.Commit(ctx)
+}
+
+type S3Client interface {
+	PutObject(ctx context.Context, key string, data []byte) error
+}
+
+// A9: Client PutObject — PutObject on client must be flagged as external storage I/O.
+func A9_ClientPutObjectInTx(ctx context.Context, pool Pool, client S3Client) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_ = client.PutObject(ctx, "report.pdf", []byte("data"))
+	return tx.Commit(ctx)
+}
+

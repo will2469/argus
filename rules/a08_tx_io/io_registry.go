@@ -1,6 +1,5 @@
 // Package a08_tx_io identifies external blocking I/O operations (network, disk, sleep, exec, storage SDKs)
 // that must not be executed while holding an open database transaction.
-// Internal Go runtime synchronization (channels, mutexes) is deliberately excluded.
 package a08_tx_io
 
 import (
@@ -13,14 +12,15 @@ import (
 
 // CheckBlockingIO returns a description of the blocking external I/O operation if node matches, or empty string.
 func CheckBlockingIO(n ast.Node, pass *analysis.Pass) string {
+	return CheckBlockingIOWithContext(n, pass, nil, nil)
+}
+
+// CheckBlockingIOWithContext checks if an AST node is a blocking external I/O call within function/file context.
+func CheckBlockingIOWithContext(n ast.Node, pass *analysis.Pass, fn *ast.FuncDecl, file *ast.File) string {
 	call, ok := n.(*ast.CallExpr)
 	if !ok {
 		return ""
 	}
-	return checkCallExprBlockingIO(call, pass)
-}
-
-func checkCallExprBlockingIO(call *ast.CallExpr, pass *analysis.Pass) string {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return ""
@@ -28,34 +28,38 @@ func checkCallExprBlockingIO(call *ast.CallExpr, pass *analysis.Pass) string {
 
 	// 1. Direct package-level calls (time.Sleep, http.Get, os.ReadFile, exec.Command, net.Dial)
 	if pkg, ok := sel.X.(*ast.Ident); ok {
-		if op := checkPackageCall(pkg.Name, sel.Sel.Name); op != "" {
+		if op := checkPackageCall(pkg, sel.Sel.Name, pass, file); op != "" {
 			return op
 		}
 	}
 
-	// 2. Client method calls (http.Client.Do, storage.PutObject, etc.)
-	if isHTTPClientCall(pass, sel) {
+	// 2. Client method calls (http.Client.Do, storage.PutObject, net.Conn.Read, etc.)
+	if isHTTPClientCall(pass, sel, fn, file) {
 		return "http.Client." + sel.Sel.Name
 	}
-
-	if isStorageClientCall(pass, sel) {
+	if isStorageClientCall(pass, sel, fn, file) {
 		return "storage." + sel.Sel.Name
 	}
-
 	if isNetConnCall(pass, sel) {
 		return "net.Conn." + sel.Sel.Name
+	}
+	if isExecCmdCall(pass, sel) {
+		return "exec.Cmd." + sel.Sel.Name
+	}
+	if isOSFileCall(pass, sel) {
+		return "os.File." + sel.Sel.Name
 	}
 
 	return ""
 }
 
-func checkPackageCall(pkgName, methodName string) string {
-	switch pkgName {
+func matchPkgMethod(importPath, methodName string) string {
+	switch importPath {
 	case "time":
 		if methodName == "Sleep" {
 			return "time.Sleep"
 		}
-	case "http":
+	case "net/http":
 		switch methodName {
 		case "Get", "Post", "PostForm", "Head":
 			return "http." + methodName
@@ -64,60 +68,47 @@ func checkPackageCall(pkgName, methodName string) string {
 		if strings.HasPrefix(methodName, "Dial") || strings.HasPrefix(methodName, "Listen") {
 			return "net." + methodName
 		}
-	case "tls":
+	case "crypto/tls":
 		if strings.HasPrefix(methodName, "Dial") {
 			return "tls." + methodName
 		}
-	case "exec":
+	case "os/exec":
 		if strings.HasPrefix(methodName, "Command") {
 			return "exec." + methodName
 		}
 	case "os":
 		switch methodName {
-		case "ReadFile", "WriteFile", "Create", "Open", "OpenFile", "Remove", "RemoveAll", "Mkdir", "MkdirAll":
+		case "ReadFile", "WriteFile", "Create", "Open", "OpenFile", "Remove", "RemoveAll", "Mkdir", "MkdirAll", "Truncate":
 			return "os." + methodName
 		}
 	}
 	return ""
 }
 
-func isHTTPClientCall(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
-	methodName := sel.Sel.Name
-	if methodName != "Do" && methodName != "Get" && methodName != "Post" && methodName != "Head" {
-		return false
+func checkPackageCall(pkg *ast.Ident, methodName string, pass *analysis.Pass, file *ast.File) string {
+	if pkg == nil {
+		return ""
 	}
-
 	if pass != nil && pass.TypesInfo != nil {
-		t := pass.TypesInfo.TypeOf(sel.X)
-		if t != nil {
-			typeStr := t.String()
-			if strings.Contains(typeStr, "net/http.Client") || strings.Contains(typeStr, "net/http.RoundTripper") {
-				return true
-			}
-			// Check interface method set for Do(*http.Request)
-			if iface, ok := t.Underlying().(*types.Interface); ok {
-				for i := 0; i < iface.NumMethods(); i++ {
-					m := iface.Method(i)
-					if m.Name() == "Do" {
-						return true
-					}
-				}
-			}
+		if obj, ok := pass.TypesInfo.Uses[pkg].(*types.PkgName); ok {
+			return matchPkgMethod(obj.Imported().Path(), methodName)
 		}
 	}
-
-	// AST identifier heuristic fallback
-	if id, ok := sel.X.(*ast.Ident); ok {
-		lower := strings.ToLower(id.Name)
-		return strings.Contains(lower, "http") || strings.Contains(lower, "client")
+	knownPaths := map[string]string{
+		"time": "time", "http": "net/http", "net": "net",
+		"tls": "crypto/tls", "exec": "os/exec", "os": "os",
 	}
-	return false
+	if expected, ok := knownPaths[pkg.Name]; ok {
+		if file == nil || isImportedPackage(file, pkg.Name, expected) {
+			return matchPkgMethod(expected, methodName)
+		}
+	}
+	return ""
 }
 
-func isStorageClientCall(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
-	methodName := sel.Sel.Name
-	switch methodName {
-	case "PutObject", "GetObject", "Upload", "Download", "DeleteObject":
+func isHTTPClientCall(pass *analysis.Pass, sel *ast.SelectorExpr, fn *ast.FuncDecl, file *ast.File) bool {
+	switch sel.Sel.Name {
+	case "Do", "Get", "Post", "PostForm", "Head", "RoundTrip":
 	default:
 		return false
 	}
@@ -125,86 +116,84 @@ func isStorageClientCall(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	if pass != nil && pass.TypesInfo != nil {
 		t := pass.TypesInfo.TypeOf(sel.X)
 		if t != nil {
-			for {
-				if ptr, ok := t.(*types.Pointer); ok {
-					t = ptr.Elem()
-				} else {
-					break
-				}
-			}
-
-			// Verify package path or type name belongs to genuine storage SDK
+			t = unwrapPointer(t)
 			typeStr := t.String()
-			if isStorageSDKType(typeStr) {
+			if strings.Contains(typeStr, "net/http.Client") || strings.Contains(typeStr, "net/http.RoundTripper") {
 				return true
 			}
-
-			if named, ok := t.(*types.Named); ok {
-				if obj := named.Obj(); obj != nil {
-					name := obj.Name()
-					if strings.Contains(name, "Storage") || strings.Contains(name, "S3") ||
-						strings.Contains(name, "Bucket") || strings.Contains(name, "Uploader") {
+			if iface, ok := t.Underlying().(*types.Interface); ok {
+				for i := 0; i < iface.NumMethods(); i++ {
+					if iface.Method(i).Name() == "Do" || iface.Method(i).Name() == "RoundTrip" {
 						return true
 					}
 				}
 			}
-			// If type is resolved and does NOT match storage SDK, it is NOT storage (e.g. calculator.Upload)
 			return false
 		}
 	}
 
-	// AST fallback: verify receiver name is storage-related, reject arbitrary words (calculator, calc, etc.)
-	recvName := getReceiverName(sel.X)
-	if recvName != "" {
-		lower := strings.ToLower(recvName)
-		if strings.Contains(lower, "calc") || strings.Contains(lower, "math") || strings.Contains(lower, "parser") {
-			return false
-		}
-		return strings.Contains(lower, "storage") || strings.Contains(lower, "s3") ||
-			strings.Contains(lower, "bucket") || strings.Contains(lower, "minio") ||
-			strings.Contains(lower, "blob") || strings.Contains(lower, "upload")
-	}
-
-	return false
+	astType := findASTType(sel.X, fn, file)
+	typeName := getASTTypeName(astType)
+	return typeName == "Client" || typeName == "RoundTripper"
 }
 
-func isStorageSDKType(typeStr string) bool {
-	storagePackages := []string{
-		"github.com/aws/aws-sdk-go-v2/service/s3",
-		"github.com/aws/aws-sdk-go/service/s3",
-		"cloud.google.com/go/storage",
-		"github.com/minio/minio-go",
-		"github.com/Azure/azure-sdk-for-go",
-	}
-	for _, pkg := range storagePackages {
-		if strings.Contains(typeStr, pkg) {
-			return true
-		}
-	}
-	return false
-}
-
-func isNetConnCall(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
-	methodName := sel.Sel.Name
-	if methodName != "Read" && methodName != "Write" {
+func isStorageClientCall(pass *analysis.Pass, sel *ast.SelectorExpr, fn *ast.FuncDecl, file *ast.File) bool {
+	switch sel.Sel.Name {
+	case "PutObject", "GetObject", "DeleteObject", "UploadPart", "CopyObject",
+		"CreateMultipartUpload", "CompleteMultipartUpload", "AbortMultipartUpload", "ListObjects", "ListObjectsV2", "HeadObject":
+		return isConfirmedStorageReceiver(pass, sel.X, fn, file, true)
+	case "Upload", "Download":
+		return isConfirmedStorageReceiver(pass, sel.X, fn, file, false)
+	default:
 		return false
 	}
+}
+
+func isConfirmedStorageReceiver(pass *analysis.Pass, expr ast.Expr, fn *ast.FuncDecl, file *ast.File, isDomainSpecificMethod bool) bool {
 	if pass != nil && pass.TypesInfo != nil {
-		t := pass.TypesInfo.TypeOf(sel.X)
-		if t != nil && strings.Contains(t.String(), "net.Conn") {
-			return true
+		t := pass.TypesInfo.TypeOf(expr)
+		if t != nil {
+			t = unwrapPointer(t)
+			if isProvenNonStorageType(t) {
+				return false
+			}
+			if isStorageSDKType(t.String()) {
+				return true
+			}
+			if named, ok := t.(*types.Named); ok && named.Obj() != nil {
+				name := named.Obj().Name()
+				if strings.Contains(name, "Storage") || strings.Contains(name, "S3") ||
+					strings.Contains(name, "Bucket") || strings.Contains(name, "Uploader") || strings.Contains(name, "Blob") {
+					return true
+				}
+			}
+			return isDomainSpecificMethod
 		}
+	}
+
+	astType := findASTType(expr, fn, file)
+	typeName := getASTTypeName(astType)
+	if isNonStorageTypeName(typeName) {
+		return false
+	}
+	if strings.Contains(typeName, "Storage") || strings.Contains(typeName, "S3") ||
+		strings.Contains(typeName, "Bucket") || strings.Contains(typeName, "Uploader") || strings.Contains(typeName, "Blob") {
+		return true
+	}
+	return isDomainSpecificMethod
+}
+
+func isProvenNonStorageType(t types.Type) bool {
+	if named, ok := t.(*types.Named); ok && named.Obj() != nil {
+		return isNonStorageTypeName(named.Obj().Name())
 	}
 	return false
 }
 
-func getReceiverName(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.SelectorExpr:
-		return e.Sel.Name
+func isNonStorageTypeName(name string) bool {
+	switch name {
+	case "Calculator", "Calc", "Parser", "Math", "Engine":
+		return true
 	}
-	return ""
+	return false
 }
-

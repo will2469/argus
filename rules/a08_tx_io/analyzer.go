@@ -47,10 +47,10 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 		return nil
 	}
 
-	funcDecls := make(map[string]*ast.FuncDecl)
+	var funcDecls []*ast.FuncDecl
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
-			funcDecls[fn.Name.Name] = fn
+			funcDecls = append(funcDecls, fn)
 		}
 	}
 
@@ -67,11 +67,11 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 	return issues
 }
 
-func inspectFunctionTransactions(pass *analysis.Pass, fset *token.FileSet, fn *ast.FuncDecl, file *ast.File, funcDecls map[string]*ast.FuncDecl, dm *directives.DirectiveMap, issues *[]Issue) {
+func inspectFunctionTransactions(pass *analysis.Pass, fset *token.FileSet, fn *ast.FuncDecl, file *ast.File, funcDecls []*ast.FuncDecl, dm *directives.DirectiveMap, issues *[]Issue) {
 	if fn == nil || fn.Body == nil {
 		return
 	}
-	visited := make(map[string]bool)
+	visited := make(map[*ast.FuncDecl]bool)
 
 	// 1. Check closure-based transactions (BeginFunc, ExecuteTx, WithTx)
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -83,7 +83,7 @@ func inspectFunctionTransactions(pass *analysis.Pass, fset *token.FileSet, fn *a
 		closure := ExtractTxClosure(pass, call, fn, file)
 		if closure != nil && closure.Body != nil {
 			ast.Inspect(closure.Body, func(innerNode ast.Node) bool {
-				CheckTxNode(pass, fset, innerNode, funcDecls, visited, dm, issues)
+				CheckTxNode(pass, fset, innerNode, fn, file, funcDecls, visited, dm, issues)
 				return true
 			})
 		}

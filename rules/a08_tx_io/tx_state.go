@@ -4,65 +4,70 @@ package a08_tx_io
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 
 	"golang.org/x/tools/go/analysis"
 )
 
-// TxState tracks active database transaction objects along an execution path.
+// varKey uniquely identifies a transaction variable by compiler types.Object (pass mode)
+// or lexical declaration position + name (standalone mode).
+type varKey struct {
+	obj     types.Object
+	declPos token.Pos
+	name    string
+}
+
+func makeVarKey(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl, file *ast.File) varKey {
+	if id == nil {
+		return varKey{}
+	}
+	if pass != nil && pass.TypesInfo != nil {
+		if obj := pass.TypesInfo.Defs[id]; obj != nil {
+			return varKey{obj: obj, name: id.Name}
+		}
+		if obj := pass.TypesInfo.Uses[id]; obj != nil {
+			return varKey{obj: obj, name: id.Name}
+		}
+	}
+	declPos := findDeclPos(file, fn, id)
+	return varKey{declPos: declPos, name: id.Name}
+}
+
+// TxState tracks active database transaction instances along an execution path.
 type TxState struct {
-	activeVars map[string]bool
-	activeObjs map[types.Object]bool
+	activeTxs  map[varKey]bool
 	terminated bool
 }
 
 func newTxState() *TxState {
 	return &TxState{
-		activeVars: make(map[string]bool),
-		activeObjs: make(map[types.Object]bool),
+		activeTxs: make(map[varKey]bool),
 	}
 }
 
 func (s *TxState) clone() *TxState {
 	c := newTxState()
 	c.terminated = s.terminated
-	for k, v := range s.activeVars {
-		c.activeVars[k] = v
-	}
-	for k, v := range s.activeObjs {
-		c.activeObjs[k] = v
+	for k, v := range s.activeTxs {
+		c.activeTxs[k] = v
 	}
 	return c
 }
 
-func (s *TxState) activate(pass *analysis.Pass, id *ast.Ident) {
-	if id == nil {
+func (s *TxState) activate(k varKey) {
+	if k.name == "" && k.obj == nil && k.declPos == token.NoPos {
 		return
 	}
-	s.activeVars[id.Name] = true
-	if pass != nil && pass.TypesInfo != nil {
-		if obj := pass.TypesInfo.Defs[id]; obj != nil {
-			s.activeObjs[obj] = true
-		} else if obj := pass.TypesInfo.Uses[id]; obj != nil {
-			s.activeObjs[obj] = true
-		}
-	}
+	s.activeTxs[k] = true
 }
 
-func (s *TxState) deactivate(pass *analysis.Pass, id *ast.Ident) {
-	if id == nil {
-		return
-	}
-	delete(s.activeVars, id.Name)
-	if pass != nil && pass.TypesInfo != nil {
-		if obj := pass.TypesInfo.Uses[id]; obj != nil {
-			delete(s.activeObjs, obj)
-		}
-	}
+func (s *TxState) deactivate(k varKey) {
+	delete(s.activeTxs, k)
 }
 
 func (s *TxState) hasActive() bool {
-	return len(s.activeVars) > 0 || len(s.activeObjs) > 0
+	return len(s.activeTxs) > 0
 }
 
 // joinTxStates performs a fail-closed union lattice join across branch exit states.
@@ -75,11 +80,8 @@ func joinTxStates(states ...*TxState) *TxState {
 			continue
 		}
 		allTerminated = false
-		for k := range st.activeVars {
-			joined.activeVars[k] = true
-		}
-		for k := range st.activeObjs {
-			joined.activeObjs[k] = true
+		for k := range st.activeTxs {
+			joined.activeTxs[k] = true
 		}
 	}
 

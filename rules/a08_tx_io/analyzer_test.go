@@ -57,7 +57,7 @@ func foo(ch chan int, calc *Calculator, storage *StorageClient) {
 
 	var ops []string
 	ast.Inspect(file, func(n ast.Node) bool {
-		if op := CheckBlockingIO(n, nil); op != "" {
+		if op := CheckBlockingIOWithContext(n, nil, nil, file); op != "" {
 			ops = append(ops, op)
 		}
 		return true
@@ -149,4 +149,122 @@ func processSafe(db *sql.DB) {
 		t.Fatalf("expected 0 issues for I/O after Commit, got %d", len(safeIssues))
 	}
 }
+
+func TestCalculatorUploadInTx_MustBeSafe(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+import (
+	"database/sql"
+)
+
+type Calculator struct{}
+func (c *Calculator) Upload(val int) {}
+
+func process(db *sql.DB, calculator *Calculator) {
+	tx, _ := db.Begin()
+	if true {
+		calculator.Upload(100)
+	}
+	tx.Commit()
+}
+`
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for calculator.Upload inside transaction, got %d: %v", len(issues), issues)
+	}
+}
+
+func TestClientPutObjectInTx_MustBeFlagged(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+import (
+	"database/sql"
+)
+
+type S3Client interface {
+	PutObject(key string, data []byte) error
+}
+
+func process(db *sql.DB, client S3Client) {
+	tx, _ := db.Begin()
+	_ = client.PutObject("key", []byte("data"))
+	tx.Commit()
+}
+`
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for client.PutObject inside transaction, got %d: %v", len(issues), issues)
+	}
+}
+
+func TestMethodUploadDoesNotTriggerPackageUploadHelper(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+import (
+	"database/sql"
+	"time"
+)
+
+type Calculator struct{}
+func (c *Calculator) Upload(val int) {}
+
+func Upload() {
+	time.Sleep(1)
+}
+
+func process(db *sql.DB, calculator *Calculator) {
+	tx, _ := db.Begin()
+	calculator.Upload(100)
+	tx.Commit()
+}
+`
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues when calling method calculator.Upload even if package func Upload has Sleep, got %d: %v", len(issues), issues)
+	}
+}
+
+func TestStoreNamedVariableWithCalculator_MustBeSafe(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+import (
+	"database/sql"
+)
+
+type Calculator struct{}
+func (c *Calculator) Upload(val int) {}
+
+func process(db *sql.DB) {
+	tx, _ := db.Begin()
+	store := &Calculator{}
+	store.Upload(100)
+	tx.Commit()
+}
+`
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for variable named store of type Calculator, got %d: %v", len(issues), issues)
+	}
+}
+
 

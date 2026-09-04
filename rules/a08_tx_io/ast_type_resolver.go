@@ -4,8 +4,8 @@ package a08_tx_io
 
 import (
 	"go/ast"
-
-	"github.com/will2469/argus/shared/callsite"
+	"go/token"
+	"strings"
 )
 
 func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
@@ -14,6 +14,9 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 	}
 
 	if id, ok := expr.(*ast.Ident); ok {
+		if fn == nil && file != nil {
+			fn = findEnclosingFuncDecl(file, id.Pos())
+		}
 		if fn != nil && fn.Type != nil && fn.Type.Params != nil {
 			for _, field := range fn.Type.Params.List {
 				for _, name := range field.Names {
@@ -99,77 +102,39 @@ func getASTTypeName(expr ast.Expr) string {
 	return ""
 }
 
-func isKnownDBPoolASTType(expr ast.Expr) bool {
-	if expr == nil {
+
+func isImportedPackage(file *ast.File, pkgName, expectedPath string) bool {
+	if file == nil {
 		return false
 	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		if pkgID, ok := sel.X.(*ast.Ident); ok {
-			switch pkgID.Name {
-			case "sql", "pgx", "pgxpool", "sqlx", "pq":
-				switch sel.Sel.Name {
-				case "DB", "Pool", "Conn":
-					return true
-				}
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if imp.Name != nil {
+			if imp.Name.Name == pkgName && strings.HasSuffix(path, expectedPath) {
+				return true
 			}
-		}
-	}
-	if id, ok := expr.(*ast.Ident); ok {
-		switch id.Name {
-		case "Pool", "DB", "DBPool", "ConnPool":
-			return true
+		} else {
+			parts := strings.Split(path, "/")
+			lastPart := parts[len(parts)-1]
+			if lastPart == pkgName && (path == expectedPath || strings.HasSuffix(path, "/"+expectedPath)) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-func isKnownDBTxASTType(expr ast.Expr) bool {
-	if expr == nil {
-		return false
+
+func findEnclosingFuncDecl(file *ast.File, pos token.Pos) *ast.FuncDecl {
+	if file == nil {
+		return nil
 	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		if pkgID, ok := sel.X.(*ast.Ident); ok {
-			switch pkgID.Name {
-			case "sql", "pgx", "pgxpool", "sqlx", "pq":
-				if sel.Sel.Name == "Tx" {
-					return true
-				}
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			if fn.Pos() <= pos && pos <= fn.End() {
+				return fn
 			}
 		}
 	}
-	if id, ok := expr.(*ast.Ident); ok {
-		if id.Name == "Tx" || id.Name == "Transaction" {
-			return true
-		}
-	}
-	return false
-}
-
-func isDBPoolConstructorCall(call *ast.CallExpr) bool {
-	if call == nil {
-		return false
-	}
-	sel := callsite.GetCallSelector(call.Fun)
-	if sel == nil {
-		return false
-	}
-	if pkgID, ok := sel.X.(*ast.Ident); ok {
-		switch pkgID.Name {
-		case "sql":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "OpenDB"
-		case "pgx":
-			return sel.Sel.Name == "Connect" || sel.Sel.Name == "ConnectConfig"
-		case "pgxpool":
-			return sel.Sel.Name == "New" || sel.Sel.Name == "NewWithConfig"
-		case "sqlx":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "Connect"
-		}
-	}
-	return false
+	return nil
 }

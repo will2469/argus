@@ -12,7 +12,7 @@ import (
 )
 
 // InspectExplicitTxFlow analyzes a function body for blocking external I/O executed during explicit transaction lifetimes.
-func InspectExplicitTxFlow(pass *analysis.Pass, fset *token.FileSet, fn *ast.FuncDecl, file *ast.File, funcDecls map[string]*ast.FuncDecl, visited map[string]bool, dm *directives.DirectiveMap, issues *[]Issue) {
+func InspectExplicitTxFlow(pass *analysis.Pass, fset *token.FileSet, fn *ast.FuncDecl, file *ast.File, funcDecls []*ast.FuncDecl, visited map[*ast.FuncDecl]bool, dm *directives.DirectiveMap, issues *[]Issue) {
 	if fn == nil || fn.Body == nil {
 		return
 	}
@@ -37,8 +37,8 @@ type txFlowWalker struct {
 	fset      *token.FileSet
 	fn        *ast.FuncDecl
 	file      *ast.File
-	funcDecls map[string]*ast.FuncDecl
-	visited   map[string]bool
+	funcDecls []*ast.FuncDecl
+	visited   map[*ast.FuncDecl]bool
 	dm        *directives.DirectiveMap
 	issues    *[]Issue
 }
@@ -113,7 +113,8 @@ func (w *txFlowWalker) handleAssignStmt(assign *ast.AssignStmt, state *TxState) 
 			}
 			if len(assign.Lhs) > targetIdx {
 				if id, ok := assign.Lhs[targetIdx].(*ast.Ident); ok && isDBTxIdent(w.pass, id, w.fn, w.file) {
-					state.activate(w.pass, id)
+					k := makeVarKey(w.pass, id, w.fn, w.file)
+					state.activate(k)
 					return state
 				}
 			}
@@ -123,7 +124,8 @@ func (w *txFlowWalker) handleAssignStmt(assign *ast.AssignStmt, state *TxState) 
 	// 2. Check if RHS ends a transaction: err = tx.Commit(ctx)
 	for _, rhs := range assign.Rhs {
 		if txID := getTxEndIdent(rhs); txID != nil {
-			state.deactivate(w.pass, txID)
+			k := makeVarKey(w.pass, txID, w.fn, w.file)
+			state.deactivate(k)
 			return state
 		}
 	}
@@ -140,7 +142,8 @@ func (w *txFlowWalker) handleAssignStmt(assign *ast.AssignStmt, state *TxState) 
 
 func (w *txFlowWalker) handleExprStmt(exprStmt *ast.ExprStmt, state *TxState) *TxState {
 	if txID := getTxEndIdent(exprStmt.X); txID != nil {
-		state.deactivate(w.pass, txID)
+		k := makeVarKey(w.pass, txID, w.fn, w.file)
+		state.deactivate(k)
 		return state
 	}
 
@@ -235,7 +238,7 @@ func (w *txFlowWalker) checkTxExpr(node ast.Node) {
 		if n == nil {
 			return true
 		}
-		CheckTxNode(w.pass, w.fset, n, w.funcDecls, w.visited, w.dm, w.issues)
+		CheckTxNode(w.pass, w.fset, n, w.fn, w.file, w.funcDecls, w.visited, w.dm, w.issues)
 		return true
 	})
 }

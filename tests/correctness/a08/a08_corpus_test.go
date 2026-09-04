@@ -98,6 +98,8 @@ func TestA08_AdversarialCorpus(t *testing.T) {
 		{"A5_NestedFunction", 72, true},
 		{"A6_Generic", 86, true},
 		{"A7_StorageUpload", 100, true},
+		{"A8_CalculatorUploadInTx", 117, false},
+		{"A9_ClientPutObjectInTx", 133, true},
 	}
 
 	for _, a := range assertions {

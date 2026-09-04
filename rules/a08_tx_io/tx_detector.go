@@ -66,20 +66,12 @@ func isDBReceiver(pass *analysis.Pass, fun ast.Expr, fn *ast.FuncDecl, file *ast
 	}
 
 	// 2. AST-level Symbol / Type Verification (pass == nil or unresolved)
-	if id, ok := sel.X.(*ast.Ident); ok {
-		switch id.Name {
-		case "sql", "pgx", "pgxpool", "sqlx", "pq":
-			return true
-		}
-	}
-
-	// Resolve receiver declared type in AST
 	astType := findASTType(sel.X, fn, file)
-	if astType != nil && isKnownDBPoolASTType(astType) {
+	if astType != nil && isProvenDBPoolASTType(astType, file) {
 		return true
 	}
 
-	// Check if assigned from a DB constructor
+	// Check if assigned from a DB constructor (sql.Open, pgxpool.New, etc.)
 	if id, ok := sel.X.(*ast.Ident); ok && id.Obj != nil {
 		if as, ok := id.Obj.Decl.(*ast.AssignStmt); ok {
 			for i, lhs := range as.Lhs {
@@ -105,23 +97,15 @@ func isProvenDBPoolInterface(t types.Type) bool {
 	if t == nil {
 		return false
 	}
-	for {
-		if ptr, ok := t.(*types.Pointer); ok {
-			t = ptr.Elem()
-		} else {
-			break
-		}
-	}
+	t = unwrapPointer(t)
 
 	var hasBeginWithTx, hasBeginFuncWithTx bool
-
 	checkMethod := func(fn *types.Func) {
-		name := fn.Name()
 		sig, ok := fn.Type().(*types.Signature)
 		if !ok {
 			return
 		}
-		switch name {
+		switch fn.Name() {
 		case "Begin", "BeginTx":
 			res := sig.Results()
 			if res != nil && res.Len() >= 1 {
@@ -133,7 +117,7 @@ func isProvenDBPoolInterface(t types.Type) bool {
 			}
 		case "BeginFunc":
 			params := sig.Params()
-			if params != nil {
+			if params != nil && params.Len() >= 1 {
 				for i := 0; i < params.Len(); i++ {
 					if fnSig, ok := params.At(i).Type().(*types.Signature); ok {
 						if fnSig.Params() != nil && fnSig.Params().Len() >= 1 {
@@ -165,13 +149,7 @@ func isProvenDBTxType(t types.Type) bool {
 	if t == nil {
 		return false
 	}
-	for {
-		if ptr, ok := t.(*types.Pointer); ok {
-			t = ptr.Elem()
-		} else {
-			break
-		}
-	}
+	t = unwrapPointer(t)
 	if callsite.IsPgxOrSQLType(t) {
 		return true
 	}
@@ -210,10 +188,8 @@ func isDBTxIdent(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl, file *ast
 	}
 	astType := findASTType(id, fn, file)
 	if astType != nil {
-		return isKnownDBTxASTType(astType)
+		return isProvenDBTxASTType(astType, file)
 	}
-	// In AST-only mode where type info is absent, any non-blank identifier
-	// assigned from a verified BeginTx call represents the transaction object.
 	return true
 }
 
@@ -240,4 +216,3 @@ func getTxEndIdent(expr ast.Expr) *ast.Ident {
 	}
 	return nil
 }
-
