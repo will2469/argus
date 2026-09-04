@@ -144,3 +144,56 @@ func TestScanDirectory_AsymmetricTargetMismatch(t *testing.T) {
 		t.Errorf("unexpected message: %s", issues[0].Message)
 	}
 }
+
+func TestScanDirectory_UserScenario_AddColumnVsDropTable(t *testing.T) {
+	tempDir := t.TempDir()
+
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.up.sql"), []byte("ALTER TABLE users ADD COLUMN email TEXT;"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.down.sql"), []byte("DROP TABLE audit_log;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for ADD COLUMN vs DROP unrelated table, got %d", len(issues))
+	}
+	if !strings.Contains(issues[0].Message, "missing DROP COLUMN for column \"email\" on table \"users\"") {
+		t.Errorf("unexpected message: %s", issues[0].Message)
+	}
+}
+
+func TestScanDirectory_BackwardAsymmetry_RogueDrop(t *testing.T) {
+	tempDir := t.TempDir()
+
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.up.sql"), []byte("ALTER TABLE users ADD COLUMN email TEXT;"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.down.sql"), []byte("ALTER TABLE users DROP COLUMN email; DROP TABLE audit_log;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for rogue drop in down migration, got %d: %v", len(issues), issues)
+	}
+	if !strings.Contains(issues[0].Message, "unexpected schema mutation on table \"audit_log\"") {
+		t.Errorf("unexpected message: %s", issues[0].Message)
+	}
+}
+
+func TestScanDirectory_FullStackRollback_Compliant(t *testing.T) {
+	tempDir := t.TempDir()
+
+	upSQL := `
+CREATE TABLE users (id int PRIMARY KEY);
+ALTER TABLE users ADD COLUMN email text;
+CREATE INDEX idx_users_email ON users (email);
+`
+	downSQL := `
+DROP INDEX idx_users_email;
+ALTER TABLE users DROP COLUMN email;
+DROP TABLE users;
+`
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.up.sql"), []byte(upSQL), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.down.sql"), []byte(downSQL), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for fully symmetric stack rollback, got %d: %v", len(issues), issues)
+	}
+}
+

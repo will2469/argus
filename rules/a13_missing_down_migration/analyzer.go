@@ -17,7 +17,7 @@ const RuleCode = "ARGUS-A13"
 // Analyzer defines the analysis.Analyzer for rule ARGUS-A13.
 var Analyzer = &analysis.Analyzer{
 	Name: "a13",
-	Doc:  "Ensures every .up.sql migration has a non-empty corresponding .down.sql rollback file",
+	Doc:  "Ensures every .up.sql migration has a corresponding .down.sql rollback file with deterministic semantic inverse operations",
 	Run:  run,
 	Requires: []*analysis.Analyzer{
 		directives.Analyzer,

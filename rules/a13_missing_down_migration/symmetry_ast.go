@@ -101,23 +101,31 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp) *migratio
 		}
 	}
 
-	hasDownDDL := false
+	// 2. Backward symmetry: Every DDL operation in DOWN must invert an operation in UP
 	for _, downOp := range downOps {
-		if downOp.Kind != OpDML {
-			hasDownDDL = true
-			break
+		if downOp.Kind == OpDML {
+			continue
 		}
-	}
-	hasUpDDL := false
-	for _, upOp := range upOps {
-		if upOp.Kind != OpDML {
-			hasUpDDL = true
-			break
+		invertsAny := false
+		for _, upOp := range upOps {
+			if upOp.IsInvertedBy(downOp) {
+				invertsAny = true
+				break
+			}
+		}
+		if !invertsAny {
+			return &migration.Issue{
+				Rule:     RuleCode,
+				Filename: downPath,
+				Line:     1,
+				Message:  fmt.Sprintf("Rollback migration %q contains unexpected schema mutation on %s with no corresponding operation in %q", downName, downOp.DescribeTarget(), upName),
+				Severity: "HIGH",
+			}
 		}
 	}
 
-	// If UP and DOWN contain only DML without any DDL inverse and no suppression directive:
-	if !hasUpDDL && !hasDownDDL && len(downOps) > 0 {
+	// 3. If UP and DOWN contain only DML without any DDL inverse and no suppression directive:
+	if !hasDDL(upOps) && !hasDDL(downOps) && len(downOps) > 0 {
 		return &migration.Issue{
 			Rule:     RuleCode,
 			Filename: downPath,
@@ -128,6 +136,15 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp) *migratio
 	}
 
 	return nil
+}
+
+func hasDDL(ops []SchemaOp) bool {
+	for _, op := range ops {
+		if op.Kind != OpDML {
+			return true
+		}
+	}
+	return false
 }
 
 func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
@@ -201,19 +218,15 @@ func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
 				}
 				switch cmd.Subtype {
 				case pg_query.AlterTableType_AT_AddColumn:
-					if cmd.Def != nil {
-						if col := cmd.Def.GetColumnDef(); col != nil {
-							ops = append(ops, SchemaOp{Kind: OpAddColumn, Target: tbl, SubTarget: col.Colname})
-						}
+					if cmd.Def != nil && cmd.Def.GetColumnDef() != nil {
+						ops = append(ops, SchemaOp{Kind: OpAddColumn, Target: tbl, SubTarget: cmd.Def.GetColumnDef().Colname})
 					}
 				case pg_query.AlterTableType_AT_DropColumn:
 					ops = append(ops, SchemaOp{Kind: OpDropColumn, Target: tbl, SubTarget: cmd.Name})
 				case pg_query.AlterTableType_AT_AddConstraint:
 					con := ""
-					if cmd.Def != nil {
-						if c := cmd.Def.GetConstraint(); c != nil {
-							con = c.Conname
-						}
+					if cmd.Def != nil && cmd.Def.GetConstraint() != nil {
+						con = cmd.Def.GetConstraint().Conname
 					}
 					ops = append(ops, SchemaOp{Kind: OpAddConstraint, Target: tbl, SubTarget: con})
 				case pg_query.AlterTableType_AT_DropConstraint:

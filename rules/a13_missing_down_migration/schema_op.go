@@ -58,7 +58,7 @@ func (op SchemaOp) IsInvertedBy(downOp SchemaOp) bool {
 	case OpDropColumn:
 		return downOp.Kind == OpAddColumn && tUp == tDown && sUp == sDown
 	case OpCreateIndex:
-		if downOp.Kind == OpDropTable && tUp != "" && tUp == tDown {
+		if downOp.Kind == OpDropTable && sUp != "" && sUp == tDown {
 			return true // Dropping the table also reverts any created index on it
 		}
 		if downOp.Kind == OpDropIndex {
