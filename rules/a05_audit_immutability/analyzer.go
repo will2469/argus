@@ -91,6 +91,21 @@ func inspectFunction(pass *analysis.Pass, fset *token.FileSet, file *ast.File, f
 		}
 
 		queries := tracker.ResolveCallQueries(call)
+		// nil means no SQL argument found, skip
+		if queries == nil {
+			return true
+		}
+		// empty slice []string{} means Unknown provenance (not provably safe) - fail-closed
+		if len(queries) == 0 {
+			// For security-sensitive audit table operations, Unknown is not provably safe
+			// We flag this to enforce explicit whitelisting or provenance
+			*issues = append(*issues, Issue{
+				Pos:     call.Pos(),
+				Message: "query provenance is unknown (not provably safe); audit table operations require explicit static provenance",
+			})
+			return true
+		}
+
 		for _, query := range queries {
 			if strings.TrimSpace(query) == "" {
 				continue

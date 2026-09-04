@@ -19,6 +19,7 @@ type varKey struct {
 }
 
 // valueSet represents a set of candidate string values a variable can hold.
+// nil represents Unknown (not provably safe), while empty map represents proven empty.
 type valueSet map[string]struct{}
 
 func newValueSet(items ...string) valueSet {
@@ -68,13 +69,23 @@ func newFlowState() *flowState {
 func (s *flowState) clone() *flowState {
 	c := newFlowState()
 	for k, v := range s.values {
-		c.values[k] = v.clone()
+		// Preserve nil (Unknown state) during clone
+		if v == nil {
+			c.values[k] = nil
+		} else {
+			c.values[k] = v.clone()
+		}
 	}
 	return c
 }
 
 func (s *flowState) set(k varKey, vs valueSet) {
-	s.values[k] = vs.clone()
+	// Preserve nil (Unknown state) during set
+	if vs == nil {
+		s.values[k] = nil
+	} else {
+		s.values[k] = vs.clone()
+	}
 }
 
 func (s *flowState) get(k varKey) (valueSet, bool) {
@@ -83,6 +94,7 @@ func (s *flowState) get(k varKey) (valueSet, bool) {
 }
 
 // join merges two branch states using a union lattice join.
+// Fail-closed: if either branch has Unknown (nil) for a variable, the result is Unknown.
 func (s *flowState) join(other *flowState) *flowState {
 	if other == nil {
 		return s.clone()
@@ -90,9 +102,20 @@ func (s *flowState) join(other *flowState) *flowState {
 	merged := s.clone()
 	for k, v := range other.values {
 		if existing, ok := merged.values[k]; ok {
-			existing.addAll(v)
+			// If either branch is Unknown (nil), result is Unknown (fail-closed)
+			if existing == nil || v == nil {
+				merged.values[k] = nil
+			} else {
+				// Both are known (either empty or have values) - union them
+				existing.addAll(v)
+			}
 		} else {
-			merged.values[k] = v.clone()
+			// Copy the other branch's value (including nil for Unknown)
+			if v == nil {
+				merged.values[k] = nil
+			} else {
+				merged.values[k] = v.clone()
+			}
 		}
 	}
 	return merged

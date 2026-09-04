@@ -106,6 +106,8 @@ func TestA05_AdversarialCorpus(t *testing.T) {
 		{"A10_VariableShadowing_Inner", 100, true},
 		{"A10_VariableShadowing_Outer", 105, false},
 		{"A11_BranchReassignment", 115, true},
+		{"A12_UnknownExternalSource", 122, true},
+		{"A13_BranchWithUnknown", 132, true},
 	}
 
 	for _, a := range assertions {

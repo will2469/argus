@@ -116,3 +116,25 @@ func A11_BranchReassignment(ctx context.Context, db DBExecutor, cond bool) error
 	return err
 }
 
+// A12: Unknown External Source — query from unresolvable external function (Unknown state).
+func A12_UnknownExternalSource(ctx context.Context, db DBExecutor) error {
+	query := getQueryFromExternalSource()
+	_, err := db.Exec(ctx, query)
+	return err
+}
+
+// A13: Branch With Unknown — one branch has safe query, other has Unknown (should be flagged).
+func A13_BranchWithUnknown(ctx context.Context, db DBExecutor, cond bool) error {
+	query := "SELECT * FROM audit_logs"
+	if cond {
+		query = getQueryFromExternalSource()
+	}
+	_, err := db.Exec(ctx, query)
+	return err
+}
+
+// getQueryFromExternalSource simulates an unresolvable external source.
+func getQueryFromExternalSource() string {
+	return "DELETE FROM audit_logs WHERE id = 1"
+}
+

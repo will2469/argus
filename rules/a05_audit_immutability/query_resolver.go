@@ -83,8 +83,13 @@ func (t *flowTracker) handleAssign(s *ast.AssignStmt, state *flowState) {
 				continue
 			}
 			vals := t.resolveExpr(s.Rhs[i], state, 0)
+			// nil means Unknown (not provably safe), not empty set
 			k := makeDefVarKey(t.pass, lhsId)
-			state.set(k, vals)
+			if vals == nil {
+				state.values[k] = nil // Unknown
+			} else {
+				state.set(k, vals)
+			}
 		}
 	} else if s.Tok == token.ASSIGN {
 		for i, lhs := range s.Lhs {
@@ -93,8 +98,13 @@ func (t *flowTracker) handleAssign(s *ast.AssignStmt, state *flowState) {
 				continue
 			}
 			vals := t.resolveExpr(s.Rhs[i], state, 0)
+			// nil means Unknown (not provably safe), not empty set
 			k := makeVarKey(t.pass, t.file, t.fn, lhsId)
-			state.set(k, vals)
+			if vals == nil {
+				state.values[k] = nil // Unknown
+			} else {
+				state.set(k, vals)
+			}
 		}
 	} else if s.Tok == token.ADD_ASSIGN {
 		for i, lhs := range s.Lhs {
@@ -105,7 +115,12 @@ func (t *flowTracker) handleAssign(s *ast.AssignStmt, state *flowState) {
 			k := makeVarKey(t.pass, t.file, t.fn, lhsId)
 			prevVals, _ := state.get(k)
 			rhsVals := t.resolveExpr(s.Rhs[i], state, 0)
-			state.set(k, crossConcat(prevVals, rhsVals))
+			// If either side is Unknown, result is Unknown (fail-closed)
+			if prevVals == nil || rhsVals == nil {
+				state.values[k] = nil
+			} else {
+				state.set(k, crossConcat(prevVals, rhsVals))
+			}
 		}
 	}
 }
@@ -123,8 +138,13 @@ func (t *flowTracker) handleDecl(s *ast.DeclStmt, state *flowState) {
 		for i, name := range valSpec.Names {
 			if i < len(valSpec.Values) {
 				vals := t.resolveExpr(valSpec.Values[i], state, 0)
+				// nil means Unknown (not provably safe), not empty set
 				k := makeDefVarKey(t.pass, name)
-				state.set(k, vals)
+				if vals == nil {
+					state.values[k] = nil // Unknown
+				} else {
+					state.set(k, vals)
+				}
 			}
 		}
 	}
