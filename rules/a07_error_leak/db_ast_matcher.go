@@ -45,33 +45,43 @@ func isProvenDBQuerierASTType(expr ast.Expr, file *ast.File, fn *ast.FuncDecl) b
 		ts := findTypeSpec(id.Name, file)
 		if ts != nil {
 			if iface, ok := ts.Type.(*ast.InterfaceType); ok && iface.Methods != nil {
+				hasExec, hasQuery := false, false
 				for _, m := range iface.Methods.List {
-					if ft, ok := m.Type.(*ast.FuncType); ok && hasDBDriverMethodAST(ft, file, fn) {
-						return true
+					ft, ok := m.Type.(*ast.FuncType)
+					if !ok {
+						continue
+					}
+					for _, nm := range m.Names {
+						switch nm.Name {
+						case "Exec", "ExecContext":
+							if isASTExecOrQueryMethod(ft, file, fn) {
+								hasExec = true
+							}
+						case "Query", "QueryContext":
+							if isASTExecOrQueryMethod(ft, file, fn) {
+								hasQuery = true
+							}
+						}
 					}
 				}
+				return hasExec || hasQuery
 			}
 		}
 	}
 	return false
 }
 
-func hasDBDriverMethodAST(ft *ast.FuncType, file *ast.File, fn *ast.FuncDecl) bool {
-	if ft == nil {
+func isASTExecOrQueryMethod(ft *ast.FuncType, file *ast.File, fn *ast.FuncDecl) bool {
+	if ft == nil || ft.Results == nil || len(ft.Results.List) != 2 {
 		return false
 	}
-	checkFieldList := func(fl *ast.FieldList) bool {
-		if fl == nil {
-			return false
-		}
-		for _, f := range fl.List {
-			if isKnownDBDriverASTType(f.Type, file, fn) {
-				return true
-			}
-		}
+	if !isKnownDBDriverASTType(ft.Results.List[0].Type, file, fn) {
 		return false
 	}
-	return checkFieldList(ft.Results) || checkFieldList(ft.Params)
+	if errID, ok := ft.Results.List[1].Type.(*ast.Ident); !ok || errID.Name != "error" {
+		return false
+	}
+	return true
 }
 
 func isAssignedFromDBConstructor(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, expr ast.Expr) bool {

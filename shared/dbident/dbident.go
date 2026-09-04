@@ -42,6 +42,7 @@ var knownDBDriverTypeNames = map[string]bool{
 	"Batch": true, "BatchResults": true,
 	"Stmt": true, "Rows": true, "Row": true,
 	"Result": true, "CommandTag": true,
+	"TxOptions": true,
 }
 
 // IsKnownDBPackagePath reports whether path is a recognized database driver

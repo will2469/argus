@@ -74,10 +74,13 @@ func TestTxSoundness_CalculatorAndShadowing(t *testing.T) {
 	fset := token.NewFileSet()
 	src := `package main
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
 
 type Tx interface {
-	Exec(ctx context.Context, sql string, args ...any) error
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
 }
@@ -164,11 +167,14 @@ func TestSemanticHelperAndPoolRejection(t *testing.T) {
 	fset := token.NewFileSet()
 	src := `package main
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
 
 type Tx interface {
-	Exec(ctx context.Context, sql string, args ...any) error
-	Query(ctx context.Context, sql string, args ...any) error
+	Exec(ctx context.Context, sql string, args ...any) (sql.Result, error)
+	Query(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
 }

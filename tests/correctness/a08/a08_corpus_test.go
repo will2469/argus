@@ -91,15 +91,16 @@ func TestA08_AdversarialCorpus(t *testing.T) {
 		line       int
 		mustDetect bool
 	}{
-		{"A1_Branch", 26, true},
-		{"A2_ExplicitTxIO", 40, true},
-		{"A3_CallGraph", 47, true},
-		{"A4_Wrapper", 63, true},
-		{"A5_NestedFunction", 72, true},
-		{"A6_Generic", 86, true},
-		{"A7_StorageUpload", 100, true},
-		{"A8_CalculatorUploadInTx", 117, false},
-		{"A9_ClientPutObjectInTx", 133, true},
+		{"A1_Branch", 21, true},
+		{"A2_ExplicitTxIO", 36, true},
+		{"A3_CallGraph", 43, true},
+		{"A4_Wrapper", 59, true},
+		{"A5_NestedFunction", 68, true},
+		{"A6_Generic", 82, true},
+		{"A7_StorageUpload", 96, true},
+		{"A8_CalculatorUploadInTx", 113, false},
+		{"A9_ClientPutObjectInTx", 129, true},
+		{"A10_FakeTxSpoofing_MustBeSafe", 147, false},
 	}
 
 	for _, a := range assertions {

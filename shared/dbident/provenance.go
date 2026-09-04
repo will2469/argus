@@ -7,8 +7,8 @@ import (
 )
 
 // IsProvenDBQuerierType reports whether t is a proven database querier:
-// either a concrete driver type, or an interface whose method signatures
-// reference concrete driver types (provenance-anchored).
+// either a concrete driver type, or an interface satisfying the full database
+// querier contract (both Exec and Query returning driver types and error).
 func IsProvenDBQuerierType(t types.Type) bool {
 	if t == nil {
 		return false
@@ -24,8 +24,72 @@ func IsProvenDBQuerierType(t types.Type) bool {
 		return false
 	}
 
+	return hasProvenDBQuerierMethods(iface)
+}
+
+func hasProvenDBQuerierMethods(iface *types.Interface) bool {
+	if iface == nil {
+		return false
+	}
+
+	hasExec := false
+	hasQuery := false
+
 	for i := 0; i < iface.NumMethods(); i++ {
-		if isDBMethodWithDriverProvenance(iface.Method(i)) {
+		method := iface.Method(i)
+		sig, ok := method.Type().(*types.Signature)
+		if !ok {
+			continue
+		}
+
+		switch method.Name() {
+		case "Exec", "ExecContext":
+			if isDBExecMethodSignature(sig) {
+				hasExec = true
+			}
+		case "Query", "QueryContext":
+			if isDBQueryMethodSignature(sig) {
+				hasQuery = true
+			}
+		}
+	}
+
+	return hasExec || hasQuery
+}
+
+func isDBExecMethodSignature(sig *types.Signature) bool {
+	if sig == nil || sig.Results() == nil || sig.Results().Len() != 2 {
+		return false
+	}
+	if !IsKnownDBDriverType(sig.Results().At(0).Type()) {
+		return false
+	}
+	if sig.Results().At(1).Type().String() != "error" {
+		return false
+	}
+	return sigHasQueryString(sig)
+}
+
+func isDBQueryMethodSignature(sig *types.Signature) bool {
+	if sig == nil || sig.Results() == nil || sig.Results().Len() != 2 {
+		return false
+	}
+	if !IsKnownDBDriverType(sig.Results().At(0).Type()) {
+		return false
+	}
+	if sig.Results().At(1).Type().String() != "error" {
+		return false
+	}
+	return sigHasQueryString(sig)
+}
+
+func sigHasQueryString(sig *types.Signature) bool {
+	if sig == nil || sig.Params() == nil {
+		return false
+	}
+	for i := 0; i < sig.Params().Len(); i++ {
+		p := sig.Params().At(i).Type()
+		if basic, ok := p.(*types.Basic); ok && basic.Kind() == types.String {
 			return true
 		}
 	}
@@ -80,7 +144,7 @@ func hasProvenDBPoolMethods(iface *types.Interface) bool {
 					if cbSig, ok := params.At(j).Type().Underlying().(*types.Signature); ok {
 						if cbParams := cbSig.Params(); cbParams != nil && cbParams.Len() > 0 {
 							for k := 0; k < cbParams.Len(); k++ {
-								if IsProvenClosureTxType(cbParams.At(k).Type()) {
+								if IsProvenDBTxType(cbParams.At(k).Type()) {
 									return true
 								}
 							}

@@ -34,13 +34,13 @@ func TestA10_PositiveCorpus(t *testing.T) {
 
 	t.Logf("=== Positive Corpus Results (%d issues found) ===", len(issues))
 	expectedLines := map[int]string{
-		33:  "P1_Obvious",
-		45:  "P2_Indirect",
-		52:  "P3_Helper",
-		64:  "P4_Nested",
-		76:  "P5_Alias",
-		88:  "P6_UnrelatedRowLock",
-		101: "P7_UnrelatedAdvisoryLock",
+		35:  "P1_Obvious",
+		47:  "P2_Indirect",
+		54:  "P3_Helper",
+		66:  "P4_Nested",
+		78:  "P5_Alias",
+		90:  "P6_UnrelatedRowLock",
+		103: "P7_UnrelatedAdvisoryLock",
 	}
 
 	foundLines := make(map[int]bool)
@@ -91,17 +91,18 @@ func TestA10_AdversarialCorpus(t *testing.T) {
 		line       int
 		mustDetect bool
 	}{
-		{"A1_Branch", 31, true},
-		{"A2_Reassignment", 48, true},
-		{"A3_Alias", 62, true},
-		{"A4_Wrapper", 78, true},
-		{"A5_NestedFunction", 90, true},
-		{"A6_Generic", 109, true},
-		{"A7_HelperNoIso", 121, true},
-		{"A8_NonDBWithTxHelper", 133, false},
-		{"A9_WorkerPoolBegin", 149, false},
-		{"A10_FakeDBProxy", 167, false},
-		{"A11_FakeSearchProxy", 188, false},
+		{"A1_Branch", 33, true},
+		{"A2_Reassignment", 50, true},
+		{"A3_Alias", 64, true},
+		{"A4_Wrapper", 80, true},
+		{"A5_NestedFunction", 92, true},
+		{"A6_Generic", 111, true},
+		{"A7_HelperNoIso", 123, true},
+		{"A8_NonDBWithTxHelper", 136, false},
+		{"A9_WorkerPoolBegin", 152, false},
+		{"A10_FakeDBProxy", 169, false},
+		{"A11_FakeSearchProxy", 190, false},
+		{"A12_FakeTxSpoofing_MustBeSafe", 216, false},
 	}
 
 	for _, a := range assertions {

@@ -82,6 +82,54 @@ func IsKnownDBTxASTType(expr ast.Expr, file *ast.File) bool {
 	return IsImportedDBPackageIdent(file, pkgID.Name) && sel.Sel.Name == "Tx"
 }
 
+// IsKnownDBDriverASTType checks whether an AST type expression refers to a
+// known database driver type by verifying the package qualifier against file imports.
+func IsKnownDBDriverASTType(expr ast.Expr, file *ast.File) bool {
+	if expr == nil || file == nil {
+		return false
+	}
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkgID, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if !IsImportedDBPackageIdent(file, pkgID.Name) {
+		return false
+	}
+	return knownDBDriverTypeNames[sel.Sel.Name]
+}
+
+// IsASTErrorType checks whether an AST expression is the built-in "error" type.
+func IsASTErrorType(expr ast.Expr) bool {
+	if id, ok := expr.(*ast.Ident); ok {
+		return id.Name == "error"
+	}
+	return false
+}
+
+// IsASTExecOrQueryMethod checks whether an interface method signature represents
+// a genuine database Exec or Query method: requires 2 return values with an imported
+// database driver type as the first return value and terminal error as the second.
+func IsASTExecOrQueryMethod(m *ast.Field, file *ast.File) bool {
+	if m == nil || file == nil {
+		return false
+	}
+	ft, ok := m.Type.(*ast.FuncType)
+	if !ok || ft.Results == nil || len(ft.Results.List) != 2 {
+		return false
+	}
+	if !IsASTErrorType(ft.Results.List[1].Type) {
+		return false
+	}
+	return IsKnownDBDriverASTType(ft.Results.List[0].Type, file)
+}
+
 // IsProvenDBPoolASTType checks whether expr is a proven DB pool type at
 // the AST level: either a direct known type (sql.DB), or a local
 // interface type whose methods trace back to proven DB types.
@@ -125,37 +173,13 @@ func IsProvenDBTxASTType(expr ast.Expr, file *ast.File) bool {
 	if !ok {
 		return false
 	}
-	return HasASTTxMethods(iface)
+	return HasASTTxMethods(iface, file)
 }
 
 // IsProvenClosureTxASTType checks whether expr is a suitable transaction
 // type for closure-based transaction APIs at the AST level.
 func IsProvenClosureTxASTType(expr ast.Expr, file *ast.File) bool {
-	if IsProvenDBTxASTType(expr, file) {
-		return true
-	}
-	id, ok := expr.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	ts := FindTypeSpec(id.Name, file)
-	if ts == nil {
-		return false
-	}
-	iface, ok := ts.Type.(*ast.InterfaceType)
-	if !ok || iface.Methods == nil {
-		return false
-	}
-	for _, m := range iface.Methods.List {
-		for _, name := range m.Names {
-			switch name.Name {
-			case "Exec", "ExecContext", "Query", "QueryRow",
-				"QueryContext", "QueryRowContext", "Commit", "Rollback":
-				return true
-			}
-		}
-	}
-	return false
+	return IsProvenDBTxASTType(expr, file)
 }
 
 // IsDBPoolConstructorCall checks whether call is a known database pool

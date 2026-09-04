@@ -7,61 +7,52 @@ import (
 	"go/types"
 
 	"golang.org/x/tools/go/analysis"
+
+	"github.com/will2469/argus/shared/dbident"
 )
 
 // isAdvisoryLockHelperReceiver verifies whether a selector expression refers to an approved
-// advisory lock helper using semantic type verification and fail-closed AST fallback.
+// advisory lock helper using exact types.Func declaration identity and fail-closed AST fallback.
 func isAdvisoryLockHelperReceiver(pass *analysis.Pass, sel *ast.SelectorExpr, fn *ast.FuncDecl, file *ast.File) bool {
 	if sel == nil {
 		return false
 	}
 
-	// 1. Check if sel.X is an approved package (e.g. argus.WithAdvisoryLock)
+	// 1. Semantic Type Checking via pass.TypesInfo (when available):
+	// callsite -> exact types.Func / types.Object -> exact approved helper declaration.
+	if pass != nil && pass.TypesInfo != nil {
+		// A. Method selection on receiver: e.g. h.WithAdvisoryLock(...)
+		if selType, ok := pass.TypesInfo.Selections[sel]; ok {
+			if fnObj, ok := selType.Obj().(*types.Func); ok {
+				return isApprovedHelperFunc(pass, fnObj, file)
+			}
+		}
+
+		// B. Package-level function or direct identifier use: e.g. argus.WithAdvisoryLock(...)
+		if obj := pass.TypesInfo.Uses[sel.Sel]; obj != nil {
+			if fnObj, ok := obj.(*types.Func); ok {
+				return isApprovedHelperFunc(pass, fnObj, file)
+			}
+		}
+
+		// When compiler types are available but did not resolve to an approved helper, fail closed.
+		return false
+	}
+
+	// 2. AST-only fallback for standalone CLI runner (pass == nil)
+	// A. Check if sel.X is an imported approved Argus package
 	if id, ok := sel.X.(*ast.Ident); ok {
-		if isApprovedPackageCall(pass, id, fn, file) {
+		if isImportedArgusPackage(file, id.Name) && !isIdentShadowed(file, fn, id.Pos(), id.Name) {
 			return true
 		}
 	}
 
-	// 2. Semantic Type Checking via pass.TypesInfo (when available)
-	if pass != nil && pass.TypesInfo != nil {
-		var recvType types.Type
-		if selType, ok := pass.TypesInfo.Selections[sel]; ok && selType.Recv() != nil {
-			recvType = selType.Recv()
-		} else if tv, ok := pass.TypesInfo.Types[sel.X]; ok && tv.Type != nil {
-			recvType = tv.Type
-		} else if id, ok := sel.X.(*ast.Ident); ok {
-			if obj := pass.TypesInfo.Uses[id]; obj != nil {
-				recvType = obj.Type()
-			} else if obj := pass.TypesInfo.Defs[id]; obj != nil {
-				recvType = obj.Type()
-			}
-		}
-
-		if recvType != nil && recvType != types.Typ[types.Invalid] {
-			if isProvenLockHelperType(recvType, sel.Sel.Name) {
-				return true
-			}
-			// Reject known non-lock types immediately (anti-false-positive boundary)
-			if isKnownNonLockTypeName(getTypeName(recvType)) {
-				return false
-			}
-			// Only fall through to AST if type information contains invalid/unresolved symbols
-			if !hasInvalidTypeOrMethods(recvType, sel.Sel.Name) {
-				return false
-			}
-		}
-	}
-
-	// 3. AST-only fallback: Resolve receiver type and verify contract
+	// B. Check if receiver is local Helper struct with proven advisory lock method
 	astType := findASTReceiverType(sel.X, fn, file)
 	if astType != nil {
 		typeName := getASTTypeName(astType)
-		if isKnownNonLockTypeName(typeName) {
-			return false
-		}
-		if isApprovedLockHelperTypeName(typeName) {
-			return hasASTProvenLockMethod(typeName, sel.Sel.Name, file)
+		if typeName == "Helper" {
+			return hasASTProvenLockMethod("Helper", sel.Sel.Name, file)
 		}
 	}
 
@@ -69,81 +60,44 @@ func isAdvisoryLockHelperReceiver(pass *analysis.Pass, sel *ast.SelectorExpr, fn
 	return false
 }
 
-func isApprovedPackageCall(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl, file *ast.File) bool {
-	if id == nil {
+func isApprovedHelperFunc(pass *analysis.Pass, fnObj *types.Func, file *ast.File) bool {
+	if fnObj == nil || fnObj.Pkg() == nil {
 		return false
 	}
-	if pass != nil && pass.TypesInfo != nil {
-		if obj := pass.TypesInfo.Uses[id]; obj != nil {
-			if pkg, ok := obj.(*types.PkgName); ok {
-				return isArgusPackagePath(pkg.Imported().Path())
-			}
-		}
+
+	// Method or function must be an approved helper name
+	switch fnObj.Name() {
+	case "WithAdvisoryLock", "ExecuteLockedTx", "TryAdvisoryLock":
+	default:
 		return false
 	}
-	if file != nil {
-		if isImportedArgusPackage(file, id.Name) && !isIdentShadowed(file, fn, id.Pos(), id.Name) {
-			return true
-		}
-	}
-	return false
-}
 
-func isProvenLockHelperType(t types.Type, methodName string) bool {
-	if t == nil {
+	sig, ok := fnObj.Type().(*types.Signature)
+	if !ok || !isProvenAdvisoryLockSignature(fnObj.Name(), sig) {
 		return false
 	}
-	t = unwrapPointer(t)
 
-	// Named types verification
-	if named, ok := t.(*types.Named); ok && named.Obj() != nil {
-		typeName := named.Obj().Name()
-		// Always reject known non-lock types (e.g. Calculator, SearchEngine)
-		if isKnownNonLockTypeName(typeName) {
-			return false
-		}
-		pkg := named.Obj().Pkg()
-		if pkg != nil && isArgusPackagePath(pkg.Path()) {
-			return hasProvenAdvisoryLockMethod(t, methodName)
-		}
-		if !isApprovedLockHelperTypeName(typeName) {
-			return false
-		}
-	}
-
-	return hasProvenAdvisoryLockMethod(t, methodName)
-}
-
-func hasProvenAdvisoryLockMethod(t types.Type, methodName string) bool {
-	if t == nil {
-		return false
-	}
-	mset := types.NewMethodSet(t)
-	if checkMethodSet(mset, methodName) {
+	// Path 1: Declared in an approved Argus package
+	if isArgusPackagePath(fnObj.Pkg().Path()) {
 		return true
 	}
-	if _, isPtr := t.(*types.Pointer); !isPtr {
-		msetPtr := types.NewMethodSet(types.NewPointer(t))
-		if checkMethodSet(msetPtr, methodName) {
+
+	// Path 2: Declared in local package under analysis on exact "Helper" type
+	isCurrentPkg := false
+	if pass != nil && pass.Pkg != nil {
+		isCurrentPkg = (fnObj.Pkg() == pass.Pkg || fnObj.Pkg().Path() == pass.Pkg.Path())
+	}
+	if !isCurrentPkg && file != nil && file.Name != nil {
+		isCurrentPkg = (fnObj.Pkg().Name() == file.Name.Name)
+	}
+
+	if isCurrentPkg && sig.Recv() != nil {
+		recvNamed, ok := dbident.UnwrapPointer(sig.Recv().Type()).(*types.Named)
+		if ok && recvNamed.Obj() != nil && recvNamed.Obj().Name() == "Helper" {
 			return true
 		}
 	}
-	return false
-}
 
-func checkMethodSet(mset *types.MethodSet, methodName string) bool {
-	if mset == nil {
-		return false
-	}
-	for i := 0; i < mset.Len(); i++ {
-		m := mset.At(i).Obj()
-		if m.Name() == methodName {
-			sig, ok := m.Type().(*types.Signature)
-			if ok && isProvenAdvisoryLockSignature(methodName, sig) {
-				return true
-			}
-		}
-	}
 	return false
 }
 
@@ -157,7 +111,7 @@ func isProvenAdvisoryLockSignature(methodName string, sig *types.Signature) bool
 		if params.Len() < 3 {
 			return false
 		}
-		if !isContextType(params.At(0).Type()) || !isStringType(params.At(2).Type()) {
+		if !dbident.IsExactContextType(params.At(0).Type()) || !isStringType(params.At(2).Type()) {
 			return false
 		}
 		if params.Len() >= 4 {
@@ -177,7 +131,7 @@ func isProvenAdvisoryLockSignature(methodName string, sig *types.Signature) bool
 		if params.Len() < 3 {
 			return false
 		}
-		if !isContextType(params.At(0).Type()) || !isStringType(params.At(2).Type()) {
+		if !dbident.IsExactContextType(params.At(0).Type()) || !isStringType(params.At(2).Type()) {
 			return false
 		}
 		for j := 2; j < params.Len(); j++ {
@@ -190,27 +144,7 @@ func isProvenAdvisoryLockSignature(methodName string, sig *types.Signature) bool
 		if params.Len() < 3 {
 			return false
 		}
-		return isContextType(params.At(0).Type()) && isStringType(params.At(2).Type())
-	}
-	return false
-}
-
-func isContextType(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	t = unwrapPointer(t)
-	if named, ok := t.(*types.Named); ok && named.Obj() != nil {
-		if named.Obj().Name() == "Context" {
-			return true
-		}
-	}
-	if iface, ok := t.Underlying().(*types.Interface); ok {
-		for i := 0; i < iface.NumMethods(); i++ {
-			if iface.Method(i).Name() == "Done" {
-				return true
-			}
-		}
+		return dbident.IsExactContextType(params.At(0).Type()) && isStringType(params.At(2).Type())
 	}
 	return false
 }

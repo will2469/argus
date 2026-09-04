@@ -153,6 +153,64 @@ func TestFakePoolInterface_MustBeRejected(t *testing.T) {
 	}
 }
 
+// TestFakeQuerier_MustBeRejected tests the exact user failure case:
+// type FakeQuerier interface { Exec(string) sql.Result }
+// without Query and without error return. It must NOT be classified as a DB querier.
+func TestFakeQuerier_MustBeRejected(t *testing.T) {
+	sqlPkg := types.NewPackage("database/sql", "sql")
+	resultNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Result", nil), types.NewInterfaceType(nil, nil), nil)
+
+	fakeQuerier := buildInterface(t,
+		method("Exec", stringParam(), types.NewTuple(types.NewVar(token.NoPos, nil, "", resultNamed))),
+	)
+
+	if IsProvenDBQuerierType(fakeQuerier) {
+		t.Fatal("PROVENANCE FAILURE: FakeQuerier{Exec(string) sql.Result} was ACCEPTED as a DB querier. " +
+			"Queriers must implement the complete query contract (Exec + Query with error return).")
+	}
+}
+
+// TestDBExecutor_MustBeAccepted tests that a complete DB querier contract
+// (Exec returning (sql.Result, error) AND Query returning (*sql.Rows, error)) is accepted.
+func TestDBExecutor_MustBeAccepted(t *testing.T) {
+	sqlPkg := types.NewPackage("database/sql", "sql")
+	resultNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Result", nil), types.NewInterfaceType(nil, nil), nil)
+	rowsNamed := types.NewNamed(types.NewTypeName(token.NoPos, sqlPkg, "Rows", nil), types.NewStruct(nil, nil), nil)
+	rowsPtr := types.NewPointer(rowsNamed)
+	errType := types.Universe.Lookup("error").Type()
+
+	dbExecutor := buildInterface(t,
+		method("Exec", stringParam(), types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", resultNamed),
+			types.NewVar(token.NoPos, nil, "", errType),
+		)),
+		method("Query", stringParam(), types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", rowsPtr),
+			types.NewVar(token.NoPos, nil, "", errType),
+		)),
+	)
+
+	if !IsProvenDBQuerierType(dbExecutor) {
+		t.Fatal("PROVENANCE FAILURE: Complete DBExecutor was REJECTED by IsProvenDBQuerierType")
+	}
+}
+
+// TestIsExactContextType ensures that context.Context is verified semantically,
+// rejecting custom types named Context from non-context packages.
+func TestIsExactContextType(t *testing.T) {
+	ctxPkg := types.NewPackage("context", "context")
+	realCtx := types.NewNamed(types.NewTypeName(token.NoPos, ctxPkg, "Context", nil), types.NewInterfaceType(nil, nil), nil)
+	if !IsExactContextType(realCtx) {
+		t.Error("real context.Context should be accepted")
+	}
+
+	fakePkg := types.NewPackage("my/app/pkg", "pkg")
+	fakeCtx := types.NewNamed(types.NewTypeName(token.NoPos, fakePkg, "Context", nil), types.NewInterfaceType(nil, nil), nil)
+	if IsExactContextType(fakeCtx) {
+		t.Error("fake Context from non-context package must be rejected")
+	}
+}
+
 func TestIsImportedDBPackageIdent(t *testing.T) {
 	fset := token.NewFileSet()
 	src := `package main

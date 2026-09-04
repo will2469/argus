@@ -76,9 +76,8 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call 
 	}
 
 	// 2. Standalone Mode (pass == nil or TypesInfo unavailable)
-	if id, ok := sel.X.(*ast.Ident); ok {
-		switch id.Name {
-		case "sql", "pgx", "pgxpool", "sqlx", "pq":
+	if id, ok := sel.X.(*ast.Ident); ok && file != nil {
+		if dbident.IsImportedDBPackageIdent(file, id.Name) {
 			return true
 		}
 	}
@@ -91,7 +90,7 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call 
 		return true
 	}
 
-	if isAssignedFromDBConstructor(sel.X, fn) {
+	if isAssignedFromDBConstructor(sel.X, fn, file) {
 		return true
 	}
 

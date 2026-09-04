@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -112,12 +113,14 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
 	}
 	conf := types.Config{
-		Error: func(err error) {}, // ignore unresolved external package errors
+		Importer: importer.Default(),
+		Error:    func(err error) {}, // ignore unresolved external package errors
 	}
-	_, _ = conf.Check(node.Name.Name, fset, pkgFiles, typesInfo)
+	pkg, _ := conf.Check(node.Name.Name, fset, pkgFiles, typesInfo)
 	pass := &analysis.Pass{
 		Fset:      fset,
 		Files:     pkgFiles,
+		Pkg:       pkg,
 		TypesInfo: typesInfo,
 		ResultOf: map[*analysis.Analyzer]any{
 			config.Analyzer:     appCfg,

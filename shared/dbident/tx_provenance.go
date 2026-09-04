@@ -4,7 +4,6 @@ package dbident
 
 import (
 	"go/types"
-	"strings"
 )
 
 // IsProvenDBTxType reports whether t is a proven database transaction type:
@@ -30,30 +29,30 @@ func IsProvenDBTxType(t types.Type) bool {
 
 // IsProvenClosureTxType reports whether t is a suitable transaction type
 // for closure-based transaction APIs (BeginFunc callbacks). Requires
-// either a proven direct Tx type or a provenance-anchored Tx interface.
+// a proven database transaction type.
 func IsProvenClosureTxType(t types.Type) bool {
-	if IsProvenDBTxType(t) {
-		return true
-	}
-	t = UnwrapPointer(t)
-	iface, ok := t.Underlying().(*types.Interface)
-	if !ok {
+	return IsProvenDBTxType(t)
+}
+
+// IsExactContextType reports whether t is the exact context.Context interface
+// from the standard library "context" package.
+func IsExactContextType(t types.Type) bool {
+	if t == nil {
 		return false
 	}
-	for i := 0; i < iface.NumMethods(); i++ {
-		if hasDriverTypeInSignature(iface.Method(i)) {
-			return true
-		}
+	t = UnwrapPointer(t)
+	named, ok := t.(*types.Named)
+	if !ok || named.Obj() == nil {
+		return false
 	}
-	return false
+	pkg := named.Obj().Pkg()
+	return pkg != nil && pkg.Path() == "context" && named.Obj().Name() == "Context"
 }
 
 // hasProvenDBTxMethods checks an interface for transaction semantics.
-// An interface is accepted as a DB transaction if:
-// 1. (Path 1) It has driver provenance AND standard Tx shape.
-// 2. (Path 2) It implements the complete database transaction contract:
-//    Commit + Rollback + Exec + Query, where Exec/Query take context.Context
-//    and a query string.
+// An interface is accepted as a DB transaction IF AND ONLY IF it has
+// verified driver provenance AND the standard transaction lifecycle methods
+// (Commit + Rollback + Exec/Query).
 func hasProvenDBTxMethods(iface *types.Interface) bool {
 	if iface == nil {
 		return false
@@ -61,11 +60,8 @@ func hasProvenDBTxMethods(iface *types.Interface) bool {
 
 	hasCommit := false
 	hasRollback := false
-	hasExec := false
-	hasQuery := false
 	hasExecOrQuery := false
 	hasProvenance := false
-	hasContext := false
 
 	for i := 0; i < iface.NumMethods(); i++ {
 		method := iface.Method(i)
@@ -85,22 +81,12 @@ func hasProvenDBTxMethods(iface *types.Interface) bool {
 			}
 		case "Exec", "ExecContext":
 			if isDBExecOrQuerySignature(sig) {
-				hasExec = true
 				hasExecOrQuery = true
 			}
-			if sigHasContext(sig) {
-				hasContext = true
-			}
-		case "Query", "QueryRow", "QueryContext", "QueryRowContext":
+		case "Query", "QueryRow", "QueryContext", "QueryRowContext", "SendBatch":
 			if isDBExecOrQuerySignature(sig) {
-				hasQuery = true
 				hasExecOrQuery = true
 			}
-			if sigHasContext(sig) {
-				hasContext = true
-			}
-		case "SendBatch":
-			hasExecOrQuery = true
 		}
 
 		if hasDriverTypeInSignature(method) {
@@ -108,14 +94,7 @@ func hasProvenDBTxMethods(iface *types.Interface) bool {
 		}
 	}
 
-	if hasProvenance && hasCommit && hasRollback && hasExecOrQuery {
-		return true
-	}
-	if hasCommit && hasRollback && hasExec && hasQuery && hasContext {
-		return true
-	}
-
-	return false
+	return hasProvenance && hasCommit && hasRollback && hasExecOrQuery
 }
 
 func isTxLifecycleSignature(sig *types.Signature) bool {
@@ -131,8 +110,7 @@ func isTxLifecycleSignature(sig *types.Signature) bool {
 			return true
 		}
 		if sig.Params().Len() == 1 {
-			paramType := sig.Params().At(0).Type().String()
-			return strings.Contains(paramType, "context.Context")
+			return IsExactContextType(sig.Params().At(0).Type())
 		}
 		return false
 	}
@@ -150,12 +128,4 @@ func isDBExecOrQuerySignature(sig *types.Signature) bool {
 		}
 	}
 	return false
-}
-
-func sigHasContext(sig *types.Signature) bool {
-	if sig == nil || sig.Params() == nil || sig.Params().Len() == 0 {
-		return false
-	}
-	first := sig.Params().At(0).Type().String()
-	return strings.Contains(first, "context.Context")
 }

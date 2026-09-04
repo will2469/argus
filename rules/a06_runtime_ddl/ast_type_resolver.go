@@ -6,7 +6,7 @@ import (
 	"go/ast"
 	"go/token"
 
-	"github.com/will2469/argus/shared/callsite"
+	"github.com/will2469/argus/shared/dbident"
 )
 
 func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
@@ -110,7 +110,7 @@ func getASTTypeName(expr ast.Expr) string {
 }
 
 func isProvenDBASTType(expr ast.Expr, file *ast.File) bool {
-	if expr == nil {
+	if expr == nil || file == nil {
 		return false
 	}
 	if star, ok := expr.(*ast.StarExpr); ok {
@@ -118,8 +118,7 @@ func isProvenDBASTType(expr ast.Expr, file *ast.File) bool {
 	}
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		if pkgID, ok := sel.X.(*ast.Ident); ok {
-			switch pkgID.Name {
-			case "sql", "pgx", "pgxpool", "sqlx", "pq":
+			if dbident.IsImportedDBPackageIdent(file, pkgID.Name) {
 				switch sel.Sel.Name {
 				case "DB", "Pool", "Conn", "Tx", "Rows", "Row", "Batch", "BatchResults", "Stmt", "Result", "CommandTag":
 					return true
@@ -149,8 +148,8 @@ func findTypeSpec(name string, file *ast.File) *ast.TypeSpec {
 	return nil
 }
 
-func isDBTypeSpec(ts *ast.TypeSpec, _ *ast.File) bool {
-	if ts == nil {
+func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
+	if ts == nil || file == nil || !dbident.HasDatabaseImports(file) {
 		return false
 	}
 	switch t := ts.Type.(type) {
@@ -158,42 +157,26 @@ func isDBTypeSpec(ts *ast.TypeSpec, _ *ast.File) bool {
 		if t.Methods == nil {
 			return false
 		}
+		hasExec, hasQuery := false, false
 		for _, m := range t.Methods.List {
-			if ft, ok := m.Type.(*ast.FuncType); ok && hasDBDriverMethodAST(ft) {
-				return true
+			if _, ok := m.Type.(*ast.FuncType); !ok {
+				continue
 			}
-		}
-	}
-	return false
-}
-
-func hasDBDriverMethodAST(ft *ast.FuncType) bool {
-	if ft == nil {
-		return false
-	}
-	checkFieldList := func(fl *ast.FieldList) bool {
-		if fl == nil {
-			return false
-		}
-		for _, f := range fl.List {
-			typ := f.Type
-			if star, ok := typ.(*ast.StarExpr); ok {
-				typ = star.X
-			}
-			if sel, ok := typ.(*ast.SelectorExpr); ok {
-				if id, ok := sel.X.(*ast.Ident); ok {
-					if id.Name == "sql" || id.Name == "pgx" || id.Name == "pgconn" || id.Name == "sqlx" || id.Name == "pq" {
-						return true
+			for _, nm := range m.Names {
+				switch nm.Name {
+				case "Exec", "ExecContext", "Query", "QueryContext":
+					if dbident.IsASTExecOrQueryMethod(m, file) {
+						hasExec = true
 					}
 				}
 			}
 		}
-		return false
+		return hasExec || hasQuery
 	}
-	return checkFieldList(ft.Results) || checkFieldList(ft.Params)
+	return false
 }
 
-func isAssignedFromDBConstructor(expr ast.Expr, fn *ast.FuncDecl) bool {
+func isAssignedFromDBConstructor(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) bool {
 	id, ok := expr.(*ast.Ident)
 	if !ok || fn == nil || fn.Body == nil {
 		return false
@@ -209,7 +192,7 @@ func isAssignedFromDBConstructor(expr ast.Expr, fn *ast.FuncDecl) bool {
 		}
 		for i, lhs := range as.Lhs {
 			if lid, ok := lhs.(*ast.Ident); ok && lid.Name == id.Name && i < len(as.Rhs) {
-				if call, ok := as.Rhs[i].(*ast.CallExpr); ok && isDBPoolConstructorCall(call) {
+				if call, ok := as.Rhs[i].(*ast.CallExpr); ok && dbident.IsDBPoolConstructorCall(call, file) {
 					isConstructor = true
 					return false
 				}
@@ -218,24 +201,4 @@ func isAssignedFromDBConstructor(expr ast.Expr, fn *ast.FuncDecl) bool {
 		return true
 	})
 	return isConstructor
-}
-
-func isDBPoolConstructorCall(call *ast.CallExpr) bool {
-	sel := callsite.GetCallSelector(call.Fun)
-	if sel == nil {
-		return false
-	}
-	if pkgID, ok := sel.X.(*ast.Ident); ok {
-		switch pkgID.Name {
-		case "sql":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "OpenDB"
-		case "pgx":
-			return sel.Sel.Name == "Connect" || sel.Sel.Name == "ConnectConfig"
-		case "pgxpool":
-			return sel.Sel.Name == "New" || sel.Sel.Name == "NewWithConfig"
-		case "sqlx":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "Connect"
-		}
-	}
-	return false
 }

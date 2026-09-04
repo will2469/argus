@@ -2,6 +2,7 @@ package adversarial
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Tx interface {
@@ -9,6 +10,7 @@ type Tx interface {
 	Query(ctx context.Context, sql string, args ...any) error
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
+	Options() *sql.TxOptions
 }
 
 type TxOptions struct {
@@ -190,5 +192,25 @@ func A11_FakeSearchProxy_MustBeSafe(ctx context.Context, sp FakeSearchPool) erro
 		return err
 	}
 	return tx.Query(ctx, "SELECT * FROM balances FOR UPDATE")
+}
+
+// A12: Fake Tx Spoofing — custom non-DB interface resembling transaction must NOT trigger violation.
+type FakeTx interface {
+	Exec(string) error
+	Commit() error
+	Rollback() error
+}
+
+type FakeTxPool interface {
+	Begin(ctx context.Context) (FakeTx, error)
+}
+
+func A12_FakeTxSpoofing_MustBeSafe(ctx context.Context, fp FakeTxPool) error {
+	tx, err := fp.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	_ = tx.Exec("UPDATE balances SET amount = 0 WHERE id = 1")
+	return tx.Commit()
 }
 

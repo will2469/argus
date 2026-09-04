@@ -46,7 +46,7 @@ func HasStrongIsolation(pass *analysis.Pass, expr ast.Expr, body *ast.BlockStmt)
 func checkTxOptionsComposite(comp *ast.CompositeLit) bool {
 	for _, elt := range comp.Elts {
 		if kve, ok := elt.(*ast.KeyValueExpr); ok {
-			if key, ok := kve.Key.(*ast.Ident); ok && key.Name == "IsoLevel" {
+			if key, ok := kve.Key.(*ast.Ident); ok && (key.Name == "IsoLevel" || key.Name == "Isolation") {
 				if sel, ok := kve.Value.(*ast.SelectorExpr); ok {
 					return isStrongIsoLevel(sel.Sel.Name)
 				}

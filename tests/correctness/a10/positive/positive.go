@@ -2,6 +2,7 @@ package positive
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Tx interface {
@@ -9,6 +10,7 @@ type Tx interface {
 	Query(ctx context.Context, sql string, args ...any) error
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
+	Options() *sql.TxOptions
 }
 
 type TxOptions struct {

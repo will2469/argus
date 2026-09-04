@@ -48,15 +48,21 @@ func HasASTProvenDBPoolMethods(iface *ast.InterfaceType, file *ast.File) bool {
 }
 
 // HasASTTxMethods checks an AST interface for transaction semantics:
-// must have Commit + Rollback + at least one exec/query method.
-func HasASTTxMethods(iface *ast.InterfaceType) bool {
+// must have Commit + Rollback + at least one exec/query method, AND
+// at least one method signature referencing an imported database driver type.
+func HasASTTxMethods(iface *ast.InterfaceType, file *ast.File) bool {
 	if iface == nil || iface.Methods == nil {
+		return false
+	}
+	if file != nil && !HasDatabaseImports(file) {
 		return false
 	}
 
 	hasCommit := false
 	hasRollback := false
 	hasExecOrQuery := false
+	hasProvenance := false
+
 	for _, method := range iface.Methods.List {
 		for _, name := range method.Names {
 			switch name.Name {
@@ -69,6 +75,53 @@ func HasASTTxMethods(iface *ast.InterfaceType) bool {
 				hasExecOrQuery = true
 			}
 		}
+		if ft, ok := method.Type.(*ast.FuncType); ok && file != nil {
+			if astFuncHasDriverProvenance(ft, file) {
+				hasProvenance = true
+			}
+		}
 	}
-	return hasCommit && hasRollback && hasExecOrQuery
+	return hasProvenance && hasCommit && hasRollback && hasExecOrQuery
+}
+
+func astFuncHasDriverProvenance(ft *ast.FuncType, file *ast.File) bool {
+	if ft == nil || file == nil {
+		return false
+	}
+	if ft.Results != nil {
+		for _, res := range ft.Results.List {
+			if isASTKnownDriverType(res.Type, file) {
+				return true
+			}
+		}
+	}
+	if ft.Params != nil {
+		for _, p := range ft.Params.List {
+			if isASTKnownDriverType(p.Type, file) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isASTKnownDriverType(expr ast.Expr, file *ast.File) bool {
+	if expr == nil || file == nil {
+		return false
+	}
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkgID, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if !IsImportedDBPackageIdent(file, pkgID.Name) {
+		return false
+	}
+	return knownDBDriverTypeNames[sel.Sel.Name]
 }

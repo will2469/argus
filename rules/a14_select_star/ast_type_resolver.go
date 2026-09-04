@@ -88,19 +88,8 @@ func isProvenDBASTType(expr ast.Expr, file *ast.File) bool {
 	if expr == nil {
 		return false
 	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		if pkgID, ok := sel.X.(*ast.Ident); ok {
-			switch pkgID.Name {
-			case "sql", "pgx", "pgxpool", "sqlx", "pq":
-				switch sel.Sel.Name {
-				case "DB", "Pool", "Conn", "Tx", "Rows", "Row", "Batch", "Stmt", "Result", "CommandTag":
-					return true
-				}
-			}
-		}
+	if dbident.IsKnownDBDriverASTType(expr, file) {
+		return true
 	}
 	if id, ok := expr.(*ast.Ident); ok {
 		if ts := dbident.FindTypeSpec(id.Name, file); ts != nil {
@@ -110,40 +99,17 @@ func isProvenDBASTType(expr ast.Expr, file *ast.File) bool {
 	return false
 }
 
-func isDBTypeSpec(ts *ast.TypeSpec, _ *ast.File) bool {
-	if ts == nil {
+func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
+	if ts == nil || file == nil {
 		return false
 	}
-	switch t := ts.Type.(type) {
-	case *ast.InterfaceType:
-		if t.Methods == nil {
-			return false
-		}
-		for _, m := range t.Methods.List {
-			if ft, ok := m.Type.(*ast.FuncType); ok && hasDBDriverMethodAST(ft) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func hasDBDriverMethodAST(ft *ast.FuncType) bool {
-	if ft == nil || ft.Results == nil {
+	iface, ok := ts.Type.(*ast.InterfaceType)
+	if !ok || iface.Methods == nil {
 		return false
 	}
-	for _, f := range ft.Results.List {
-		typ := f.Type
-		if star, ok := typ.(*ast.StarExpr); ok {
-			typ = star.X
-		}
-		if sel, ok := typ.(*ast.SelectorExpr); ok {
-			if id, ok := sel.X.(*ast.Ident); ok {
-				switch id.Name {
-				case "sql", "pgx", "pgconn", "sqlx", "pq":
-					return true
-				}
-			}
+	for _, m := range iface.Methods.List {
+		if dbident.IsASTExecOrQueryMethod(m, file) {
+			return true
 		}
 	}
 	return false

@@ -6,6 +6,7 @@ import (
 	"go/ast"
 
 	"github.com/will2469/argus/shared/callsite"
+	"github.com/will2469/argus/shared/dbident"
 )
 
 func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
@@ -64,148 +65,15 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 }
 
 func isProvenDBPoolASTType(expr ast.Expr, file *ast.File) bool {
-	if expr == nil {
-		return false
-	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		if pkgID, ok := sel.X.(*ast.Ident); ok {
-			if isKnownDBPackage(pkgID.Name, file) {
-				switch sel.Sel.Name {
-				case "DB", "Pool", "Conn":
-					return true
-				}
-			}
-		}
-	}
-	if id, ok := expr.(*ast.Ident); ok {
-		if ts := findTypeSpec(id.Name, file); ts != nil {
-			return isDBTypeSpec(ts, file)
-		}
-	}
-	return false
-}
-
-func isDBTypeSpec(ts *ast.TypeSpec, file *ast.File) bool {
-	if ts == nil {
-		return false
-	}
-	switch t := ts.Type.(type) {
-	case *ast.InterfaceType:
-		if t.Methods == nil {
-			return false
-		}
-		var hasBegin, hasTxHelper bool
-		for _, m := range t.Methods.List {
-			if len(m.Names) == 0 {
-				if isProvenDBPoolASTType(m.Type, file) {
-					return true
-				}
-				continue
-			}
-			for _, name := range m.Names {
-				switch name.Name {
-				case "Begin", "BeginTx":
-					if ft, ok := m.Type.(*ast.FuncType); ok && ft.Results != nil && len(ft.Results.List) > 0 {
-						for _, res := range ft.Results.List {
-							if isProvenDBTxASTType(res.Type, file) {
-								hasBegin = true
-								break
-							}
-						}
-					}
-				case "BeginFunc", "WithTx", "ExecuteTx":
-					if ft, ok := m.Type.(*ast.FuncType); ok && ft.Params != nil {
-						for _, p := range ft.Params.List {
-							if cb, ok := p.Type.(*ast.FuncType); ok && cb.Params != nil && len(cb.Params.List) > 0 {
-								for _, cbp := range cb.Params.List {
-									if isProvenClosureTxASTType(cbp.Type, file) {
-										hasTxHelper = true
-										break
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-		return hasBegin || hasTxHelper
-	case *ast.StructType:
-		if t.Fields == nil {
-			return false
-		}
-		for _, field := range t.Fields.List {
-			if isProvenDBPoolASTType(field.Type, file) {
-				return true
-			}
-		}
-	}
-	return false
+	return dbident.IsProvenDBPoolASTType(expr, file)
 }
 
 func isProvenDBTxASTType(expr ast.Expr, file *ast.File) bool {
-	if expr == nil {
-		return false
-	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		if pkgID, ok := sel.X.(*ast.Ident); ok {
-			return isKnownDBPackage(pkgID.Name, file) && sel.Sel.Name == "Tx"
-		}
-	}
-	if id, ok := expr.(*ast.Ident); ok {
-		if ts := findTypeSpec(id.Name, file); ts != nil {
-			if iface, ok := ts.Type.(*ast.InterfaceType); ok && iface.Methods != nil {
-				var hasExecOrQuery, hasCommit, hasRollback bool
-				for _, m := range iface.Methods.List {
-					if len(m.Names) == 0 {
-						if isProvenDBTxASTType(m.Type, file) {
-							return true
-						}
-						continue
-					}
-					for _, name := range m.Names {
-						switch name.Name {
-						case "Exec", "ExecContext", "SendBatch", "Query", "QueryContext", "QueryRow", "QueryRowContext":
-							hasExecOrQuery = true
-						case "Commit":
-							hasCommit = true
-						case "Rollback":
-							hasRollback = true
-						}
-					}
-				}
-				return hasCommit && hasRollback && hasExecOrQuery
-			}
-		}
-	}
-	return false
+	return dbident.IsProvenDBTxASTType(expr, file)
 }
 
 func isProvenClosureTxASTType(expr ast.Expr, file *ast.File) bool {
-	if isProvenDBTxASTType(expr, file) {
-		return true
-	}
-	if id, ok := expr.(*ast.Ident); ok {
-		if ts := findTypeSpec(id.Name, file); ts != nil {
-			if iface, ok := ts.Type.(*ast.InterfaceType); ok && iface.Methods != nil {
-				for _, m := range iface.Methods.List {
-					for _, name := range m.Names {
-						switch name.Name {
-						case "Exec", "ExecContext", "Query", "QueryRow", "QueryContext", "QueryRowContext", "Commit", "Rollback":
-							return true
-						}
-					}
-				}
-			}
-		}
-	}
-	return false
+	return dbident.IsProvenClosureTxASTType(expr, file)
 }
 
 func isDBPoolConstructorCall(call *ast.CallExpr, file *ast.File) bool {
