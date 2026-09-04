@@ -65,33 +65,38 @@ For historical migrations involving lossy or mathematically irreversible data tr
 
 ## 3. How Argus Detects Violations (Static Analysis Architecture)
 
-Argus evaluates migration directory pairings and AST statement content:
+Argus evaluates migration directory pairings and enforces **deterministic semantic inverse rollback symmetry**:
 
 ```mermaid
 flowchart LR
     Scan["Scan Migration Directory<br/>(db/migrations)"] --> PairCheck{"For Each .up.sql:<br/>Does .down.sql Exist?"}
     PairCheck -->|No| ReportMissing["Report CRITICAL Violation:<br/>Missing .down.sql File"]
-    PairCheck -->|Yes| ReadDown["symmetry_ast.go:<br/>Parse .down.sql AST"]
-    ReadDown --> EmptyCheck{"Is 0 Bytes or<br/>No Executable SQL?"}
+    PairCheck -->|Yes| ReadDown["Parse UP & DOWN AST<br/>(pg_query_go)"]
+    ReadDown --> EmptyCheck{"Is DOWN 0 Bytes or<br/>No Executable SQL?"}
     EmptyCheck -->|Yes| TagCheck{"Has Valid ADR<br/>Ignore Directive?"}
     TagCheck -->|No| ReportEmpty["Report HIGH Violation:<br/>Empty / Invalid .down.sql"]
     TagCheck -->|Yes| Pass["Pass (Verified ADR Exemption)"]
-    EmptyCheck -->|No| Pass["Pass (Valid Symmetric Pair)"]
+    EmptyCheck -->|No| SymmetryCheck{"Semantic Inverse Match?<br/>(schema_op.go / symmetry_ast.go)"}
+    SymmetryCheck -->|No| ReportAsymmetric["Report HIGH Violation:<br/>Asymmetric / Target Mismatch"]
+    SymmetryCheck -->|Yes| Pass["Pass (Valid Symmetric Rollback)"]
 ```
 
 1. **Pairing Matcher (`pair_matcher.go`):** Validates 1-to-1 filesystem mapping between `NNNN_name.up.sql` and `NNNN_name.down.sql`.
 2. **AST Statement Validator (`symmetry_ast.go`):** Ensures `.down.sql` contains executable SQL statements using `pg_query_go`.
-3. **Standalone Runner (`standalone_scanner.go`):** Independent directory auditor capable of running in CI/CD pre-commit hooks.
+3. **Semantic Inverse Rollback Engine (`schema_op.go`):** Extracts schema operations (`CreateStmt`, `DropStmt`, `AlterTableStmt`, `IndexStmt`, `ViewStmt`, `CreateSeqStmt`, `CreateSchemaStmt`) from both UP and DOWN ASTs. Asserts that every object created or modified in UP has a matching inverse operation in DOWN targeting the exact same object name (e.g. `CREATE TABLE users` requires `DROP TABLE users`; `ADD COLUMN status` requires `DROP COLUMN status`). Dummy rollbacks (`SELECT 1;`) or target mismatches (`DROP TABLE orders` when `users` was created) are strictly flagged unless suppressed with an approved ADR directive (`-- argus:ignore-a13 ADR-xxx <reason>`).
+4. **Standalone Runner (`standalone_scanner.go`):** Independent directory auditor capable of running in CI/CD pre-commit hooks and standalone scanning.
 
 ---
 
 ## 4. Vulnerability & Risk Taxonomy
 
-| Failure Mode                  | Technical Impact                                                                               | Risk Severity |
-| :---------------------------- | :--------------------------------------------------------------------------------------------- | :------------ |
-| **Missing `.down.sql` File**  | Prevents automated rollback during failed deployments, leaving cluster in half-migrated state. | **CRITICAL**  |
-| **0-Byte Empty `.down.sql`**  | Bypasses superficial file existence checks without providing rollback capability.              | **HIGH**      |
-| **Comments-Only `.down.sql`** | Contains no executable SQL statements to undo schema changes.                                  | **HIGH**      |
+| Failure Mode                       | Technical Impact                                                                               | Risk Severity |
+| :--------------------------------- | :--------------------------------------------------------------------------------------------- | :------------ |
+| **Missing `.down.sql` File**       | Prevents automated rollback during failed deployments, leaving cluster in half-migrated state. | **CRITICAL**  |
+| **0-Byte Empty `.down.sql`**       | Bypasses superficial file existence checks without providing rollback capability.              | **HIGH**      |
+| **Comments-Only `.down.sql`**      | Contains no executable SQL statements to undo schema changes.                                  | **HIGH**      |
+| **Asymmetric Dummy Rollback**      | Fails to revert schema changes (e.g. `SELECT 1;` instead of `DROP TABLE users`).               | **HIGH**      |
+| **Rollback Target Mismatch**       | Drops unrelated objects or fails to revert newly added tables, columns, or indexes.            | **HIGH**      |
 
 ---
 

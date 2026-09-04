@@ -21,12 +21,14 @@ func TestA13_PositiveCorpus(t *testing.T) {
 		t.Logf("  [%s]: %s", filepath.Base(iss.Filename), iss.Message)
 	}
 
-	if len(issues) != 2 {
-		t.Fatalf("Positive Gate FAILED: expected exactly 2 issues from positive migrations, got %d", len(issues))
+	if len(issues) != 4 {
+		t.Fatalf("Positive Gate FAILED: expected exactly 4 issues from positive migrations, got %d", len(issues))
 	}
 
 	foundMissing := false
 	foundEmpty := false
+	foundDummy := false
+	foundMismatch := false
 	for _, iss := range issues {
 		base := filepath.Base(iss.Filename)
 		if base == "002_orders.up.sql" && strings.Contains(iss.Message, "Missing required rollback file") {
@@ -35,6 +37,12 @@ func TestA13_PositiveCorpus(t *testing.T) {
 		if base == "003_empty.down.sql" && strings.Contains(iss.Message, "is empty") {
 			foundEmpty = true
 		}
+		if base == "004_dummy_select.down.sql" && strings.Contains(iss.Message, "missing DROP TABLE for table \"products\"") {
+			foundDummy = true
+		}
+		if base == "005_target_mismatch.down.sql" && strings.Contains(iss.Message, "missing DROP TABLE for table \"logs\"") {
+			foundMismatch = true
+		}
 	}
 
 	if !foundMissing {
@@ -42,6 +50,12 @@ func TestA13_PositiveCorpus(t *testing.T) {
 	}
 	if !foundEmpty {
 		t.Errorf("Positive Gate FAILED: empty down file for 003_empty.down.sql was not flagged")
+	}
+	if !foundDummy {
+		t.Errorf("Positive Gate FAILED: asymmetric dummy rollback for 004_dummy_select.down.sql was not flagged")
+	}
+	if !foundMismatch {
+		t.Errorf("Positive Gate FAILED: asymmetric target mismatch for 005_target_mismatch.down.sql was not flagged")
 	}
 }
 
@@ -116,8 +130,8 @@ func TestA13_StandaloneRunner_DualPathParity(t *testing.T) {
 			posIssues++
 		}
 	}
-	if posIssues != 2 {
-		t.Errorf("Dual-Path Parity FAILED on positive: expected 2 issues from standalone runner, got %d", posIssues)
+	if posIssues != 4 {
+		t.Errorf("Dual-Path Parity FAILED on positive: expected 4 issues from standalone runner, got %d", posIssues)
 	}
 
 	auditCfgNeg := runner.AuditConfig{

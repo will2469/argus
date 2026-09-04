@@ -82,18 +82,21 @@ func ScanDirectoryFS(fsys fs.FS, dir string, dm *directives.DirectiveMap) []migr
 				continue
 			}
 
-			var downData []byte
+			var downData, upData []byte
 			var err error
+			upPath := filepath.Join(d, upName)
 			if fsys != nil {
+				upData, _ = fs.ReadFile(fsys, filepath.ToSlash(upPath))
 				downData, err = fs.ReadFile(fsys, filepath.ToSlash(downPath))
 			} else {
+				upData, _ = os.ReadFile(upPath)
 				downData, err = os.ReadFile(downPath)
 			}
 			if err != nil {
 				continue
 			}
 
-			if issue := ValidateDownSQL(downPath, string(downData), dm); issue != nil {
+			if issue := ValidateDownSQL(upPath, string(upData), downPath, string(downData), dm); issue != nil {
 				issues = append(issues, *issue)
 			}
 		}

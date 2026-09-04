@@ -3,6 +3,7 @@ package a13_missing_down_migration
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/analysis/analysistest"
@@ -113,3 +114,34 @@ func TestScanDirectory_RecursiveSubdirectories(t *testing.T) {
 		t.Errorf("expected issue on %s, got %s", expectedFile, issues[0].Filename)
 	}
 }
+
+func TestScanDirectory_AsymmetricDummySelect(t *testing.T) {
+	tempDir := t.TempDir()
+
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.up.sql"), []byte("CREATE TABLE users (id int);"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.down.sql"), []byte("SELECT 1;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for asymmetric SELECT 1 rollback, got %d", len(issues))
+	}
+	if !strings.Contains(issues[0].Message, "missing DROP TABLE for table \"users\"") {
+		t.Errorf("unexpected message: %s", issues[0].Message)
+	}
+}
+
+func TestScanDirectory_AsymmetricTargetMismatch(t *testing.T) {
+	tempDir := t.TempDir()
+
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.up.sql"), []byte("CREATE TABLE users (id int);"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.down.sql"), []byte("DROP TABLE orders;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for asymmetric target mismatch, got %d", len(issues))
+	}
+	if !strings.Contains(issues[0].Message, "missing DROP TABLE for table \"users\"") {
+		t.Errorf("unexpected message: %s", issues[0].Message)
+	}
+}
+
