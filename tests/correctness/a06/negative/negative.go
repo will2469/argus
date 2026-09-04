@@ -76,3 +76,17 @@ func N9_DynamicDMLWithDDLWord(ctx context.Context, db DBExecutor, table string) 
 	_, err := db.Exec(ctx, query)
 	return err
 }
+
+type Calculator struct{}
+
+func (*Calculator) WriteString(s string) {}
+func (*Calculator) String() string       { return "" }
+
+// N10: Unrelated WriteString — calculator WriteString does not poison SQL query buffer.
+func N10_UnrelatedWriteString(ctx context.Context, db DBExecutor) error {
+	var calc Calculator
+	calc.WriteString("CREATE TABLE users (id int)")
+	_, err := db.Exec(ctx, "SELECT id FROM users")
+	return err
+}
+

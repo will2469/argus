@@ -163,7 +163,7 @@ func (t *DDLTracker) handleCall(call *ast.CallExpr, state *ddlState) {
 		return
 	}
 	id, ok := sel.X.(*ast.Ident)
-	if !ok {
+	if !ok || !isStringBuilderExpr(t.pass, sel.X) {
 		return
 	}
 
@@ -212,7 +212,7 @@ func (t *DDLTracker) evalExpr(expr ast.Expr, state *ddlState) string {
 		}
 	case *ast.CallExpr:
 		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "String" {
-			if id, ok := sel.X.(*ast.Ident); ok && state != nil {
+			if id, ok := sel.X.(*ast.Ident); ok && state != nil && isStringBuilderExpr(t.pass, sel.X) {
 				return state.getOp(id, t.pass)
 			}
 		}

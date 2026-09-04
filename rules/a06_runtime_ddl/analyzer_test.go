@@ -1,6 +1,8 @@
 package a06_runtime_ddl
 
 import (
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"testing"
 
@@ -82,3 +84,64 @@ func TestMatchDDLCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestDDLLatticeJoin_Branching(t *testing.T) {
+	src := `package test
+import "context"
+type DB struct{}
+func (DB) Exec(ctx context.Context, query string) (any, error) { return nil, nil }
+
+func BranchDivergence(ctx context.Context, db DB, cond bool) {
+	var query string
+	if cond {
+		query = "CREATE TABLE foo (id int)"
+	} else {
+		query = "SELECT 1"
+	}
+	db.Exec(ctx, query)
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue from maybe-DDL lattice join, got %d: %v", len(issues), issues)
+	}
+	if issues[0].Message == "" {
+		t.Errorf("expected non-empty error message")
+	}
+}
+
+func TestDDLTracker_UnrelatedWriteString(t *testing.T) {
+	src := `package test
+import "context"
+type DB struct{}
+func (DB) Exec(ctx context.Context, query string) (any, error) { return nil, nil }
+
+type Calculator struct{}
+func (c *Calculator) WriteString(s string) {}
+func (c *Calculator) String() string { return "" }
+
+func SafeCalculatorUsage(ctx context.Context, db DB) {
+	var calc Calculator
+	calc.WriteString("CREATE TABLE fake (id int)")
+	query := "SELECT 1"
+	db.Exec(ctx, query)
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for unrelated calculator WriteString, got %d: %v", len(issues), issues)
+	}
+}
+
