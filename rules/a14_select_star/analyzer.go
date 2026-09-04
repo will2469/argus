@@ -9,7 +9,6 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/directives"
 )
@@ -56,12 +55,11 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			return true
 		}
 
-		methodName := callsite.GetCallMethodName(call.Fun)
-		if !callsite.IsDBQueryMethod(methodName) {
+		if !isDatabaseCall(pass, call) {
 			return true
 		}
 
-		queries := extractAllQueryStrings(call, file)
+		queries := ResolveQueryStrings(pass, file, call)
 		for _, query := range queries {
 			if strings.TrimSpace(query) == "" {
 				continue
@@ -83,65 +81,6 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 	})
 
 	return issues
-}
-
-func extractAllQueryStrings(call *ast.CallExpr, file *ast.File) []string {
-	if call == nil || len(call.Args) == 0 {
-		return nil
-	}
-
-	queryArgIdx := 0
-	if len(call.Args) >= 2 {
-		queryArgIdx = 1
-	}
-	arg := call.Args[queryArgIdx]
-
-	var results []string
-	switch e := arg.(type) {
-	case *ast.BasicLit:
-		if e.Kind == token.STRING {
-			results = append(results, strings.Trim(e.Value, "`\""))
-		}
-	case *ast.Ident:
-		enclosing := findEnclosingFunc(file, call.Pos())
-		if enclosing != nil && enclosing.Body != nil {
-			ast.Inspect(enclosing.Body, func(n ast.Node) bool {
-				assign, ok := n.(*ast.AssignStmt)
-				if !ok || assign.Pos() >= call.Pos() {
-					return true
-				}
-				for i, lhs := range assign.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
-						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							results = append(results, strings.Trim(lit.Value, "`\""))
-						}
-					}
-				}
-				return true
-			})
-		}
-	}
-
-	if len(results) == 0 {
-		if s, ok := callsite.ExtractQueryString(call); ok {
-			results = append(results, s)
-		}
-	}
-	return results
-}
-
-func findEnclosingFunc(file *ast.File, pos token.Pos) *ast.FuncDecl {
-	if file == nil {
-		return nil
-	}
-	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok {
-			if fn.Pos() <= pos && pos <= fn.End() {
-				return fn
-			}
-		}
-	}
-	return nil
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {

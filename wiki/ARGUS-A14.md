@@ -58,23 +58,31 @@ flowchart TD
 
 ## 3. How Argus Detects Violations (Static Analysis Architecture)
 
-Argus evaluates SQL queries across all database call sites using AST inspection:
+Argus evaluates SQL queries across all database call sites using semantic type resolution and PostgreSQL AST inspection:
 
 ```mermaid
-flowchart LR
-    Scan["Scan DB Query Calls<br/>(Exclude _test.go)"] --> Parse["ast_visitor.go:<br/>pg_query_go AST Inspection"]
-    Parse --> TargetList{"ResTarget Node Contains<br/>ColumnRef AStar (* or alias.*)?"}
+flowchart TD
+    Call["CallExpr Detection<br/>(Query, QueryRow, Exec)"] --> RecvCheck{"Semantic Receiver Proof<br/>(types.Info / callsite.IsPgxOrSQLType)?"}
+    RecvCheck -->|No / Unrelated API| PassUnrelated["Pass (Ignore SearchEngine, Logger, etc.)"]
+    RecvCheck -->|Yes| ArgRes["callsite.ExtractSQLArg<br/>(Context-Aware Argument Resolution)"]
+    ArgRes --> ProvTrack["query_provenance.go:<br/>Object-Identity Provenance Tracing<br/>(types.Object & Scope Dominance)"]
+    ProvTrack --> SQLParse["ast_visitor.go:<br/>pg_query_go AST Inspection"]
+    SQLParse --> TargetList{"ResTarget Node Contains<br/>ColumnRef AStar (* or alias.*)?"}
     TargetList -->|Yes| ExceptionCheck{"exceptions.go:<br/>Inside COUNT(*) or<br/>EXISTS(...) SubLink?"}
     TargetList -->|No| Subqueries{"Inspect CTEs, FromClause Subqueries,<br/>and UNION/INTERSECT"}
     Subqueries -->|Contains Star| ExceptionCheck
-    ExceptionCheck -->|Yes| Pass["Pass (Legitimate Exception)"]
+    ExceptionCheck -->|Yes| PassLegit["Pass (Legitimate Exception)"]
     ExceptionCheck -->|No| Report["Report HIGH Violation:<br/>Forbidden SELECT * Wildcard"]
-    Subqueries -->|No Star| Pass
+    Subqueries -->|No Star| PassClean["Pass (Explicit Projections)"]
 ```
 
-1. **AST TargetList Inspection (`ast_visitor.go`):** Identifies `Node_AStar` within `ResTarget` and `ColumnRef` nodes.
-2. **Subquery & CTE Traversal (`ast_visitor.go`):** Recursively inspects Common Table Expressions (`WithClause`), subselects (`FromClause`), and Set Operations (`Larg`/`Rarg`).
-3. **Exemption Filtering (`exceptions.go`):** Allows `COUNT(*)` and boolean probe subqueries inside `EXISTS(...)`.
+1. **Semantic Receiver Verification (`query_provenance.go`):** Proves receiver identity via `pass.TypesInfo.TypeOf` and `callsite.IsPgxOrSQLType`, rejecting method spoofing on unrelated APIs (e.g. `searchEngine.Query`).
+2. **Context-Aware Argument Extraction (`shared/callsite`):** Extracts query arguments dynamically, distinguishing `context.Context` from query strings without fragile positional guessing.
+3. **Object-Identity Variable Tracing (`query_provenance.go`):** Tracks SQL query string provenance using `types.Object` pointer equality (`pass.TypesInfo.Uses` / `Defs`), completely preventing variable shadowing corruptions where local variables mask outer declarations.
+4. **Lexical Scope Dominance (Standalone AST Mode):** Scans block scopes from innermost to outermost, halting immediately when variable re-declaration (`:=`) is encountered to isolate local scopes.
+5. **AST TargetList Inspection (`ast_visitor.go`):** Deterministically checks for `Node_AStar` within `ResTarget` and `ColumnRef` nodes.
+6. **Subquery & CTE Traversal (`ast_visitor.go`):** Recursively inspects Common Table Expressions (`WithClause`), subselects (`FromClause`), and Set Operations (`Larg`/`Rarg`).
+7. **Exemption Filtering (`exceptions.go`):** Safely permits `COUNT(*)` and boolean probe subqueries inside `EXISTS(...)`.
 
 ---
 

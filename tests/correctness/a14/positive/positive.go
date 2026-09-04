@@ -43,6 +43,25 @@ func P5_Alias(ctx context.Context, db DB) {
 	_, _ = db.Query(ctx, "SELECT a.*, b.* FROM table_a a JOIN table_b b ON a.id = b.id") // want `\[ARGUS-A14\] Forbidden 'SELECT \*' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure \(CWE-200\)`
 }
 
+// P6: Shadowed Violation — inner scope shadows outer safe query with SELECT *.
+func P6_ShadowedSelectStar(ctx context.Context, db DB) {
+	query := "SELECT id FROM users"
+	_ = query
+	if true {
+		query := "SELECT * FROM audit"
+		_, _ = db.Query(ctx, query) // want `\[ARGUS-A14\] Forbidden 'SELECT \*' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure \(CWE-200\)`
+	}
+}
+
+var packageQuery = "SELECT id FROM users"
+
+// P7: Package Shadowing — inner function variable shadows safe package var with SELECT *.
+func P7_PackageShadowing(ctx context.Context, db DB) {
+	_ = packageQuery
+	packageQuery := "SELECT * FROM audit"
+	_, _ = db.Query(ctx, packageQuery) // want `\[ARGUS-A14\] Forbidden 'SELECT \*' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure \(CWE-200\)`
+}
+
 // P_Ignored: Suppressed violation using verified argus:ignore directive.
 func P_Ignored(ctx context.Context, db DB) {
 	// argus:ignore-a14 offline disaster recovery full row table dump
