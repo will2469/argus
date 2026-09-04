@@ -4,8 +4,6 @@ package a13_missing_down_migration
 import (
 	"fmt"
 	"strings"
-
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
 
 // OpKind represents a schema DDL or DML operation kind.
@@ -28,6 +26,9 @@ const (
 	OpDropType
 	OpAddConstraint
 	OpDropConstraint
+	OpRenameTable
+	OpRenameColumn
+	OpAlterColumnType
 	OpDML
 )
 
@@ -35,7 +36,8 @@ const (
 type SchemaOp struct {
 	Kind      OpKind
 	Target    string // Primary object name (table, index, view, etc.)
-	SubTarget string // Secondary object name (column, constraint, etc.)
+	SubTarget string // Secondary object name (column, constraint, or old/target name)
+	AuxTarget string // Tertiary object name (new name on rename)
 }
 
 // IsInvertedBy checks if downOp is the inverse operation of this schema op.
@@ -44,6 +46,8 @@ func (op SchemaOp) IsInvertedBy(downOp SchemaOp) bool {
 	tDown := normalizeName(downOp.Target)
 	sUp := normalizeName(op.SubTarget)
 	sDown := normalizeName(downOp.SubTarget)
+	aUp := normalizeName(op.AuxTarget)
+	aDown := normalizeName(downOp.AuxTarget)
 
 	switch op.Kind {
 	case OpCreateTable:
@@ -62,11 +66,11 @@ func (op SchemaOp) IsInvertedBy(downOp SchemaOp) bool {
 			return true // Dropping the table also reverts any created index on it
 		}
 		if downOp.Kind == OpDropIndex {
-			return tUp == tDown || op.Target == "" || downOp.Target == ""
+			return tUp == tDown || (op.Target == "" && downOp.Target == "")
 		}
 		return false
 	case OpDropIndex:
-		return downOp.Kind == OpCreateIndex && (tUp == tDown || op.Target == "" || downOp.Target == "")
+		return downOp.Kind == OpCreateIndex && (tUp == tDown || (op.Target == "" && downOp.Target == ""))
 	case OpCreateView:
 		return downOp.Kind == OpDropView && tUp == tDown
 	case OpDropView:
@@ -87,9 +91,27 @@ func (op SchemaOp) IsInvertedBy(downOp SchemaOp) bool {
 		if downOp.Kind == OpDropTable && tUp == tDown {
 			return true
 		}
-		return downOp.Kind == OpDropConstraint && tUp == tDown && (sUp == sDown || sUp == "" || sDown == "")
+		return downOp.Kind == OpDropConstraint && tUp == tDown && sUp == sDown
 	case OpDropConstraint:
-		return downOp.Kind == OpAddConstraint && tUp == tDown && (sUp == sDown || sUp == "" || sDown == "")
+		return downOp.Kind == OpAddConstraint && tUp == tDown && sUp == sDown
+	case OpRenameTable:
+		if downOp.Kind == OpDropTable && (tDown == sUp || tDown == tUp) {
+			return true
+		}
+		return downOp.Kind == OpRenameTable && tUp == sDown && sUp == tDown
+	case OpRenameColumn:
+		if downOp.Kind == OpDropTable && tUp == tDown {
+			return true
+		}
+		if downOp.Kind == OpDropColumn && tUp == tDown && (sDown == aUp || sDown == sUp) {
+			return true
+		}
+		return downOp.Kind == OpRenameColumn && tUp == tDown && sUp == aDown && aUp == sDown
+	case OpAlterColumnType:
+		if downOp.Kind == OpDropTable && tUp == tDown {
+			return true
+		}
+		return downOp.Kind == OpAlterColumnType && tUp == tDown && sUp == sDown
 	default:
 		return false
 	}
@@ -130,6 +152,12 @@ func (op SchemaOp) ExpectedInverseName() string {
 		return "DROP CONSTRAINT"
 	case OpDropConstraint:
 		return "ADD CONSTRAINT"
+	case OpRenameTable:
+		return fmt.Sprintf("RENAME TABLE %q TO %q", op.SubTarget, op.Target)
+	case OpRenameColumn:
+		return fmt.Sprintf("RENAME COLUMN %q TO %q", op.AuxTarget, op.SubTarget)
+	case OpAlterColumnType:
+		return "ALTER COLUMN TYPE"
 	default:
 		return "inverse operation"
 	}
@@ -154,30 +182,15 @@ func (op SchemaOp) DescribeTarget() string {
 		return fmt.Sprintf("type %q", op.Target)
 	case OpAddConstraint, OpDropConstraint:
 		return fmt.Sprintf("constraint %q on table %q", op.SubTarget, op.Target)
+	case OpRenameTable:
+		return fmt.Sprintf("renamed table %q to %q", op.Target, op.SubTarget)
+	case OpRenameColumn:
+		return fmt.Sprintf("renamed column %q to %q on table %q", op.SubTarget, op.AuxTarget, op.Target)
+	case OpAlterColumnType:
+		return fmt.Sprintf("type alteration on column %q of table %q", op.SubTarget, op.Target)
 	default:
 		return fmt.Sprintf("object %q", op.Target)
 	}
-}
-
-func extractObjectName(obj *pg_query.Node) string {
-	if obj == nil {
-		return ""
-	}
-	if list := obj.GetList(); list != nil {
-		var parts []string
-		for _, item := range list.Items {
-			if s := item.GetString_(); s != nil {
-				parts = append(parts, s.Sval)
-			}
-		}
-		if len(parts) > 0 {
-			return parts[len(parts)-1]
-		}
-	}
-	if str := obj.GetString_(); str != nil {
-		return str.Sval
-	}
-	return ""
 }
 
 func normalizeName(name string) string {

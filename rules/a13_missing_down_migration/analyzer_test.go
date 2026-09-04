@@ -197,3 +197,28 @@ DROP TABLE users;
 	}
 }
 
+func TestScanDirectory_RenameColumn_Symmetry(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Compliant rename
+	_ = os.WriteFile(filepath.Join(tempDir, "001_rename.up.sql"), []byte("ALTER TABLE users RENAME COLUMN email TO contact_email;"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_rename.down.sql"), []byte("ALTER TABLE users RENAME COLUMN contact_email TO email;"), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for symmetric column rename, got: %v", issues)
+	}
+
+	// Asymmetric rename vs dummy select
+	_ = os.WriteFile(filepath.Join(tempDir, "002_asym.up.sql"), []byte("ALTER TABLE users RENAME COLUMN phone TO mobile;"), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "002_asym.down.sql"), []byte("SELECT 1;"), 0644)
+
+	issues = ScanDirectory(tempDir, nil)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue for asymmetric rename, got %d: %v", len(issues), issues)
+	}
+	if !strings.Contains(issues[0].Message, "RENAME COLUMN") {
+		t.Errorf("expected RENAME COLUMN inverse message, got: %s", issues[0].Message)
+	}
+}
+

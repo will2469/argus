@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
-
 	"github.com/will2469/argus/shared/directives"
 	"github.com/will2469/argus/shared/migration"
 	"github.com/will2469/argus/shared/sqlparser"
@@ -78,7 +76,7 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp) *migratio
 	downName := filepath.Base(downPath)
 	upName := filepath.Base(upPath)
 
-	// For every DDL operation in UP, require a matching inverse in DOWN
+	// 1. Forward symmetry: For every DDL operation in UP, require a matching inverse in DOWN
 	for _, upOp := range upOps {
 		if upOp.Kind == OpDML {
 			continue
@@ -136,110 +134,4 @@ func checkSymmetry(upPath, downPath string, upOps, downOps []SchemaOp) *migratio
 	}
 
 	return nil
-}
-
-func hasDDL(ops []SchemaOp) bool {
-	for _, op := range ops {
-		if op.Kind != OpDML {
-			return true
-		}
-	}
-	return false
-}
-
-func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
-	var ops []SchemaOp
-	if tree == nil {
-		return ops
-	}
-
-	for _, rawStmt := range tree.Stmts {
-		if rawStmt.Stmt == nil {
-			continue
-		}
-		stmt := rawStmt.Stmt
-
-		if create := stmt.GetCreateStmt(); create != nil && create.Relation != nil {
-			ops = append(ops, SchemaOp{Kind: OpCreateTable, Target: create.Relation.Relname})
-			continue
-		}
-
-		if drop := stmt.GetDropStmt(); drop != nil {
-			for _, obj := range drop.Objects {
-				name := extractObjectName(obj)
-				switch drop.RemoveType {
-				case pg_query.ObjectType_OBJECT_TABLE:
-					ops = append(ops, SchemaOp{Kind: OpDropTable, Target: name})
-				case pg_query.ObjectType_OBJECT_INDEX:
-					ops = append(ops, SchemaOp{Kind: OpDropIndex, Target: name})
-				case pg_query.ObjectType_OBJECT_VIEW, pg_query.ObjectType_OBJECT_MATVIEW:
-					ops = append(ops, SchemaOp{Kind: OpDropView, Target: name})
-				case pg_query.ObjectType_OBJECT_SEQUENCE:
-					ops = append(ops, SchemaOp{Kind: OpDropSequence, Target: name})
-				case pg_query.ObjectType_OBJECT_SCHEMA:
-					ops = append(ops, SchemaOp{Kind: OpDropSchema, Target: name})
-				case pg_query.ObjectType_OBJECT_TYPE, pg_query.ObjectType_OBJECT_DOMAIN:
-					ops = append(ops, SchemaOp{Kind: OpDropType, Target: name})
-				}
-			}
-			continue
-		}
-
-		if idx := stmt.GetIndexStmt(); idx != nil {
-			tbl := ""
-			if idx.Relation != nil {
-				tbl = idx.Relation.Relname
-			}
-			ops = append(ops, SchemaOp{Kind: OpCreateIndex, Target: idx.Idxname, SubTarget: tbl})
-			continue
-		}
-
-		if view := stmt.GetViewStmt(); view != nil && view.View != nil {
-			ops = append(ops, SchemaOp{Kind: OpCreateView, Target: view.View.Relname})
-			continue
-		}
-
-		if seq := stmt.GetCreateSeqStmt(); seq != nil && seq.Sequence != nil {
-			ops = append(ops, SchemaOp{Kind: OpCreateSequence, Target: seq.Sequence.Relname})
-			continue
-		}
-
-		if sch := stmt.GetCreateSchemaStmt(); sch != nil {
-			ops = append(ops, SchemaOp{Kind: OpCreateSchema, Target: sch.Schemaname})
-			continue
-		}
-
-		if alter := stmt.GetAlterTableStmt(); alter != nil && alter.Relation != nil {
-			tbl := alter.Relation.Relname
-			for _, rawCmd := range alter.Cmds {
-				cmd := rawCmd.GetAlterTableCmd()
-				if cmd == nil {
-					continue
-				}
-				switch cmd.Subtype {
-				case pg_query.AlterTableType_AT_AddColumn:
-					if cmd.Def != nil && cmd.Def.GetColumnDef() != nil {
-						ops = append(ops, SchemaOp{Kind: OpAddColumn, Target: tbl, SubTarget: cmd.Def.GetColumnDef().Colname})
-					}
-				case pg_query.AlterTableType_AT_DropColumn:
-					ops = append(ops, SchemaOp{Kind: OpDropColumn, Target: tbl, SubTarget: cmd.Name})
-				case pg_query.AlterTableType_AT_AddConstraint:
-					con := ""
-					if cmd.Def != nil && cmd.Def.GetConstraint() != nil {
-						con = cmd.Def.GetConstraint().Conname
-					}
-					ops = append(ops, SchemaOp{Kind: OpAddConstraint, Target: tbl, SubTarget: con})
-				case pg_query.AlterTableType_AT_DropConstraint:
-					ops = append(ops, SchemaOp{Kind: OpDropConstraint, Target: tbl, SubTarget: cmd.Name})
-				}
-			}
-			continue
-		}
-
-		if stmt.GetSelectStmt() != nil || stmt.GetUpdateStmt() != nil || stmt.GetInsertStmt() != nil || stmt.GetDeleteStmt() != nil {
-			ops = append(ops, SchemaOp{Kind: OpDML})
-		}
-	}
-
-	return ops
 }

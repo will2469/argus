@@ -99,6 +99,10 @@ func TestA13_AdversarialCorpus(t *testing.T) {
 		{"M_CommentOnly", "002_comment_only.down.sql"},
 		{"M_InvalidSyntax", "003_invalid_syntax.down.sql"},
 		{"M_NestedMissingDown", "004_sub.up.sql"},
+		{"M_DummySelect", "005_dummy_select.down.sql"},
+		{"M_TargetMismatch", "006_target_mismatch.down.sql"},
+		{"M_RenameAsymmetry", "007_rename_asymmetry.down.sql"},
+		{"M_RogueMutation", "008_rogue_drop.down.sql"},
 	}
 
 	for _, a := range assertions {
