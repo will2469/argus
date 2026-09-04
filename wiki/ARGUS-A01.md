@@ -78,8 +78,9 @@ flowchart LR
 ```
 
 1. **Taint Sources:**
-   - Function parameters carrying request payloads (e.g., parameter names: `id`, `email`, `param`, `query`, `filter`, `input`, `body`, `req`, `request`).
+   - Universal technical parameters carrying request payloads (`param`, `params`, `query`, `q`, `search`, `filter`, `sort`, `order`, `orderby`, `order_by`, `table`, `column`, `rawsql`, `sql`, `input`, `userinput`, `user_input`, `id`).
    - Types ending with `Request`, `DTO`, `Input`, `Params`, as well as `*http.Request`.
+   - Domain-specific parameter names explicitly configured via `custom_taint_sources` in `.argus.yaml` (e.g., `nik`, `email`, `user_id`, `no_rekening`, `customer_id`).
 2. **Taint Propagators:**
    - Variable assignments (`:=`, `=`) across multiple intermediate assignments.
    - String concatenation operators (`+`).
@@ -226,4 +227,11 @@ You can toggle or configure this rule globally in `.argus.yaml`:
 rules:
   ARGUS-A01:
     enabled: true
+    # Domain-specific parameter or column names to treat as untrusted taint sources
+    custom_taint_sources:
+      - "nik"
+      - "email"
+      - "user_id"
+      - "customer_id"
+      - "no_rekening"
 ```

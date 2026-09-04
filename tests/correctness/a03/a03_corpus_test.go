@@ -89,13 +89,16 @@ func TestA03_AdversarialCorpus(t *testing.T) {
 		line       int
 		mustDetect bool
 	}{
-		{"A1_Branch", 19, true},
-		{"A2_Reassignment_Clean", 29, false}, // safely overridden by WithTimeout -> must survive
-		{"A3_Alias", 40, true},
-		{"A4_Wrapper", 50, true},
-		{"A5_NestedFunction", 57, true},
-		{"A6_Generic", 68, true},
-		{"A7_Interface", 75, true},
+		{"A1_Branch", 20, true},
+		{"A2_Reassignment_Clean", 30, false}, // safely overridden by WithTimeout -> must survive
+		{"A3_Alias", 41, true},
+		{"A4_Wrapper", 51, true},
+		{"A5_NestedFunction", 58, true},
+		{"A6_Generic", 69, true},
+		{"A7_Interface", 76, true},
+		{"A8_ImportAlias", 85, true},
+		{"A9_BranchReassignmentIncomplete", 97, true},
+		{"A10_Shadowing_Raw", 107, true},
 	}
 
 	for _, a := range assertions {

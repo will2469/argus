@@ -50,3 +50,24 @@ func N4_CallerContext(ctx context.Context, db DBExecutor) error {
 func N5_URLQuery(r *http.Request) string {
 	return r.URL.Query().Get("page")
 }
+
+// N6: WithCancel — cancellable context without explicit deadline.
+func N6_WithCancel(db DBExecutor) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := db.Query(ctx, "SELECT id FROM jobs")
+	return err
+}
+
+// N7: Shadowing Clean — outer scope raw context shadowed by inner bounded context.
+func N7_Shadowing_Clean(db DBExecutor) error {
+	ctx := context.Background()
+	if true {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, err := db.Query(ctx, "SELECT id FROM metrics")
+		return err
+	}
+	_ = ctx
+	return nil
+}

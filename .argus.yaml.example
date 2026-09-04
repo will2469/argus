@@ -16,6 +16,13 @@ options:
 rules:
   ARGUS-A01:
     enabled: true
+    # Domain-specific parameter or column names to treat as untrusted taint sources
+    custom_taint_sources:
+      - "nik"
+      - "email"
+      - "user_id"
+      - "customer_id"
+      - "no_rekening"
   ARGUS-A02:
     enabled: true
   ARGUS-A03:
@@ -40,6 +47,7 @@ rules:
     audit_tables:
       - "audit_logs"
       - "security_events"
+    check_down_migrations: false
   ARGUS-A06:
     enabled: true
   ARGUS-A07:

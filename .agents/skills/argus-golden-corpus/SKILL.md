@@ -50,6 +50,8 @@ metadata:
 > │  ├─► Operator Inversion: AND ↔ OR, = ↔ !=, NOT, IS NOT NULL                 │
 > │  ├─► Identity & Scope Evasion: Method collision, unverified receivers       │
 > │  ├─► Lexical Spoofing: Komentar SQL palsu (-- tenant_id = 1), string quotes │
+> │  ├─► Go AST Evasion: Variable shadowing, import aliasing, map unverified,   │
+> │  │   conditional defer trap, switch fallback evasion (A8-A10+)               │
 > │  ├─► Fail-Closed AST Invariant: Query unparseable di-reject, bukan bypass   │
 > │  └─► Target: Mutation Kill Rate = 100% (Zero Surviving Mutants)             │
 > │                                                                             │
@@ -86,13 +88,14 @@ Setiap aturan yang mengadopsi Golden Corpus wajib mengimplementasikan matriks ka
 │  • N5: Static/Constant Input — Compile-time const, typed enum, literal math │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ADVERSARIAL (Edge Cases & Subtle Evaders)                                  │
-│  • A1: Branch                — Conditional if/else, switch/case             │
+│  • A1: Branch                — Conditional if/else, switch default fallback │
 │  • A2: Reassignment          — Taint overwritten, clean reassigned to dirty │
-│  • A3: Alias                 — Type aliasing, struct embedding, ptr alias   │
-│  • A4: Wrapper               — Custom DB repository wrapper / middleware    │
-│  • A5: Nested Function       — Closures, anonymous funcs, defers, routines  │
+│  • A3: Alias                 — Type aliasing, import alias, ptr alias       │
+│  • A4: Wrapper               — Custom DB repository wrapper, receiver spoof │
+│  • A5: Nested Function       — Closures, conditional defer trap, routines   │
 │  • A6: Generic               — Type parameters [T any], generic repositories│
 │  • A7: Interface             — Dynamic dispatch, type assertions, any.(DB)  │
+│  • A8+: Evasion & Provenance — Arbitrary maps, incomplete paths, shadowing  │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 

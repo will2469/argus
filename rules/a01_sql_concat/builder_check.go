@@ -3,28 +3,12 @@ package a01_sql_concat
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strings"
+
+	"golang.org/x/tools/go/analysis"
 )
 
-// PropagateBuilderCall marks a strings.Builder instance as tainted if WriteString/Write
-// is called with a tainted expression or unsafe formatting.
-func PropagateBuilderCall(t *TaintTracker, call *ast.CallExpr) {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || (sel.Sel.Name != "WriteString" && sel.Sel.Name != "Write") {
-		return
-	}
-	if len(call.Args) > 0 && t.IsTaintedExpr(call.Args[0]) {
-		if ident, ok := sel.X.(*ast.Ident); ok {
-			if t.pass != nil && t.pass.TypesInfo != nil {
-				if obj := t.pass.TypesInfo.Uses[ident]; obj != nil {
-					t.tainted[obj] = struct{}{}
-				}
-			} else {
-				t.markTaintedName(ident.Name)
-			}
-		}
-	}
-}
 
 // IsBuilderString checks if an expression is a call to strings.Builder.String().
 func IsBuilderString(call *ast.CallExpr) bool {
@@ -36,8 +20,8 @@ func IsBuilderString(call *ast.CallExpr) bool {
 }
 
 // IsFormattingCall checks if a call expression is an unsafe string formatting function
-// (fmt.Sprintf, fmt.Sprint, strings.Join), unless explicitly safe for parameterized indexing.
-func IsFormattingCall(call *ast.CallExpr, tracker *TaintTracker) bool {
+// (fmt.Sprintf, fmt.Sprint, strings.Join), unless provably safe compile-time assembly or sanitized.
+func IsFormattingCall(call *ast.CallExpr, tracker *TaintTracker, pass *analysis.Pass) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
@@ -48,21 +32,122 @@ func IsFormattingCall(call *ast.CallExpr, tracker *TaintTracker) bool {
 	}
 
 	if pkg.Name == "fmt" && sel.Sel.Name == "Sprintf" {
-		// Kasus B: fmt.Sprintf khusus indeks placeholder $%d diizinkan jika format aman
-		if IsSafePlaceholderFormatting(call, tracker) {
+		if isSafeSprintf(call, tracker, pass) {
 			return false
 		}
 		return true
 	}
 
 	if pkg.Name == "fmt" && sel.Sel.Name == "Sprint" {
+		if isSafeSprint(call, tracker, pass) {
+			return false
+		}
 		return true
 	}
 
 	if pkg.Name == "strings" && sel.Sel.Name == "Join" {
+		if isSafeStringsJoin(call, tracker, pass) {
+			return false
+		}
 		return true
 	}
 
+	return false
+}
+
+// isSafeSprintf returns true if fmt.Sprintf only interpolates compile-time constants or sanitized identifiers.
+func isSafeSprintf(call *ast.CallExpr, tracker *TaintTracker, pass *analysis.Pass) bool {
+	if len(call.Args) == 0 {
+		return false
+	}
+	// Case 1: Indexed placeholder formatting (e.g. $%d)
+	if IsSafePlaceholderFormatting(call, tracker) {
+		return true
+	}
+
+	// Format string must be a string literal
+	formatLit, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || formatLit.Kind != token.STRING {
+		return false
+	}
+
+	// If no arguments, it's a pure constant string
+	if len(call.Args) == 1 {
+		return true
+	}
+
+	// Case 2: All arguments are compile-time constants or verified sanitized identifiers
+	for _, arg := range call.Args[1:] {
+		if !isSafeSQLExpr(arg, tracker, pass) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSafeSprint(call *ast.CallExpr, tracker *TaintTracker, pass *analysis.Pass) bool {
+	if len(call.Args) == 0 {
+		return false
+	}
+	for _, arg := range call.Args {
+		if !isSafeSQLExpr(arg, tracker, pass) {
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeStringsJoin returns true if strings.Join is used solely with compile-time constants.
+func isSafeStringsJoin(call *ast.CallExpr, tracker *TaintTracker, pass *analysis.Pass) bool {
+	if len(call.Args) != 2 {
+		return false
+	}
+	// Separator must be compile-time string literal (e.g. " ", "\n", ", ")
+	if !IsCompileTimeStringLiteral(call.Args[1]) {
+		return false
+	}
+
+	// Slice argument must be a composite literal where all elements are compile-time string constants
+	sliceArg := call.Args[0]
+	if compLit, ok := sliceArg.(*ast.CompositeLit); ok {
+		for _, elt := range compLit.Elts {
+			if !isSafeSQLExpr(elt, tracker, pass) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// isSafeSQLExpr evaluates if an expression contains zero runtime injection risk.
+func isSafeSQLExpr(e ast.Expr, tracker *TaintTracker, pass *analysis.Pass) bool {
+	if e == nil {
+		return false
+	}
+	if IsCompileTimeStringLiteral(e) {
+		return true
+	}
+	if IsSanitized(e, pass) {
+		return true
+	}
+
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return isSafeSQLExpr(x.X, tracker, pass)
+	case *ast.BinaryExpr:
+		if x.Op == token.ADD {
+			return isSafeSQLExpr(x.X, tracker, pass) && isSafeSQLExpr(x.Y, tracker, pass)
+		}
+	case *ast.Ident:
+		if pass != nil && pass.TypesInfo != nil {
+			if obj := pass.TypesInfo.Uses[x]; obj != nil {
+				if _, ok := obj.(*types.Const); ok {
+					return true
+				}
+			}
+		}
+	}
 	return false
 }
 
@@ -119,90 +204,19 @@ func IsCompileTimeStringLiteral(e ast.Expr) bool {
 }
 
 // IsSafeConcat verifies if a binary addition expression consists solely of string literals or sanitized inputs.
-func IsSafeConcat(x *ast.BinaryExpr) bool {
+func IsSafeConcat(x *ast.BinaryExpr, pass *analysis.Pass) bool {
 	if x == nil || x.Op != token.ADD {
 		return false
 	}
 	if IsCompileTimeStringLiteral(x) {
 		return true
 	}
-	if (IsCompileTimeStringLiteral(x.X) && IsSanitized(x.Y)) ||
-		(IsCompileTimeStringLiteral(x.Y) && IsSanitized(x.X)) {
+	if isSafeSQLExpr(x.X, nil, pass) && isSafeSQLExpr(x.Y, nil, pass) {
 		return true
 	}
-	return false
-}
-
-// IsSanitized returns true if the expression is protected by an approved identifier sanitizer.
-func IsSanitized(e ast.Expr) bool {
-	call, ok := e.(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	switch fn := call.Fun.(type) {
-	case *ast.SelectorExpr:
-		return fn.Sel.Name == "Sanitize" || fn.Sel.Name == "SanitizeIdentifier"
-	case *ast.Ident:
-		return fn.Name == "SanitizeIdentifier" || fn.Name == "Sanitize"
-	}
-	return false
-}
-
-func hasSQLArgument(call *ast.CallExpr) bool {
-	sqlArg := extractSQLArgument(call)
-	if sqlArg == nil {
-		return false
-	}
-	if s, ok := extractSimpleString(sqlArg); ok {
-		upper := strings.ToUpper(strings.TrimSpace(s))
-		for _, prefix := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "CREATE", "DROP", "ALTER"} {
-			if strings.HasPrefix(upper, prefix) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func extractSimpleString(e ast.Expr) (string, bool) {
-	switch x := e.(type) {
-	case *ast.BasicLit:
-		if x.Kind == token.STRING && len(x.Value) >= 2 {
-			return x.Value[1 : len(x.Value)-1], true
-		}
-	case *ast.BinaryExpr:
-		if x.Op == token.ADD {
-			return extractSimpleString(x.X)
-		}
-	}
-	return "", false
-}
-
-func extractSQLArgument(call *ast.CallExpr) ast.Expr {
-	if len(call.Args) == 0 {
-		return nil
-	}
-	if len(call.Args) >= 2 {
-		if isContextArg(call.Args[0]) {
-			return call.Args[1]
-		}
-		return call.Args[0]
-	}
-	return call.Args[0]
-}
-
-func isContextArg(arg ast.Expr) bool {
-	if id, ok := arg.(*ast.Ident); ok {
-		lower := strings.ToLower(id.Name)
-		return lower == "ctx" || lower == "context" || strings.HasPrefix(lower, "ctx")
-	}
-	if call, ok := arg.(*ast.CallExpr); ok {
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-			lower := strings.ToLower(sel.Sel.Name)
-			if lower == "context" || lower == "background" || lower == "todo" {
-				return true
-			}
-		}
+	if (IsCompileTimeStringLiteral(x.X) && IsSanitized(x.Y, pass)) ||
+		(IsCompileTimeStringLiteral(x.Y) && IsSanitized(x.X, pass)) {
+		return true
 	}
 	return false
 }

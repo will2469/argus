@@ -48,7 +48,7 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 		if !ok || fn.Body == nil {
 			continue
 		}
-		checkBlock(fset, fn.Body, dm, &issues)
+		checkBlock(pass, fset, fn.Body, dm, &issues)
 	}
 	return issues
 }
@@ -71,18 +71,18 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
-func checkBlock(fset *token.FileSet, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+func checkBlock(pass *analysis.Pass, fset *token.FileSet, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
 	ast.Inspect(body, func(n ast.Node) bool {
 		// If nested closure, inspect it separately
 		if lit, ok := n.(*ast.FuncLit); ok && lit.Body != nil {
-			checkBlock(fset, lit.Body, dm, issues)
+			checkBlock(pass, fset, lit.Body, dm, issues)
 			return false
 		}
 
 		// Pattern 1: Direct return of Query(...) call
 		if ret, ok := n.(*ast.ReturnStmt); ok {
 			for _, expr := range ret.Results {
-				if IsQueryCall(expr) {
+				if IsQueryCall(pass, expr) {
 					if fset == nil || dm == nil || !dm.IsIgnored(fset, expr.Pos(), RuleCode) {
 						*issues = append(*issues, Issue{
 							Pos:     expr.Pos(),
@@ -100,7 +100,7 @@ func checkBlock(fset *token.FileSet, body *ast.BlockStmt, dm *directives.Directi
 		}
 
 		for _, rhs := range assign.Rhs {
-			if !IsQueryCall(rhs) {
+			if !IsQueryCall(pass, rhs) {
 				continue
 			}
 
@@ -119,7 +119,7 @@ func checkBlock(fset *token.FileSet, body *ast.BlockStmt, dm *directives.Directi
 			}
 
 			// Check if rows returned to caller (prohibited ownership transfer)
-			if IsReturned(body, rowsVar) {
+			if IsReturned(body, assign, rowsVar) {
 				*issues = append(*issues, Issue{
 					Pos:     rhs.Pos(),
 					Message: fmt.Sprintf("returning rows variable %q transfers resource ownership; consume and close rows within this function", rowsVar),

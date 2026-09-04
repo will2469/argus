@@ -142,6 +142,9 @@ Untuk mengeliminasi sycophancy dan overconfidence dalam pengerjaan Argus Checker
 | _"Test fixture-nya bikin yang penting jalan aja dulu, gak usah test ignore."_| _"Baik bang, kita buat unit test sederhana saja tanpa ignore."_| _"Ditolak (Tier-3 100% 1-SSOT Golden Corpus Coverage). Fixture di `tests/correctness/aXX/` (atau `tests/migration/aXX/`) wajib mencakup: (1) Kasus positif (`// want`), (2) Kasus patuh (0 diagnostik), (3) Supresi (`// argus:ignore`), dan (4) Adversarial stress matrix."_ |
 | _"Buat supresi ignore, terima aja komentar `// argus:ignore` kosong."_       | _"Boleh, kita buat supresi langsung lolos tanpa cek alasan."_  | _"Ditolak (Tier-1 Directive Invariant). `shared/directives` mewajibkan alasan supresi memiliki minimal 2 kata agar developer bertanggung jawab atas bypass yang dilakukan."_                                                             |
 | _"ALTER TABLE ADD CONSTRAINT ga masalah langsung dijalankan di produksi."_   | _"Iya, langsung jalankan DDL constraint biasa saja."_          | _"Ditolak (Tier-2 PostgreSQL Lock Hierarchy). `ADD CONSTRAINT` tanpa `NOT VALID` mengambil `AccessExclusiveLock` yang memblokir pembacaan dan penulisan seluruh tabel. Rekomendasi: Gunakan `NOT VALID` lalu `VALIDATE CONSTRAINT`."_  |
+| _"Cek aja nama method `sel.Sel.Name == 'Sanitize'` biar ringkas."_           | _"Oke, kita cocokkan nama method-nya saja."_                  | _"Ditolak (Tier-1 Go Analysis Soundness). Pencocokan leksikal string rentan spoofing (misal `evil.Sanitize(...)`). Wajib verifikasi receiver type via `pass.TypesInfo` atau composite literal `pgx.Identifier`."_                      |
+| _"Kalau di switch ada case yang static, anggap aja switch-nya aman."_        | _"Siap, asal ada 1 branch static kita loloskan."_              | _"Ditolak (Tier-1 Universal Path Completeness). Existential Fallacy memicu false negative fatal saat `default: col = userSort`. Seluruh branch yang reachable wajib aman atau terminating (`return`/`panic`)."_                           |
+| _"Tiap ada index expression `map[k]` anggap aja allowlist."_                 | _"Boleh, kurung siku map langsung kita anggap valid."_         | _"Ditolak (Tier-1 Value Provenance). Syntax node `*ast.IndexExpr` bukan jaminan nilai aman. Wajib telusuri provenance map: harus berupa composite literal konstan tertutup dan bebas mutasi runtime."_                                    |
 
 ---
 
@@ -179,16 +182,69 @@ Dalam rekayasa static analysis, bug dan celah keamanan tidak selalu muncul melal
    - Satu false-positive yang salah memperingatkan kode yang benar akan membuat tim engineering menambahkan `// nolint` ke seluruh berkas atau mematikan Argus di CI.
    - **Pertahanan:** Setiap aturan wajib memiliki pengecualian yang presisi untuk idiom standar Go & PostgreSQL (`COUNT(*)`, `EXISTS`, `pgx.CollectRows`, `WHERE tenant_id = $1` dalam CTE).
 
+4. **Aksioma 4: Aksioma Soundness & Path-Completeness Analisis Go (The Go Compiler-Grade Soundness Axiom)**
+   - Menulis `ast.Inspect` bukan sekadar mencocokkan string leksikal (`ident.Name == ...`, `sel.Sel.Name == ...`). Itu adalah regex berkedok AST dan dilarang keras (*Banned Lexical AST Anti-Pattern*).
+   - Wajib verifikasi tipe semantik via `pass.TypesInfo` (`types.PkgName`, `types.Object`).
+   - Wajib penegakan **Universal Path Completeness ($\forall$-Paths Invariant)** pada branching: menolak mutlak Existential Fallacy di mana 1 branch safe meloloskan branch unsafe/unhandled.
+   - Wajib penegakan **Value Provenance**: node sintaksis `*ast.IndexExpr` bukan allowlist tanpa pembuktian composite literal konstan tertutup dan bebas mutasi runtime.
+   - Wajib penegakan **Scope Dominance**: cleanup (`defer rows.Close()`) wajib mendominasi seluruh jalur keluar fungsi tanpa terperangkap di conditional block bersyarat.
+
+5. **Aksioma 5: Aksioma Bukti Semantik & "SAFE Means Provably Safe" (Semantic Evidence over Syntactic Matching)**
+   - **Prinsip Fundamental:**
+     > *"Jangan upgrade analyzer dari syntactic matching langsung ke 'smart heuristics'. Upgrade ke semantic evidence."*
+   - **Definisi Nilai:**
+     `SAFE means provably safe`, BUKAN `SAFE means analyzer menemukan pola yang kelihatan aman`.
+   - **Pergeseran Paradigma:**
+     Transformasi menyeluruh dari **Pattern Linter $\longrightarrow$ Semantic Database Safety Analyzer**.
+   - **Doktrin Auditor Netral & Anti Self-Auditing Bias:**
+     Pembuat kode secara kognitif memiliki *Ownership Bias* (ArXiv 2606.03437) dan kecenderungan optimis menilai kerjanya sendiri ("pasti bilang ini oke"). Sikap optimis ini bertentangan dengan anti-sycophancy. Evaluator Argus WAJIB bersikap sebagai **Auditor QA/QC Independen Netral**: menguji secara adversarial, tidak mengasumsikan kode aman tanpa bukti asal-usul (*provenance*), dan menuntut kepastian semantik di level compiler.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│              PARADIGM SHIFT: PATTERN LINTER VS SEMANTIC SAFETY ANALYZER                     │
+├───────┬──────────────────────────────────────────┬──────────────────────────────────────────┤
+│ Rule  │ Pertanyaan Dangkal (Pattern Linter)      │ Pertanyaan Mendalam (Semantic Analyzer)  │
+├───────┼──────────────────────────────────────────┼──────────────────────────────────────────┤
+│ **A01** │ "Apakah nama function mengandung        │ "Apakah argumen query memiliki untainted │
+│       │  kata 'Sanitize'?"                       │  provenance atau sanitizer memiliki tipe │
+│       │                                          │  & semantik sanitasi deterministik?"     │
+├───────┼──────────────────────────────────────────┼──────────────────────────────────────────┤
+│ **A02** │ "Apakah AST memuat pemanggilan           │ "Apakah analisis resource lifetime membuk│
+│       │  Close() di suatu tempat dalam fungsi?"  │  tikan seluruh jalur keluar fungsi       │
+│       │                                          │  mengeksekusi Close tepat 1 kali?"       │
+├───────┼──────────────────────────────────────────┼──────────────────────────────────────────┤
+│ **A03** │ "Apakah nama function = 'Background'?"   │ "Apakah CallExpr ini teresolusi via      │
+│       │                                          │  types.Info sebagai context.Background,  │
+│       │                                          │  dan apakah context DB memiliki          │
+│       │                                          │  provenance deadline/cancellation?"      │
+├───────┼──────────────────────────────────────────┼──────────────────────────────────────────┤
+│ **A04** │ "Apakah RHS merupakan IndexExpr (m[k])?" │ "Apakah value yang masuk ke ORDER BY     │
+│       │                                          │  berasal dari finite trusted set yang    │
+│       │                                          │  dapat dibuktikan secara statis?"        │
+├───────┼──────────────────────────────────────────┼──────────────────────────────────────────┤
+│ **A05** │ "Apakah ada string 'DELETE FROM' pada    │ "Apakah SQL AST dari argumen SQL operasi │
+│       │  salah satu argumen fungsi DB?"          │  DB mengandung mutasi pada relasi audit  │
+│       │                                          │  yang terkonfigurasi & schema-qualified?"│
+└───────┴──────────────────────────────────────────┴──────────────────────────────────────────┘
+```
+
 ---
 
 ## 6. Active Adversarial Checklist for Argus Rules
 
 Sebelum memfinalisasi rule baru (`rules/aXX_<name>/`), refactor, atau verifikasi bug:
 
+- [ ] **Semantic Evidence ("SAFE Means Provably Safe"):** Apakah status aman didasarkan pada pembuktian semantik murni, bukan sekadar heuristik sintaksis yang kebetulan terlihat aman?
+- [ ] **Independent QC Stance:** Apakah evaluasi bebas dari bias optimisme pembuat (*Ownership Bias*) dan diuji secara ketat layaknya auditor pihak ketiga yang netral?
 - [ ] **AST Determinism:** Apakah query SQL diparse menggunakan `pg_query_go.Parse()` murni tanpa fallback ke regex rapuh?
+- [ ] **Go Analysis Soundness:** Apakah tipe/package diverifikasi via `pass.TypesInfo` alih-alih perbandingan leksikal `ident.Name`? Apakah evaluasi alur kontrol bersifat path-complete ($\forall$ paths)?
+- [ ] **Value Provenance:** Apakah allowlist map/slice dibuktikan berasal dari composite literal konstan tertutup tanpa mutasi runtime?
+- [ ] **Scope Dominance:** Apakah pembersihan resource (`defer`) mendominasi fungsi tanpa terperangkap di child block `if`/`for` bersyarat?
 - [ ] **Zero False-Positive Whitelist:** Apakah idiom umum yang valid (`COUNT(*)`, `pgx.CollectRows`, konstanta ORDER BY) sudah di-whitelist di `exceptions.go`?
 - [ ] **Anti-Fat Code ($\le 250$ Baris):** Apakah setiap berkas Go di dalam rule tidak melebihi ~250 baris? Apakah modularisasi (`analyzer.go`, `ast_visitor.go`, `exceptions.go`) sudah rapi?
 - [ ] **Directives Support:** Apakah analyzer memeriksa `dm.IsIgnored(pass.Fset, pos, RuleCode)` sebelum memanggil `pass.Reportf`?
 - [ ] **Complete 1-SSOT Matrix:** Apakah `tests/correctness/aXX/` (atau `tests/migration/aXX/`) memuat kasus positif (`// want`), kasus patuh (0 diagnostik), kasus supresi (`// argus:ignore`), dan adversarial matrix?
 - [ ] **PostgreSQL 18 Realities:** Apakah rule memperhitungkan lock conflicts, isolation levels (`40001`), parameter binding `$1`, dan perilaku TOAST?
 - [ ] **Strict Public Isolation:** Apakah seluruh Go docstrings, pesan diagnostik, dan dokumentasi wiki bebas dari istilah monorepo tertutup dan siap untuk open-source?
+
+

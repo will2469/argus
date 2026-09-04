@@ -96,6 +96,9 @@ func TestA04_AdversarialCorpus(t *testing.T) {
 		{"A5_NestedFunction", 63, true},
 		{"A6_Generic", 76, true},
 		{"A7_Interface", 87, true},
+		{"A8_ArbitraryMapLookup", 95, true},
+		{"A9_SwitchUnsafeDefault", 111, true},
+		{"A10_DirectionUnsafeFallback", 122, true},
 	}
 
 	for _, a := range assertions {

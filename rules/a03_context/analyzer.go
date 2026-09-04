@@ -54,16 +54,22 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 		if !ok || fn.Body == nil {
 			continue
 		}
-		inspectFunctionBody(fset, fn.Body, dm, &issues)
+		tracker := newContextTracker(pass, file)
+		tracker.analyzeFunc(fn)
+		inspectBlock(pass, fset, file, fn.Body, tracker, dm, &issues)
 	}
 	return issues
 }
 
-func inspectFunctionBody(fset *token.FileSet, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+func inspectBlock(pass *analysis.Pass, fset *token.FileSet, file *ast.File, body *ast.BlockStmt, tracker *contextTracker, dm *directives.DirectiveMap, issues *[]Issue) {
+	if body == nil {
+		return
+	}
 	ast.Inspect(body, func(n ast.Node) bool {
-		// Inspect nested closures separately
 		if lit, ok := n.(*ast.FuncLit); ok && lit.Body != nil {
-			inspectFunctionBody(fset, lit.Body, dm, issues)
+			litTracker := newContextTracker(pass, file)
+			litTracker.analyzeFuncLit(lit, newFlowState())
+			inspectBlock(pass, fset, file, lit.Body, litTracker, dm, issues)
 			return false
 		}
 
@@ -82,7 +88,7 @@ func inspectFunctionBody(fset *token.FileSet, body *ast.BlockStmt, dm *directive
 			return true
 		}
 
-		if IsRawContext(ctxArg, body) {
+		if tracker != nil && tracker.isExprRaw(ctxArg, call) {
 			msg := fmt.Sprintf("database operation %s executed with unbounded context; use bounded context (r.Context() or context.WithTimeout)", sel.Sel.Name)
 			*issues = append(*issues, Issue{
 				Pos:     ctxArg.Pos(),

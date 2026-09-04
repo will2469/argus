@@ -32,8 +32,10 @@ func CheckMigration(filename, content string, dm *directives.DirectiveMap, audit
 	return issues
 }
 
-// InspectMigrationDir reads all .up.sql files in a migration directory and checks for tampering.
-func InspectMigrationDir(migDir string, dm *directives.DirectiveMap, auditTables map[string]bool) []migration.Issue {
+// InspectMigrationDir reads migration scripts in migDir and checks for tampering.
+// By default, forward migrations (*.up.sql) are strictly inspected.
+// If checkDown is true, rollback migrations (*.down.sql) are also inspected.
+func InspectMigrationDir(migDir string, dm *directives.DirectiveMap, auditTables map[string]bool, checkDown bool) []migration.Issue {
 	entries, err := os.ReadDir(migDir)
 	if err != nil {
 		return nil
@@ -41,10 +43,16 @@ func InspectMigrationDir(migDir string, dm *directives.DirectiveMap, auditTables
 
 	var allIssues []migration.Issue
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") {
+		if entry.IsDir() {
 			continue
 		}
-		path := filepath.Join(migDir, entry.Name())
+		name := entry.Name()
+		isUp := strings.HasSuffix(name, ".up.sql")
+		isDown := strings.HasSuffix(name, ".down.sql")
+		if !isUp && (!checkDown || !isDown) {
+			continue
+		}
+		path := filepath.Join(migDir, name)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue

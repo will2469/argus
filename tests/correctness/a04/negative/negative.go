@@ -70,3 +70,52 @@ func N5_StaticConstant(ctx context.Context, db DBExecutor) error {
 	_, err := db.Query(ctx, q)
 	return err
 }
+
+// N6: Local Allowlist Map — local map literal with compile-time constant strings and no mutations.
+func N6_LocalAllowlistMap(ctx context.Context, db DBExecutor, r *http.Request) error {
+	localMap := map[string]string{
+		"title": "title",
+		"price": "price",
+	}
+	userSort := r.URL.Query().Get("sort")
+	col, ok := localMap[userSort]
+	if !ok {
+		col = "title"
+	}
+
+	q := fmt.Sprintf("SELECT id, title FROM products ORDER BY %s ASC", col)
+	_, err := db.Query(ctx, q)
+	return err
+}
+
+// N7: Switch with Return Default — switch where default branch terminates control flow with an error.
+func N7_SwitchWithReturnDefault(ctx context.Context, db DBExecutor, userSort string) error {
+	var col string
+	switch userSort {
+	case "name":
+		col = "nama"
+	case "date":
+		col = "created_at"
+	default:
+		return fmt.Errorf("unsupported sort column: %s", userSort)
+	}
+
+	q := fmt.Sprintf("SELECT id FROM users ORDER BY %s DESC", col)
+	_, err := db.Query(ctx, q)
+	return err
+}
+
+// N8: Path-Complete If-Else Direction — both if and else branches assign valid direction literals.
+func N8_SafeIfElseDirection(ctx context.Context, db DBExecutor, rawDir string) error {
+	var dir string
+	if rawDir == "DESC" {
+		dir = "DESC"
+	} else {
+		dir = "ASC"
+	}
+
+	q := fmt.Sprintf("SELECT id FROM users ORDER BY created_at %s", dir)
+	_, err := db.Query(ctx, q)
+	return err
+}
+

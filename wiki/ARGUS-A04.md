@@ -82,10 +82,10 @@ flowchart LR
 
 1. **Clause Isolation:** Identifies `fmt.Sprintf` calls containing an `ORDER BY` clause and maps argument placeholder indices specifically residing inside the sorting clause.
 2. **Quoting Rejection:** Detects calls to `pgx.Identifier.Sanitize()` or `SanitizeIdentifier()` and rejects them explicitly.
-3. **Data Flow Validation:** Inspects local variable assignments (`*ast.AssignStmt`):
-   - Accepts map index lookups: `safeCol, ok := sortMap[userSort]`
-   - Accepts switch-case statements where each case branch assigns a static compile-time string literal.
-   - Accepts sort direction checks strictly bounded to `"ASC"` or `"DESC"`.
+3. **Data Flow Validation:** Inspects local variable assignments (`*ast.AssignStmt`) with strict CFG path invariants:
+   - **Map Provenance Verification:** Accepts map index lookups (`safeCol := sortMap[userSort]`) ONLY when `sortMap` is proven to be a closed-set composite map literal where all mapped values are compile-time string constants and no runtime mutations exist. Rejects arbitrary or unverified runtime maps.
+   - **Exhaustive Switch-Case Verification:** Requires every reachable branch in a `switch` (including `default`) to assign an approved static string literal or terminate control flow (`return`, `panic`). Rejects switches where a fallback branch assigns untrusted input.
+   - **Path-Complete Sort Direction Verification:** Ensures sort direction variables strictly evaluate to `"ASC"` or `"DESC"` along all execution paths.
 4. **PostgreSQL AST Parser:** Validates static and dynamic queries using `pg_query_go` to confirm that `SortClause` expressions do not contain complex, untrusted expression trees.
 
 ---
@@ -217,11 +217,27 @@ query := fmt.Sprintf("SELECT id, name FROM users ORDER BY %s ASC", userSort)
 ---
 
 ## 8. Configuration Reference (`.argus.yaml`)
-
-Enable or configure this rule globally in `.argus.yaml`:
-
-```yaml
-rules:
-  ARGUS-A04:
-    enabled: true
-```
+ 
+ Enable or configure this rule globally in `.argus.yaml`:
+ 
+ ```yaml
+ rules:
+   ARGUS-A04:
+     enabled: true
+     # Optional allowlist of permitted column names for dynamic ORDER BY.
+     # When configured, any column name assigned via map, switch, or variable
+     # must strictly exist within this approved list.
+     allowed_columns:
+       - "id"
+       - "created_at"
+       - "updated_at"
+       - "deleted_at"
+       - "name"
+       - "nama"
+       - "email"
+       - "status"
+       - "role"
+       - "created_by"
+       - "updated_by"
+       - "is_active"
+ ```

@@ -128,7 +128,11 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 
 	// 2. ARGUS-A01: SQL concatenation & unsafe formatting
 	if isRuleActive(appCfg, a01_sql_concat.RuleCode) {
-		a01Issues := a01_sql_concat.InspectFile(pass, fset, node, dm)
+		var customSources []string
+		if appCfg != nil {
+			customSources = appCfg.GetStringSlice(a01_sql_concat.RuleCode, "custom_taint_sources", nil)
+		}
+		a01Issues := a01_sql_concat.InspectFileWithConfig(pass, fset, node, dm, customSources)
 		for _, issue := range a01Issues {
 			pos := fset.Position(issue.Pos)
 			tracker.AddIssue(Issue{
@@ -173,7 +177,11 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 
 	// 5. ARGUS-A04: Unsafe dynamic ORDER BY clauses
 	if isRuleActive(appCfg, a04_orderby.RuleCode) {
-		a04Issues := a04_orderby.InspectFile(pass, fset, node, dm)
+		var allowedCols []string
+		if appCfg != nil {
+			allowedCols = appCfg.GetStringSlice(a04_orderby.RuleCode, "allowed_columns", nil)
+		}
+		a04Issues := a04_orderby.InspectFileWithConfig(pass, fset, node, dm, allowedCols)
 		for _, issue := range a04Issues {
 			pos := fset.Position(issue.Pos)
 			tracker.AddIssue(Issue{
@@ -188,7 +196,15 @@ func scanGoSourceFile(filePath, rootDir string, tracker *MetricsTracker, appCfg 
 
 	// 6. ARGUS-A05: Audit Table Immutability
 	if isRuleActive(appCfg, a05_audit_immutability.RuleCode) {
-		a05Issues := a05_audit_immutability.InspectFile(pass, fset, node, dm, nil)
+		var auditTablesMap map[string]bool
+		if appCfg != nil {
+			tables := appCfg.GetStringSlice(a05_audit_immutability.RuleCode, "audit_tables", []string{"audit_logs", "security_events"})
+			auditTablesMap = make(map[string]bool)
+			for _, t := range tables {
+				auditTablesMap[strings.ToLower(strings.TrimSpace(t))] = true
+			}
+		}
+		a05Issues := a05_audit_immutability.InspectFile(pass, fset, node, dm, auditTablesMap)
 		for _, issue := range a05Issues {
 			pos := fset.Position(issue.Pos)
 			tracker.AddIssue(Issue{

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/will2469/argus/rules/a05_audit_immutability"
 	"github.com/will2469/argus/rules/a11_destructive_migration"
 	"github.com/will2469/argus/rules/a13_missing_down_migration"
 	"github.com/will2469/argus/rules/a15_ddl_grant"
@@ -71,9 +72,12 @@ func scanMigrationDirectories(migrationDirs []string, rootDir string, tracker *M
 			}
 		}
 
-		// 3. Per-file migration checks: A11, A15, A27, A28, A30
+		// 3. Per-file migration checks: A05, A11, A15, A27, A28, A30
+		checkDownA05 := cfg.GetBool(a05_audit_immutability.RuleCode, "check_down_migrations", false)
 		for _, file := range sqlFiles {
-			if !strings.HasSuffix(file, ".up.sql") {
+			isUp := strings.HasSuffix(file, ".up.sql")
+			isDown := strings.HasSuffix(file, ".down.sql")
+			if !isUp && (!checkDownA05 || !isDown) {
 				continue
 			}
 			var data []byte
@@ -105,8 +109,20 @@ func scanMigrationDirectories(migrationDirs []string, rootDir string, tracker *M
 
 			fileDm := directives.ParseSQLDirectives(content, file)
 
+			// A05: Audit Table Immutability
+			if isRuleActive(cfg, a05_audit_immutability.RuleCode) && (isUp || (isDown && checkDownA05)) {
+				tables := cfg.GetStringSlice(a05_audit_immutability.RuleCode, "audit_tables", []string{"audit_logs", "security_events"})
+				auditMap := make(map[string]bool)
+				for _, t := range tables {
+					auditMap[strings.ToLower(strings.TrimSpace(t))] = true
+				}
+				for _, issue := range a05_audit_immutability.CheckMigration(file, content, fileDm, auditMap) {
+					addMigrationIssue(issue, "ARGUS-A05", rootDir, tracker)
+				}
+			}
+
 			// A11: Destructive Migrations
-			if isRuleActive(cfg, a11_destructive_migration.RuleCode) {
+			if isUp && isRuleActive(cfg, a11_destructive_migration.RuleCode) {
 				for _, issue := range a11_destructive_migration.CheckMigration(file, content, fileDm) {
 					addMigrationIssue(issue, "ARGUS-A11", rootDir, tracker)
 				}

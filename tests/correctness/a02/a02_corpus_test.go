@@ -96,6 +96,8 @@ func TestA02_AdversarialCorpus(t *testing.T) {
 		{"A5_NestedFunction", 75, true},
 		{"A6_Generic", 90, true},
 		{"A7_Interface", 101, true},
+		{"A8_ConditionalDeferTrap", 112, true},
+		{"A9_AliasReassignmentLeak", 125, true},
 	}
 
 	for _, a := range assertions {

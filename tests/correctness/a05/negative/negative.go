@@ -47,3 +47,16 @@ func N5_StaticConstant(ctx context.Context, db DBExecutor) error {
 	_, err := db.Query(ctx, CountAuditLogsQuery)
 	return err
 }
+
+// N6: Data Parameter Not SQL — query argument contains SQL syntax inside a string parameter.
+func N6_DataParameterNotSQL(ctx context.Context, db DBExecutor) error {
+	_, err := db.Exec(ctx, "INSERT INTO audit_logs (id, payload) VALUES ($1, $2)", "1", "DELETE FROM audit_logs WHERE id = '1'")
+	return err
+}
+
+// N7: Different Schema Audit Table — mutation on unconfigured schema does not collide with audit_logs.
+func N7_DifferentSchemaAuditTable(ctx context.Context, db DBExecutor) error {
+	_, err := db.Exec(ctx, "UPDATE evil_schema.audit_logs SET action = 'SAFE'")
+	return err
+}
+

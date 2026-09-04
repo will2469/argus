@@ -27,15 +27,26 @@ Setiap pengerjaan satu aturan Argus Checker wajib mengikuti siklus state-machine
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  1. SPECIFICATION GROUNDING                                                 │
 │     Baca tuntas spesifikasi teknis dan invarian aturan ARGUS-AXX.           │
-│     Identifikasi Invarian, target AST, CWE/ASVS, dan PostgreSQL 18 internals.│
+│     Rumuskan pertanyaan inti berbasis Bukti Semantik, BUKAN Heuristik:      │
+│     - JANGAN tanya: "Apakah AST menemukan pola sintaksis yang kelihatan aman?"│
+│     - WAJIB tanya: "Apakah input/resource terbukti aman secara statis       │
+│       (SAFE means provably safe via provenance, types, & path completeness)?"│
+│     Posisikan diri sebagai Auditor QA/QC Pihak Ketiga yang Netral.          │
 │                                  │                                          │
 │                                  ▼                                          │
 │  2. MODULAR IMPLEMENTATION (ANTI-FAT CODE <= 250 LINES)                     │
 │     Implementasikan subpackage rules/aXX_<name>/:                           │
 │     - Batas tegas: maksimal ~250 baris per berkas Go.                       │
 │     - Dekomposisi tugas (analyzer.go, ast_visitor.go, exceptions.go, dll.)  │
+│     - Wajib patuhi Soundness Analisis Go (argus-go-analysis-soundness):     │
+│       * Semantic Evidence over Syntactic Matching (Provably Safe).          │
+│       * Type Resolution via pass.TypesInfo (bukan ident.Name string).       │
+│       * Universal Path Completeness (∀ paths, bukan ∃ 1 safe branch).       │
+│       * Value Provenance (verifikasi composite literal konstan tertutup).   │
+│       * Scope Dominance (cleanup mendominasi, tidak di conditional block).  │
 │     - Import path WAJIB: github.com/will2469/argus/shared/...               │
 │     - Gunakan Go docstrings standar yang mandiri (self-contained).          │
+
 │                                  │                                          │
 │                                  ▼                                          │
 │  3. 1-SSOT GOLDEN CORPUS HARNESS (100% COVERAGE SCOPE)                    │
@@ -52,6 +63,7 @@ Setiap pengerjaan satu aturan Argus Checker wajib mengikuti siklus state-machine
 │  5. TEST VERIFICATION & ZERO-DEFECT GATE                                    │
 │     Jalankan go test pada rule (100% PASS) dan seluruh test suite Argus.    │
 │     Verifikasi go vet ./... dan gofmt bersih tanpa peringatan.              │
+│     Luluskan Quality Gate: Bebas dari Lexical AST Trap & Existential Fallacy.│
 │                                  │                                          │
 │                                  ▼                                          │
 │  6. PUBLIC WIKI PUBLICATION (ZERO LOSS OF WISDOM)                           │

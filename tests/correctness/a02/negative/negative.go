@@ -79,3 +79,31 @@ type Execer interface {
 func N5_ExecCall(ctx context.Context, db Execer) error {
 	return db.Exec(ctx, "DELETE FROM sessions WHERE expired = true")
 }
+
+// N6: Clean Alias — cursor assigned to alias and closed unconditionally via defer.
+func N6_CleanAlias(ctx context.Context, db DBExecutor) error {
+	rows, err := db.Query(ctx, "SELECT id FROM audit_records")
+	if err != nil {
+		return err
+	}
+	cursor := rows
+	defer cursor.Close()
+	return nil
+}
+
+// N7: Non-database Query API — receiver returning non-database result without Close method.
+type ElasticsearchClient struct{}
+
+func (ElasticsearchClient) Query(ctx context.Context, q string) (string, error) {
+	return q, nil
+}
+
+func N7_SearchQueryAPI(ctx context.Context, es ElasticsearchClient) error {
+	res, err := es.Query(ctx, "filter")
+	if err != nil {
+		return err
+	}
+	_ = res
+	return nil
+}
+

@@ -94,10 +94,10 @@ flowchart LR
     OpCheck -->|No| Safe
 ```
 
-1. **Callsite Extraction:** Inspects all database execution sites (`Query`, `QueryRow`, `Exec`, `BeginTx`, `SendBatch`).
+1. **Callsite Extraction:** Isolates the exact SQL query string argument (evaluating context presence) and completely ignores data parameters (`args...`), eliminating false positives where data values contain SQL keywords.
 2. **Recursive AST Traversal (`ast_visitor.go`):** Evaluates `UpdateStmt`, `DeleteStmt`, `TruncateStmt`, `MergeStmt`, `DropStmt`, and traverses all `WithClause` CTEs.
-3. **Configurable Target List:** Matches against `.argus.yaml` audit table definitions (`audit_logs`, `security_events`, or custom tables).
-4. **Migration Scanner (`migration_check.go`):** Automatically analyzes all `.up.sql` migration scripts to ensure no destructive operations slip through database schema changes.
+3. **Schema Qualification Matching:** Resolves relation identities (`schema.table` vs `table`). Unqualified entries match default/public tables, while custom schemas (e.g. `audit.ledger`) require explicit qualification, preventing cross-schema false alarms.
+4. **Migration Scanner (`migration_check.go`):** Automatically analyzes all `.up.sql` migration scripts by default. Configurable via `check_down_migrations: true` to enforce immutability across rollback scripts (`.down.sql`) as well.
 
 ---
 
@@ -252,7 +252,7 @@ _, err := pool.Exec(ctx, partitionMigrationQuery)
 
 ## 8. Configuration Reference (`.argus.yaml`)
 
-Define audit tables in `.argus.yaml`:
+Define audit tables, schema-qualified ledgers, and migration policies in `.argus.yaml`:
 
 ```yaml
 rules:
@@ -262,4 +262,6 @@ rules:
       - audit_logs
       - security_events
       - auth_sessions_history
+      - audit.ledger           # Schema-qualified ledger table
+    check_down_migrations: false  # When true, forbids audit table mutations/drops in .down.sql
 ```

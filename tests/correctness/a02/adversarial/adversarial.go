@@ -106,3 +106,30 @@ func A7_Interface(ctx context.Context, anyDB any) error {
 	}
 	return nil
 }
+
+// A8: Conditional Defer Trap — defer rows.Close() trapped inside an if branch.
+func A8_ConditionalDeferTrap(ctx context.Context, db DBExecutor, cond bool) error {
+	rows, err := db.Query(ctx, "SELECT id FROM accounts")
+	if err != nil {
+		return err
+	}
+	if cond {
+		defer rows.Close()
+	}
+	_ = rows
+	return nil
+}
+
+// A9: Alias Reassignment Leak — rows reassigned, closing new value but leaking original cursor.
+func A9_AliasReassignmentLeak(ctx context.Context, db DBExecutor, dummy Rows) error {
+	rows, err := db.Query(ctx, "SELECT id FROM orders")
+	if err != nil {
+		return err
+	}
+	other := rows
+	rows = dummy
+	defer rows.Close()
+	_ = other
+	return nil
+}
+

@@ -10,9 +10,9 @@
 
 ## 1. Overview & Core Invariant
 
-Every database I/O invocation (`Query`, `QueryRow`, `Exec`, `Begin`, `BeginTx`, `SendBatch`, `CopyFrom`, `Ping`) **must** receive and propagate a `context.Context` configured with an explicit timeout/deadline or bound to a request lifecycle (such as `r.Context()` from HTTP requests or worker queue envelopes).
+Every database I/O invocation (`Query`, `QueryRow`, `Exec`, `Begin`, `BeginTx`, `SendBatch`, `CopyFrom`, `Ping`) **must** receive and propagate a `context.Context` configured with an explicit timeout/deadline or bound to a cancellable lifecycle (such as `r.Context()` from HTTP requests, `context.WithCancel()`, `context.WithTimeout()`, or worker envelopes).
 
-Executing database calls with raw, unbounded contexts-specifically direct or indirect usages of `context.Background()` or `context.TODO()`-is strictly prohibited in production application code.
+Executing database calls with raw, inert, unbounded root contexts—specifically direct or indirect usages of `context.Background()` or `context.TODO()`—is strictly prohibited in production application code.
 
 ---
 
@@ -62,12 +62,13 @@ flowchart LR
 ```
 
 1. **Target Method Filter:** Matches database I/O methods: `Query`, `QueryRow`, `Exec`, `Begin`, `BeginTx`, `SendBatch`, `CopyFrom`, and `Ping` (excluding non-database selector methods like `r.URL.Query()`).
-2. **Direct Call Detection:** Identifies `*ast.CallExpr` directly calling `context.Background()` or `context.TODO()`.
-3. **Lexical Variable Resolution:** Evaluates local identifier assignments (`*ast.AssignStmt`). If `ctx := context.Background()` is passed to a database call, the resolver identifies the raw origin and flags the violation.
-4. **Bounded Whitelist:** Recognizes valid context creators:
-   - `r.Context()`
-   - `context.WithTimeout(...)`
-   - `context.WithDeadline(...)`
+2. **Direct Call Detection:** Identifies `*ast.CallExpr` directly calling `context.Background()` or `context.TODO()`, resolving any package import aliases (e.g., `import stdctx "context"`).
+3. **Flow-Sensitive & Scope-Aware Variable Resolution:** Evaluates local identifier assignments (`*ast.AssignStmt`) with lattice-based control-flow join and lexical scope stack tracking. Correctly isolates shadowed variables and flags incomplete branch assignments.
+4. **Bounded & Cancellable Whitelist:** Recognizes valid context creators:
+   - Request & lifecycle contexts: `r.Context()`, `c.Request.Context()`
+   - Deadline & timeout contexts: `context.WithTimeout(...)`, `context.WithDeadline(...)`
+   - Active cancellation contexts: `context.WithCancel(...)`, `context.WithCancelCause(...)`, `signal.NotifyContext(...)`
+   - Function parameter contexts: `ctx context.Context` passed down from caller functions
 
 ---
 

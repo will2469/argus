@@ -79,3 +79,16 @@ func A7_Interface(ctx context.Context, client any) error {
 	}
 	return nil
 }
+
+// A8: Public Schema Qualified — mutation explicitly specifying public schema.
+func A8_PublicSchemaQualified(ctx context.Context, db DBExecutor) error {
+	_, err := db.Exec(ctx, "UPDATE public.audit_logs SET action = 'TAMPERED'")
+	return err
+}
+
+// A9: Custom Schema Audit Table — mutation on custom schema audit table configured in YAML.
+func A9_CustomSchemaAuditTable(ctx context.Context, db DBExecutor) error {
+	_, err := db.Exec(ctx, "DELETE FROM audit.ledger WHERE id = 1")
+	return err
+}
+

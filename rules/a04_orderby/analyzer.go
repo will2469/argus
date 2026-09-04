@@ -34,9 +34,14 @@ type Issue struct {
 	Message string
 }
 
-// InspectFile inspects an AST file for unsafe dynamic ORDER BY clauses.
+// InspectFile inspects an AST file for unsafe dynamic ORDER BY clauses with default config.
 // Can be called with pass == nil in standalone CLI runner mode.
 func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	return InspectFileWithConfig(pass, fset, file, dm, nil)
+}
+
+// InspectFileWithConfig inspects an AST file for unsafe dynamic ORDER BY clauses with optional allowed_columns.
+func InspectFileWithConfig(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap, allowedCols []string) []Issue {
 	if file == nil {
 		return nil
 	}
@@ -55,16 +60,16 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 		if !ok || fn.Body == nil {
 			continue
 		}
-		inspectFunctionBody(fset, fn.Body, dm, &issues)
+		inspectFunctionBody(pass, fset, file, fn.Body, dm, allowedCols, &issues)
 	}
 	return issues
 }
 
-func inspectFunctionBody(fset *token.FileSet, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+func inspectFunctionBody(pass *analysis.Pass, fset *token.FileSet, file *ast.File, body *ast.BlockStmt, dm *directives.DirectiveMap, allowedCols []string, issues *[]Issue) {
 	ast.Inspect(body, func(n ast.Node) bool {
 		// Inspect nested closures separately
 		if lit, ok := n.(*ast.FuncLit); ok && lit.Body != nil {
-			inspectFunctionBody(fset, lit.Body, dm, issues)
+			inspectFunctionBody(pass, fset, file, lit.Body, dm, allowedCols, issues)
 			return false
 		}
 
@@ -83,7 +88,7 @@ func inspectFunctionBody(fset *token.FileSet, body *ast.BlockStmt, dm *directive
 				targetIndices := GetOrderByArgIndices(rawFormat)
 				for _, idx := range targetIndices {
 					if idx < len(call.Args) {
-						checkOrderByArg(fset, call.Args[idx], call.Pos(), body, dm, issues)
+						checkOrderByArg(pass, fset, file, call.Args[idx], call.Pos(), body, dm, allowedCols, issues)
 					}
 				}
 			}
@@ -99,10 +104,11 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		return nil, nil
 	}
 
+	allowedCols := cfg.GetStringSlice(RuleCode, "allowed_columns", nil)
 	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
 
 	for _, file := range pass.Files {
-		issues := InspectFile(pass, pass.Fset, file, dm)
+		issues := InspectFileWithConfig(pass, pass.Fset, file, dm, allowedCols)
 		for _, iss := range issues {
 			pass.Reportf(iss.Pos, "[%s] %s", RuleCode, iss.Message)
 		}
@@ -111,7 +117,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
-func checkOrderByArg(fset *token.FileSet, arg ast.Expr, callPos token.Pos, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+func checkOrderByArg(pass *analysis.Pass, fset *token.FileSet, file *ast.File, arg ast.Expr, callPos token.Pos, body *ast.BlockStmt, dm *directives.DirectiveMap, allowedCols []string, issues *[]Issue) {
 	if fset != nil && dm != nil {
 		if dm.IsIgnored(fset, arg.Pos(), RuleCode) || dm.IsIgnored(fset, callPos, RuleCode) {
 			return
@@ -134,7 +140,7 @@ func checkOrderByArg(fset *token.FileSet, arg ast.Expr, callPos token.Pos, body 
 
 	// Check variable data flow
 	if ident, ok := arg.(*ast.Ident); ok {
-		if !IsSafeOrderBy(ident, body) && !IsSortDirectionSafe(ident, body) {
+		if !IsSafeOrderBy(ident, body, file, pass, allowedCols) && !IsSortDirectionSafe(ident, body) {
 			*issues = append(*issues, Issue{
 				Pos:     arg.Pos(),
 				Message: fmt.Sprintf("unsafe dynamic ORDER BY variable %q; must be mapped via closed-set allowlist map or switch-case", ident.Name),

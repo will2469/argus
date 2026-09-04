@@ -88,3 +88,39 @@ func A7_Interface(ctx context.Context, db DBExecutor, p SortProvider) error {
 	_, err := db.Query(ctx, q)
 	return err
 }
+
+// A8: Arbitrary Map — runtime map lookup without proven compile-time allowlist provenance.
+func A8_ArbitraryMapLookup(ctx context.Context, db DBExecutor, userSort string, dynamicMap map[string]string) error {
+	col := dynamicMap[userSort]
+	q := fmt.Sprintf("SELECT id FROM users ORDER BY %s ASC", col)
+	_, err := db.Query(ctx, q)
+	return err
+}
+
+// A9: Switch Unsafe Default — switch statement where default branch falls back to untrusted input.
+func A9_SwitchUnsafeDefault(ctx context.Context, db DBExecutor, userSort string) error {
+	var col string
+	switch userSort {
+	case "name":
+		col = "nama"
+	case "date":
+		col = "created_at"
+	default:
+		col = userSort
+	}
+	q := fmt.Sprintf("SELECT id FROM users ORDER BY %s DESC", col)
+	_, err := db.Query(ctx, q)
+	return err
+}
+
+// A10: Direction Unsafe Fallback — sort direction retaining raw user input on branch evasion.
+func A10_DirectionUnsafeFallback(ctx context.Context, db DBExecutor, userDir string) error {
+	dir := userDir
+	if userDir == "DESC" {
+		dir = "DESC"
+	}
+	q := fmt.Sprintf("SELECT id FROM users ORDER BY id %s", dir)
+	_, err := db.Query(ctx, q)
+	return err
+}
+

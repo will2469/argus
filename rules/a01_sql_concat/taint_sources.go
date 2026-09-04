@@ -6,11 +6,20 @@ import (
 	"strings"
 )
 
-func isTaintSourceAST(name string, typeStr string) bool {
-	switch strings.ToLower(name) {
-	case "id", "nik", "email", "userid", "user_id", "param", "params", "query", "q",
-		"search", "filter", "sort", "order", "orderby", "order_by", "table", "column", "rawsql", "sql":
+func isTaintSourceAST(name string, typeStr string, customSources map[string]struct{}) bool {
+	lower := strings.ToLower(name)
+	switch lower {
+	case "ctx", "context", "db", "tx", "conn", "pool", "log", "logger", "t", "b":
+		return false
+	case "id", "param", "params", "query", "q",
+		"search", "filter", "sort", "order", "orderby", "order_by",
+		"table", "column", "rawsql", "sql", "userinput", "user_input", "input":
 		return true
+	}
+	if customSources != nil {
+		if _, ok := customSources[lower]; ok {
+			return true
+		}
 	}
 	if typeStr != "" {
 		if strings.HasSuffix(typeStr, "Request") || strings.HasSuffix(typeStr, "DTO") ||
@@ -35,11 +44,20 @@ func astExprToString(e ast.Expr) string {
 	}
 }
 
-func isTaintSource(name string, typ types.Type) bool {
-	switch strings.ToLower(name) {
-	case "id", "nik", "email", "userid", "user_id", "param", "params", "query", "q",
-		"search", "filter", "sort", "order", "orderby", "order_by", "table", "column", "rawsql", "sql":
+func isTaintSource(name string, typ types.Type, customSources map[string]struct{}) bool {
+	lower := strings.ToLower(name)
+	switch lower {
+	case "ctx", "context", "db", "tx", "conn", "pool", "log", "logger", "t", "b":
+		return false
+	case "id", "param", "params", "query", "q",
+		"search", "filter", "sort", "order", "orderby", "order_by",
+		"table", "column", "rawsql", "sql", "userinput", "user_input", "input":
 		return true
+	}
+	if customSources != nil {
+		if _, ok := customSources[lower]; ok {
+			return true
+		}
 	}
 	if typ != nil {
 		s := typ.String()

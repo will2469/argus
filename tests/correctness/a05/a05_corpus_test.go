@@ -25,7 +25,11 @@ func parseAndInspect(t *testing.T, relPath string) ([]a05_audit_immutability.Iss
 	}
 
 	dm := directives.ParseGoDirectives(file, fset)
-	auditTables := map[string]bool{"audit_logs": true, "security_events": true}
+	auditTables := map[string]bool{
+		"audit_logs":      true,
+		"security_events": true,
+		"audit.ledger":    true,
+	}
 	issues := a05_audit_immutability.InspectFile(nil, fset, file, dm, auditTables)
 	return issues, fset
 }
@@ -97,6 +101,8 @@ func TestA05_AdversarialCorpus(t *testing.T) {
 		{"A5_NestedFunction", 58, true},
 		{"A6_Generic", 70, true},
 		{"A7_Interface", 77, true},
+		{"A8_PublicSchemaQualified", 85, true},
+		{"A9_CustomSchemaAuditTable", 91, true},
 	}
 
 	for _, a := range assertions {

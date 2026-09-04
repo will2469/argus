@@ -89,21 +89,19 @@ func inspectBody(fset *token.FileSet, body *ast.BlockStmt, dm *directives.Direct
 			return true
 		}
 
-		queries := extractAllQueryStrings(call, body)
-		for _, query := range queries {
-			if strings.TrimSpace(query) == "" {
-				continue
-			}
-
-			op, violatedTable := CheckSQLTampering(query, auditTables)
-			if op != "" {
-				*issues = append(*issues, Issue{
-					Pos:     call.Pos(),
-					Message: fmt.Sprintf("forbidden %s on audit table %q; audit trails must be strictly append-only", op, violatedTable),
-				})
-				break
-			}
+		query, ok := extractTargetQueryString(call, body)
+		if !ok || strings.TrimSpace(query) == "" {
+			return true
 		}
+
+		op, violatedTable := CheckSQLTampering(query, auditTables)
+		if op != "" {
+			*issues = append(*issues, Issue{
+				Pos:     call.Pos(),
+				Message: fmt.Sprintf("forbidden %s on audit table %q; audit trails must be strictly append-only", op, violatedTable),
+			})
+		}
+
 		return true
 	})
 }
@@ -119,7 +117,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	auditTablesMap := make(map[string]bool)
 	auditTables := cfg.GetStringSlice(RuleCode, "audit_tables", []string{"audit_logs", "security_events"})
 	for _, t := range auditTables {
-		auditTablesMap[strings.ToLower(t)] = true
+		auditTablesMap[strings.ToLower(strings.TrimSpace(t))] = true
 	}
 
 	// 1. Inspect Go source files
@@ -135,7 +133,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		pkgDir := filepath.Dir(pass.Fset.Position(pass.Files[0].Pos()).Filename)
 		migDir := cfg.FindMatchingMigrationDir(pkgDir)
 		if migDir != "" {
-			issues := InspectMigrationDir(migDir, dm, auditTablesMap)
+			checkDown := cfg.GetBool(RuleCode, "check_down_migrations", false)
+			issues := InspectMigrationDir(migDir, dm, auditTablesMap, checkDown)
 			for _, is := range issues {
 				pass.Reportf(pass.Files[0].Pos(), "[%s] %s:%d: %s", RuleCode, filepath.Base(is.Filename), is.Line, is.Message)
 			}

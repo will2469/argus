@@ -1,119 +1,127 @@
 // Package a05_audit_immutability provides query resolution utilities to extract
-// compile-time SQL queries and trace variable assignments across function blocks.
+// the target SQL query argument from database calls, ignoring parameter data values.
 package a05_audit_immutability
 
 import (
 	"go/ast"
 	"go/token"
-
-	"github.com/will2469/argus/shared/callsite"
+	"strconv"
+	"strings"
 )
 
-func extractAllQueryStrings(call *ast.CallExpr, body *ast.BlockStmt) []string {
+// extractTargetQueryString extracts the exact SQL statement argument from a database call.
+// It distinguishes context parameters from SQL query arguments and ignores bound data arguments.
+func extractTargetQueryString(call *ast.CallExpr, body *ast.BlockStmt) (string, bool) {
 	if call == nil || len(call.Args) == 0 {
-		return nil
+		return "", false
 	}
 
-	var results []string
-	for _, arg := range call.Args {
-		switch e := arg.(type) {
-		case *ast.BasicLit:
-			if s := unquoteString(e); s != "" {
-				results = append(results, s)
-			}
-		case *ast.BinaryExpr:
-			if s := extractBinaryConcat(e); s != "" {
-				results = append(results, s)
-			}
-		case *ast.Ident:
-			if body != nil {
-				ast.Inspect(body, func(n ast.Node) bool {
-					assign, ok := n.(*ast.AssignStmt)
-					if !ok || assign.Pos() >= call.Pos() {
-						return true
-					}
-					for i, lhs := range assign.Lhs {
-						if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
-							switch rhs := assign.Rhs[i].(type) {
-							case *ast.BasicLit:
-								if s := unquoteString(rhs); s != "" {
-									results = append(results, s)
-								}
-							case *ast.BinaryExpr:
-								if s := extractBinaryConcat(rhs); s != "" {
-									results = append(results, s)
-								}
-							case *ast.Ident:
-								if s := resolveIdentLiteral(rhs, body, assign.Pos()); s != "" {
-									results = append(results, s)
-								}
-							}
-						}
-					}
-					return true
-				})
+	sqlArg := extractSQLArgExpr(call)
+	if sqlArg == nil {
+		return "", false
+	}
+
+	return resolveExprString(sqlArg, body, call.Pos())
+}
+
+func extractSQLArgExpr(call *ast.CallExpr) ast.Expr {
+	if len(call.Args) >= 2 {
+		if isContextArg(call.Args[0]) {
+			return call.Args[1]
+		}
+		return call.Args[0]
+	}
+	if len(call.Args) == 1 {
+		if isContextArg(call.Args[0]) {
+			return nil
+		}
+		return call.Args[0]
+	}
+	return nil
+}
+
+func isContextArg(arg ast.Expr) bool {
+	if id, ok := arg.(*ast.Ident); ok {
+		lower := strings.ToLower(id.Name)
+		return lower == "ctx" || lower == "context" || strings.HasPrefix(lower, "ctx")
+	}
+	if call, ok := arg.(*ast.CallExpr); ok {
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			lower := strings.ToLower(sel.Sel.Name)
+			if lower == "context" || lower == "background" || lower == "todo" {
+				return true
 			}
 		}
 	}
-
-	if len(results) == 0 {
-		if s, ok := callsite.ExtractQueryString(call); ok {
-			results = append(results, s)
-		}
-	}
-
-	return results
+	return false
 }
 
-func unquoteString(lit *ast.BasicLit) string {
-	if lit == nil || lit.Kind != token.STRING {
-		return ""
-	}
-	val := lit.Value
-	if len(val) >= 2 && ((val[0] == '`' && val[len(val)-1] == '`') ||
-		(val[0] == '"' && val[len(val)-1] == '"')) {
-		return val[1 : len(val)-1]
-	}
-	return val
-}
-
-func extractBinaryConcat(bin *ast.BinaryExpr) string {
-	if bin == nil || bin.Op != token.ADD {
-		return ""
-	}
-	s1 := extractExprString(bin.X)
-	s2 := extractExprString(bin.Y)
-	if s1 != "" || s2 != "" {
-		return s1 + s2
-	}
-	return ""
-}
-
-func extractExprString(expr ast.Expr) string {
+func resolveExprString(expr ast.Expr, body *ast.BlockStmt, beforePos token.Pos) (string, bool) {
 	switch e := expr.(type) {
 	case *ast.BasicLit:
-		return unquoteString(e)
+		if e.Kind == token.STRING {
+			return unquoteLiteral(e.Value), true
+		}
 	case *ast.BinaryExpr:
-		return extractBinaryConcat(e)
+		if e.Op == token.ADD {
+			s1, ok1 := resolveExprString(e.X, body, beforePos)
+			s2, ok2 := resolveExprString(e.Y, body, beforePos)
+			if ok1 && ok2 {
+				return s1 + s2, true
+			}
+			if ok1 {
+				return s1, true
+			}
+			if ok2 {
+				return s2, true
+			}
+		}
+	case *ast.Ident:
+		if body != nil {
+			return resolveIdentAssignment(e.Name, body, beforePos)
+		}
+	case *ast.CallExpr:
+		// Support fmt.Sprintf("... %s ...", ...)
+		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Sprintf" {
+			if len(e.Args) > 0 {
+				if lit, ok := e.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					return unquoteLiteral(lit.Value), true
+				}
+			}
+		}
 	}
-	return ""
+	return "", false
 }
 
-func resolveIdentLiteral(id *ast.Ident, body *ast.BlockStmt, beforePos token.Pos) string {
+func resolveIdentAssignment(varName string, body *ast.BlockStmt, beforePos token.Pos) (string, bool) {
 	var found string
+	var ok bool
 	ast.Inspect(body, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok || assign.Pos() >= beforePos {
+		assign, isAssign := n.(*ast.AssignStmt)
+		if !isAssign || assign.Pos() >= beforePos {
 			return true
 		}
 		for i, lhs := range assign.Lhs {
-			if target, ok := lhs.(*ast.Ident); ok && target.Name == id.Name && i < len(assign.Rhs) {
-				if s := extractExprString(assign.Rhs[i]); s != "" {
+			if id, isId := lhs.(*ast.Ident); isId && id.Name == varName && i < len(assign.Rhs) {
+				if s, resolved := resolveExprString(assign.Rhs[i], body, assign.Pos()); resolved {
 					found = s
+					ok = true
 				}
 			}
 		}
 		return true
 	})
-	return found
+	return found, ok
+}
+
+func unquoteLiteral(val string) string {
+	s, err := strconv.Unquote(val)
+	if err == nil {
+		return s
+	}
+	if len(val) >= 2 && ((val[0] == '`' && val[len(val)-1] == '`') ||
+		(val[0] == '"' && val[len(val)-1] == '"')) {
+		return val[1 : len(val)-1]
+	}
+	return val
 }

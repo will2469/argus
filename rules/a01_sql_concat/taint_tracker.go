@@ -5,20 +5,23 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
 
+// TaintTracker tracks flow-sensitive taint across control-flow paths.
 type TaintTracker struct {
-	pass       *analysis.Pass
-	files      []*ast.File
-	currentFn  *ast.FuncDecl
-	tainted    map[types.Object]struct{}
-	sources    map[types.Object]struct{}
-	astTainted map[*ast.FuncDecl]map[string]struct{}
-	astSources map[*ast.FuncDecl]map[string]struct{}
+	pass          *analysis.Pass
+	files         []*ast.File
+	currentFn     *ast.FuncDecl
+	nodeStates    map[ast.Node]*taintState
+	sources       map[types.Object]struct{}
+	astSources    map[*ast.FuncDecl]map[string]struct{}
+	customSources map[string]struct{}
 }
 
+// NewTaintTracker initializes a flow-sensitive TaintTracker.
 func NewTaintTracker(pass *analysis.Pass, files ...*ast.File) *TaintTracker {
 	var fList []*ast.File
 	if pass != nil {
@@ -27,36 +30,37 @@ func NewTaintTracker(pass *analysis.Pass, files ...*ast.File) *TaintTracker {
 		fList = files
 	}
 	return &TaintTracker{
-		pass:       pass,
-		files:      fList,
-		tainted:    make(map[types.Object]struct{}),
-		sources:    make(map[types.Object]struct{}),
-		astTainted: make(map[*ast.FuncDecl]map[string]struct{}),
-		astSources: make(map[*ast.FuncDecl]map[string]struct{}),
+		pass:          pass,
+		files:         fList,
+		nodeStates:    make(map[ast.Node]*taintState),
+		sources:       make(map[types.Object]struct{}),
+		astSources:    make(map[*ast.FuncDecl]map[string]struct{}),
+		customSources: make(map[string]struct{}),
 	}
 }
 
-// SetCurrentFunc sets the active function context for AST-based taint analysis.
+// SetCustomTaintSources registers domain-specific parameter names (from .argus.yaml) as untrusted sources.
+func (t *TaintTracker) SetCustomTaintSources(sources []string) {
+	if len(sources) == 0 {
+		return
+	}
+	if t.customSources == nil {
+		t.customSources = make(map[string]struct{})
+	}
+	for _, s := range sources {
+		trimmed := strings.ToLower(strings.TrimSpace(s))
+		if trimmed != "" {
+			t.customSources[trimmed] = struct{}{}
+		}
+	}
+}
+
+// SetCurrentFunc sets the active function context.
 func (t *TaintTracker) SetCurrentFunc(fn *ast.FuncDecl) {
 	t.currentFn = fn
 }
 
-func (t *TaintTracker) markTaintedName(name string) {
-	if t.currentFn == nil {
-		return
-	}
-	if t.astTainted[t.currentFn] == nil {
-		t.astTainted[t.currentFn] = make(map[string]struct{})
-	}
-	t.astTainted[t.currentFn][name] = struct{}{}
-}
-
-func (t *TaintTracker) deleteTaintedName(name string) {
-	if t.currentFn != nil && t.astTainted[t.currentFn] != nil {
-		delete(t.astTainted[t.currentFn], name)
-	}
-}
-
+// Analyze performs flow-sensitive taint analysis across all functions.
 func (t *TaintTracker) Analyze() {
 	for _, file := range t.files {
 		for _, decl := range file.Decls {
@@ -65,158 +69,122 @@ func (t *TaintTracker) Analyze() {
 				continue
 			}
 			t.currentFn = fn
+			state := newTaintState()
 
-			// Phase 1: Mark taint sources (function params like id, query, req DTOs)
+			// Phase 1: Seed initial taint from function parameters
 			if fn.Type.Params != nil {
-				t.markSources(fn)
+				t.markSources(fn, state)
 			}
 
-			// Phase 2: Propagate taint through assignments and builder calls
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.AssignStmt:
-					t.propagateAssign(x)
-				case *ast.ExprStmt:
-					if call, ok := x.X.(*ast.CallExpr); ok {
-						PropagateBuilderCall(t, call)
-					}
-				}
-				return true
-			})
+			// Phase 2: Flow-sensitive statement traversal
+			t.analyzeStatements(fn.Body.List, state)
 		}
 	}
 	t.currentFn = nil
 }
 
-func (t *TaintTracker) markSources(fn *ast.FuncDecl) {
+func (t *TaintTracker) markSources(fn *ast.FuncDecl, state *taintState) {
 	for _, field := range fn.Type.Params.List {
 		for _, name := range field.Names {
 			if t.pass != nil && t.pass.TypesInfo != nil {
 				obj := t.pass.TypesInfo.Defs[name]
-				if obj != nil && isTaintSource(name.Name, obj.Type()) {
+				if obj != nil && isTaintSource(name.Name, obj.Type(), t.customSources) {
 					t.sources[obj] = struct{}{}
-					t.tainted[obj] = struct{}{}
+					state.markTainted(name, t.pass)
 				}
 			} else {
 				typeStr := astExprToString(field.Type)
-				if isTaintSourceAST(name.Name, typeStr) {
+				if isTaintSourceAST(name.Name, typeStr, t.customSources) {
 					if t.astSources[fn] == nil {
 						t.astSources[fn] = make(map[string]struct{})
 					}
 					t.astSources[fn][name.Name] = struct{}{}
-					t.markTaintedName(name.Name)
+					state.markTainted(name, nil)
 				}
 			}
 		}
 	}
 }
 
-func (t *TaintTracker) propagateAssign(stmt *ast.AssignStmt) {
-	tainted := false
-	for _, rhs := range stmt.Rhs {
-		if t.IsTaintedExpr(rhs) {
-			tainted = true
-			break
-		}
-	}
-	if stmt.Tok == token.ADD_ASSIGN {
-		for _, lhs := range stmt.Lhs {
-			if t.IsTaintedExpr(lhs) {
-				tainted = true
-				break
-			}
-		}
-	}
-	for _, lhs := range stmt.Lhs {
-		ident, ok := lhs.(*ast.Ident)
-		if !ok {
-			continue
-		}
-		if t.pass != nil && t.pass.TypesInfo != nil {
-			obj := t.pass.TypesInfo.Defs[ident]
-			if obj == nil {
-				obj = t.pass.TypesInfo.Uses[ident]
-			}
-			if obj != nil {
-				if tainted {
-					t.tainted[obj] = struct{}{}
-				} else if stmt.Tok == token.ASSIGN {
-					delete(t.tainted, obj)
-				}
-			}
-		} else if t.currentFn != nil {
-			if tainted {
-				t.markTaintedName(ident.Name)
-			} else if stmt.Tok == token.ASSIGN {
-				t.deleteTaintedName(ident.Name)
-			}
-		}
-	}
-}
-
-// IsTaintedExpr checks if an expression carries tainted data or dynamic formatting.
-func (t *TaintTracker) IsTaintedExpr(e ast.Expr) bool {
-	if e == nil {
+func (t *TaintTracker) isExprTaintedInState(e ast.Expr, state *taintState) bool {
+	if e == nil || state == nil {
 		return false
 	}
-	if IsSanitized(e) {
+	if IsSanitized(e, t.pass) {
 		return false
 	}
 
 	switch x := e.(type) {
 	case *ast.BasicLit:
-		return false // String constants are safe compile-time literals
+		return false
 	case *ast.ParenExpr:
-		return t.IsTaintedExpr(x.X)
+		return t.isExprTaintedInState(x.X, state)
 	case *ast.UnaryExpr:
-		return t.IsTaintedExpr(x.X)
+		return t.isExprTaintedInState(x.X, state)
 	case *ast.StarExpr:
-		return t.IsTaintedExpr(x.X)
+		return t.isExprTaintedInState(x.X, state)
 	case *ast.BinaryExpr:
 		if x.Op == token.ADD {
-			return !IsSafeConcat(x)
+			return !IsSafeConcat(x, t.pass)
 		}
 	case *ast.Ident:
-		if t.pass != nil && t.pass.TypesInfo != nil {
-			if obj := t.pass.TypesInfo.Uses[x]; obj != nil {
-				if _, ok := t.tainted[obj]; ok {
-					return true
-				}
-				if _, ok := t.sources[obj]; ok {
-					return true
-				}
-			}
-		} else if t.currentFn != nil {
-			if taintedVars, ok := t.astTainted[t.currentFn]; ok {
-				if _, ok := taintedVars[x.Name]; ok {
-					return true
-				}
-			}
-			if sourceVars, ok := t.astSources[t.currentFn]; ok {
-				if _, ok := sourceVars[x.Name]; ok {
-					return true
-				}
-			}
-		}
+		return state.isIdentTainted(x, t.pass)
 	case *ast.SelectorExpr:
-		return t.IsTaintedExpr(x.X)
+		return t.isExprTaintedInState(x.X, state)
 	case *ast.CallExpr:
-		if IsFormattingCall(x, t) {
+		if IsFormattingCall(x, t, t.pass) {
 			return true
 		}
 		if IsBuilderString(x) {
 			if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
-				return t.IsTaintedExpr(sel.X)
-			}
-		}
-		if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
-			if t.IsTaintedExpr(sel.X) {
-				return true
+				return t.isExprTaintedInState(sel.X, state)
 			}
 		}
 		for _, arg := range x.Args {
-			if t.IsTaintedExpr(arg) {
+			if t.isExprTaintedInState(arg, state) {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+// IsTaintedAt checks if expr is tainted at the given program point.
+func (t *TaintTracker) IsTaintedAt(expr ast.Expr, at ast.Node) bool {
+	if t == nil || expr == nil {
+		return false
+	}
+	var state *taintState
+	if at != nil {
+		state = t.nodeStates[at]
+	}
+	if state == nil {
+		return t.IsTaintedExpr(expr)
+	}
+	return t.isExprTaintedInState(expr, state)
+}
+
+// IsTaintedExpr checks if an expression is tainted under any recorded state or source.
+func (t *TaintTracker) IsTaintedExpr(e ast.Expr) bool {
+	if t == nil || e == nil {
+		return false
+	}
+	if state, ok := t.nodeStates[e]; ok {
+		return t.isExprTaintedInState(e, state)
+	}
+	if id, ok := e.(*ast.Ident); ok {
+		if t.pass != nil && t.pass.TypesInfo != nil {
+			if obj := t.pass.TypesInfo.Uses[id]; obj != nil {
+				if _, ok := t.sources[obj]; ok {
+					return true
+				}
+			}
+		}
+		if t.currentFn != nil {
+			if srcMap, ok := t.astSources[t.currentFn]; ok {
+				if _, ok := srcMap[id.Name]; ok {
+					return true
+				}
 			}
 		}
 	}

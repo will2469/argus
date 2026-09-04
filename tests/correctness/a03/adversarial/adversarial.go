@@ -2,6 +2,7 @@ package adversarial
 
 import (
 	"context"
+	stdctx "context"
 	"time"
 )
 
@@ -75,5 +76,37 @@ func A7_Interface(anyDB any) error {
 		_, err := exec.Query(context.Background(), "SELECT id FROM tenants")
 		return err
 	}
+	return nil
+}
+
+// A8: Import Alias — aliased standard context package calling Background().
+func A8_ImportAlias(db DBExecutor) error {
+	rawCtx := stdctx.Background()
+	_, err := db.Query(rawCtx, "SELECT id FROM api_keys")
+	return err
+}
+
+// A9: Branch Reassignment Incomplete — context only bounded on one branch, raw on fallthrough.
+func A9_BranchReassignmentIncomplete(db DBExecutor, cond bool) error {
+	ctx := context.Background()
+	if cond {
+		boundedCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		ctx = boundedCtx
+	}
+	_, err := db.Query(ctx, "SELECT id FROM webhooks")
+	return err
+}
+
+// A10: Shadowing Raw — inner scope shadows bounded context with raw context.
+func A10_Shadowing_Raw(db DBExecutor) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if true {
+		ctx := context.Background()
+		_, err := db.Query(ctx, "SELECT id FROM event_streams")
+		return err
+	}
+	_ = ctx
 	return nil
 }

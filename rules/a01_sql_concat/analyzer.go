@@ -5,6 +5,7 @@ package a01_sql_concat
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -36,7 +37,13 @@ type Issue struct {
 // InspectFile inspects an AST file for dynamic SQL concatenation or formatting.
 // It can be called with pass == nil in standalone CLI runner mode.
 func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap) []Issue {
+	return InspectFileWithConfig(pass, fset, file, dm, nil)
+}
+
+// InspectFileWithConfig inspects an AST file using optional custom taint sources (from .argus.yaml).
+func InspectFileWithConfig(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *directives.DirectiveMap, customSources []string) []Issue {
 	tracker := NewTaintTracker(pass, file)
+	tracker.SetCustomTaintSources(customSources)
 	tracker.Analyze()
 	return InspectFileWithTracker(pass, fset, file, dm, tracker)
 }
@@ -81,7 +88,7 @@ func InspectFileWithTracker(pass *analysis.Pass, fset *token.FileSet, file *ast.
 				return true
 			}
 
-			if isUnsafeSQL(sqlArg, tracker) {
+			if isUnsafeSQL(sqlArg, tracker, pass, call) {
 				issues = append(issues, Issue{
 					Pos:     sqlArg.Pos(),
 					Message: "unsafe SQL concatenation or formatting; use parameterized placeholders ($1, $2, ...) or SanitizeIdentifier",
@@ -104,8 +111,10 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	}
 
 	dm := pass.ResultOf[directives.Analyzer].(*directives.DirectiveMap)
+	customSources := cfg.GetStringSlice(RuleCode, "custom_taint_sources", nil)
 
 	tracker := NewTaintTracker(pass, pass.Files...)
+	tracker.SetCustomTaintSources(customSources)
 	tracker.Analyze()
 
 	for _, file := range pass.Files {
@@ -124,11 +133,19 @@ func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr, sel *ast.SelectorEx
 	}
 
 	if pass != nil && pass.TypesInfo != nil {
+		var recv types.Type
 		if selType, ok := pass.TypesInfo.Selections[sel]; ok && selType.Recv() != nil {
-			return callsite.IsPgxOrSQLType(selType.Recv())
+			recv = selType.Recv()
+		} else if tv, ok := pass.TypesInfo.Types[sel.X]; ok && tv.Type != nil {
+			recv = tv.Type
 		}
-		if tv, ok := pass.TypesInfo.Types[sel.X]; ok && tv.Type != nil {
-			return callsite.IsPgxOrSQLType(tv.Type)
+		if recv != nil {
+			if callsite.IsPgxOrSQLType(recv) {
+				return true
+			}
+			if isNonDatabaseReceiverName(strings.ToLower(recv.String())) {
+				return false
+			}
 		}
 	}
 
@@ -149,9 +166,12 @@ func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr, sel *ast.SelectorEx
 }
 
 func isNonDatabaseReceiverName(name string) bool {
-	switch name {
-	case "logger", "log", "slog", "zap", "http", "client", "httpclient",
-		"queue", "search", "searchengine", "cmd", "command", "os":
+	switch {
+	case strings.Contains(name, "logger"), strings.Contains(name, "log"),
+		strings.Contains(name, "slog"), strings.Contains(name, "zap"),
+		strings.Contains(name, "http"), strings.Contains(name, "client"),
+		strings.Contains(name, "queue"), strings.Contains(name, "search"),
+		strings.Contains(name, "searchengine"), strings.Contains(name, "cmd"):
 		return true
 	}
 	return false
@@ -170,11 +190,11 @@ func isDatabaseReceiverName(name string) bool {
 	return false
 }
 
-func isUnsafeSQL(e ast.Expr, tracker *TaintTracker) bool {
+func isUnsafeSQL(e ast.Expr, tracker *TaintTracker, pass *analysis.Pass, at ast.Node) bool {
 	if e == nil {
 		return false
 	}
-	if IsSanitized(e) {
+	if IsSanitized(e, pass) {
 		return false
 	}
 
@@ -182,22 +202,35 @@ func isUnsafeSQL(e ast.Expr, tracker *TaintTracker) bool {
 	case *ast.BasicLit:
 		return false // Pure string literal is safe
 	case *ast.ParenExpr:
-		return isUnsafeSQL(x.X, tracker)
+		return isUnsafeSQL(x.X, tracker, pass, at)
 	case *ast.StarExpr:
-		return isUnsafeSQL(x.X, tracker)
+		return isUnsafeSQL(x.X, tracker, pass, at)
 	case *ast.BinaryExpr:
 		if x.Op == token.ADD {
-			return !IsSafeConcat(x)
+			return !IsSafeConcat(x, pass)
 		}
 	case *ast.CallExpr:
-		if IsFormattingCall(x, tracker) {
+		if IsFormattingCall(x, tracker, pass) {
 			return true
 		}
 		if IsBuilderString(x) {
-			return tracker != nil && tracker.IsTaintedExpr(x)
+			if tracker != nil {
+				return tracker.IsTaintedAt(x, at)
+			}
+			return true
 		}
 	case *ast.Ident:
-		return tracker != nil && tracker.IsTaintedExpr(x)
+		if pass != nil && pass.TypesInfo != nil {
+			if obj := pass.TypesInfo.Uses[x]; obj != nil {
+				if _, ok := obj.(*types.Const); ok {
+					return false
+				}
+			}
+		}
+		if tracker != nil {
+			return tracker.IsTaintedAt(x, at)
+		}
+		return true
 	}
 
 	return false

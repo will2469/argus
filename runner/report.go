@@ -182,7 +182,3 @@ func GetRuleDescription(ruleCode string) string {
 func normalizeRuleCode(raw string) string {
 	return NormalizeRuleCode(raw)
 }
-
-func getRuleDescription(ruleCode string) string {
-	return GetRuleDescription(ruleCode)
-}
