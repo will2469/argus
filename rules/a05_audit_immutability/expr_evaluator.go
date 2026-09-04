@@ -11,8 +11,10 @@ import (
 	"github.com/will2469/argus/shared/callsite"
 )
 
+const maxResolveDepth = 25
+
 func (t *flowTracker) resolveExpr(expr ast.Expr, state *flowState, depth int) valueSet {
-	if depth > 5 || expr == nil {
+	if depth > maxResolveDepth || expr == nil {
 		return nil
 	}
 	switch e := expr.(type) {

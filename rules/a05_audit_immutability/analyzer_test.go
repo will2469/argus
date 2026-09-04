@@ -158,3 +158,22 @@ func TestInspectMigrationDir_DownOption(t *testing.T) {
 		t.Errorf("expected 1 issue when checkDown is true, got %d", len(issuesWithDown))
 	}
 }
+
+func TestDeepExpressionChain_NotUnknown(t *testing.T) {
+	// Query constructed with 10 binary concatenations (depth > 5)
+	src := `package main
+import "context"
+type DB interface {
+	Exec(ctx context.Context, sql string, args ...any) (any, error)
+}
+func DeepChain(ctx context.Context, db DB) {
+	q := "INSERT " + "INTO " + "audit_logs " + "(id, " + "action, " + "col3, " + "col4, " + "col5) " + "VALUES " + "('1', " + "'SAFE')"
+	db.Exec(ctx, q)
+}`
+	fset, file := parseSnippet(t, src)
+	issues := InspectFile(nil, fset, file, nil, map[string]bool{"audit_logs": true})
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for deep safe expression chain, got %d: %+v", len(issues), issues)
+	}
+}
+
