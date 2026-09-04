@@ -119,3 +119,36 @@ func TestDynamicColumns(ctx context.Context, db DB, cols string) {
 	}
 }
 
+func TestInspectFile_NonDBReceiver_ZeroFalsePositives(t *testing.T) {
+	src := `package test
+import "context"
+
+type Calculator struct{}
+
+func (Calculator) Query(ctx context.Context, formula string) (any, error) {
+	return nil, nil
+}
+
+func TestCalculator(ctx context.Context) {
+	calculator := Calculator{}
+	calculator.Query(ctx, "SELECT * FROM users")
+
+	repo := Calculator{}
+	repo.Query(ctx, "SELECT * FROM users")
+
+	store := Calculator{}
+	store.Query(ctx, "SELECT * FROM users")
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for non-DB Calculator receiver, got %d: %v", len(issues), issues)
+	}
+}
+

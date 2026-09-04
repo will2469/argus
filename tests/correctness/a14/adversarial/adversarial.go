@@ -66,3 +66,8 @@ type Querier interface {
 func A7_Interface(ctx context.Context, q Querier) {
 	_, _ = q.Query(ctx, "SELECT * FROM dynamic_table")
 }
+
+// A8: Unconventional DB Variable Name — real DB receiver assigned to variable named calculator.
+func A8_UnconventionalDBVarName(ctx context.Context, calculator DB) {
+	_, _ = calculator.Query(ctx, "SELECT * FROM unconventional_table")
+}

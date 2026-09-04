@@ -56,7 +56,7 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			return true
 		}
 
-		if !isDatabaseCall(pass, call) {
+		if !isDatabaseCall(pass, file, call) {
 			return true
 		}
 

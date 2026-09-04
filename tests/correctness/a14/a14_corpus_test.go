@@ -95,6 +95,7 @@ func TestA14_AdversarialCorpus(t *testing.T) {
 		{"A5_NestedFunction", 47, true},
 		{"A6_Generic", 58, true},
 		{"A7_Interface", 67, true},
+		{"A8_UnconventionalDBVarName", 72, true},
 	}
 
 	for _, a := range assertions {

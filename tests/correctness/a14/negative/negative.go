@@ -82,3 +82,24 @@ func N9_OuterScopeSafe(ctx context.Context, db DB) {
 	}
 	_, _ = db.Query(ctx, query)
 }
+
+type Calculator struct{}
+
+func (Calculator) Query(ctx context.Context, formula string) (any, error) {
+	return nil, nil
+}
+
+// N10: Calculator Query — non-DB receiver named Calculator calling Query method with SELECT *.
+func N10_CalculatorNotDB(ctx context.Context, calculator Calculator) {
+	_, _ = calculator.Query(ctx, "SELECT * FROM users")
+}
+
+// N11: Repo Variable Naming Non-DB — non-DB Calculator assigned to variable named repo.
+func N11_RepoNamingNonDB(ctx context.Context, repo Calculator) {
+	_, _ = repo.Query(ctx, "SELECT * FROM users")
+}
+
+// N12: Store Variable Naming Non-DB — non-DB Calculator assigned to variable named store.
+func N12_StoreNamingNonDB(ctx context.Context, store Calculator) {
+	_, _ = store.Query(ctx, "SELECT * FROM users")
+}
