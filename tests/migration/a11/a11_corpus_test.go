@@ -1,6 +1,7 @@
 package a11_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -158,3 +159,96 @@ func TestA11_StandaloneRunner_DualPathParity(t *testing.T) {
 		t.Errorf("Dual-Path Parity FAILED on negative: expected 0 issues from standalone runner, got %d", negIssues)
 	}
 }
+
+func TestA11_EndToEndExpandContractMigrationLifecycle(t *testing.T) {
+	// 1. Authorized Lifecycle (Expand -> Migrate -> Authorized Contract): Must pass with 0 issues
+	t.Run("AuthorizedLifecycle_MustPass", func(t *testing.T) {
+		dir := t.TempDir()
+		m1 := `ALTER TABLE users ADD COLUMN email_v2 VARCHAR(255) DEFAULT '';`
+		m2 := `UPDATE users SET email_v2 = email WHERE email_v2 = '';`
+		m3 := `-- argus:phase=contract release=v2.1.0 issue=DB-402 approved_by=lead-dba reason="completed dual-write migration of user email"
+ALTER TABLE users DROP COLUMN email;`
+
+		if err := os.WriteFile(filepath.Join(dir, "001_expand.up.sql"), []byte(m1), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "002_migrate.up.sql"), []byte(m2), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "003_contract.up.sql"), []byte(m3), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Direct migration scanner
+		issues, err := a11_destructive_migration.ScanMigrationDir(dir)
+		if err != nil {
+			t.Fatalf("ScanMigrationDir failed: %v", err)
+		}
+		if len(issues) != 0 {
+			t.Fatalf("expected 0 issues for authorized lifecycle, got %d: %+v", len(issues), issues)
+		}
+
+		// End-to-end runner audit
+		auditCfg := runner.AuditConfig{
+			RootDir:       dir,
+			ScanDirs:      []string{t.TempDir()},
+			MigrationDirs: []string{dir},
+		}
+		res, err := runner.RunAuditWithConfig(auditCfg)
+		if err != nil {
+			t.Fatalf("RunAuditWithConfig failed: %v", err)
+		}
+		a11Issues := 0
+		for _, iss := range res.Issues {
+			if iss.Rule == "ARGUS-A11" || iss.Rule == "DESTRUCTIVE_MIGRATION" {
+				a11Issues++
+			}
+		}
+		if a11Issues != 0 {
+			t.Fatalf("expected 0 runner issues for authorized lifecycle, got %d", a11Issues)
+		}
+	})
+
+	// 2. Unauthorized Contract Lifecycle (Dummy Release Bypass): Must be blocked with 1 issue
+	t.Run("UnauthorizedDummyBypass_MustBeBlocked", func(t *testing.T) {
+		dir := t.TempDir()
+		m1 := `ALTER TABLE users ADD COLUMN email_v2 VARCHAR(255) DEFAULT '';`
+		m2 := `-- argus:contract anything
+ALTER TABLE users DROP COLUMN email;`
+
+		if err := os.WriteFile(filepath.Join(dir, "001_expand.up.sql"), []byte(m1), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "002_contract.up.sql"), []byte(m2), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		issues, err := a11_destructive_migration.ScanMigrationDir(dir)
+		if err != nil {
+			t.Fatalf("ScanMigrationDir failed: %v", err)
+		}
+		if len(issues) != 1 {
+			t.Fatalf("expected 1 issue blocking unauthorized contract, got %d", len(issues))
+		}
+	})
+
+	// 3. Expand Phase With Destructive DDL: Must be blocked because destructive operations are forbidden in expand phase
+	t.Run("ExpandPhaseDestructive_MustBeBlocked", func(t *testing.T) {
+		dir := t.TempDir()
+		m1 := `-- argus:phase=expand release=v2.0.0 issue=DB-101 approved_by=lead-dba reason="expand phase"
+ALTER TABLE users DROP COLUMN email;`
+
+		if err := os.WriteFile(filepath.Join(dir, "001_expand_destructive.up.sql"), []byte(m1), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		issues, err := a11_destructive_migration.ScanMigrationDir(dir)
+		if err != nil {
+			t.Fatalf("ScanMigrationDir failed: %v", err)
+		}
+		if len(issues) != 1 {
+			t.Fatalf("expected 1 issue blocking destructive operation in expand phase, got %d", len(issues))
+		}
+	})
+}
+
