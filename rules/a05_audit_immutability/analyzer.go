@@ -59,14 +59,15 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 		if !ok || fn.Body == nil {
 			continue
 		}
-		inspectBody(fset, fn.Body, dm, auditTables, &issues)
+		inspectFunction(pass, fset, file, fn, dm, auditTables, &issues)
 	}
 
 	return issues
 }
 
-func inspectBody(fset *token.FileSet, body *ast.BlockStmt, dm *directives.DirectiveMap, auditTables map[string]bool, issues *[]Issue) {
-	ast.Inspect(body, func(n ast.Node) bool {
+func inspectFunction(pass *analysis.Pass, fset *token.FileSet, file *ast.File, fn *ast.FuncDecl, dm *directives.DirectiveMap, auditTables map[string]bool, issues *[]Issue) {
+	tracker := analyzeFunctionFlow(pass, file, fn)
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -89,17 +90,20 @@ func inspectBody(fset *token.FileSet, body *ast.BlockStmt, dm *directives.Direct
 			return true
 		}
 
-		query, ok := extractTargetQueryString(call, body)
-		if !ok || strings.TrimSpace(query) == "" {
-			return true
-		}
+		queries := tracker.ResolveCallQueries(call)
+		for _, query := range queries {
+			if strings.TrimSpace(query) == "" {
+				continue
+			}
 
-		op, violatedTable := CheckSQLTampering(query, auditTables)
-		if op != "" {
-			*issues = append(*issues, Issue{
-				Pos:     call.Pos(),
-				Message: fmt.Sprintf("forbidden %s on audit table %q; audit trails must be strictly append-only", op, violatedTable),
-			})
+			op, violatedTable := CheckSQLTampering(query, auditTables)
+			if op != "" {
+				*issues = append(*issues, Issue{
+					Pos:     call.Pos(),
+					Message: fmt.Sprintf("forbidden %s on audit table %q; audit trails must be strictly append-only", op, violatedTable),
+				})
+				break
+			}
 		}
 
 		return true

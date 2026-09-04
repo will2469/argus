@@ -91,3 +91,28 @@ func A9_CustomSchemaAuditTable(ctx context.Context, db DBExecutor) error {
 	_, err := db.Exec(ctx, "DELETE FROM audit.ledger WHERE id = 1")
 	return err
 }
+
+// A10: Variable Shadowing — inner block shadows outer safe query with forbidden UPDATE.
+func A10_VariableShadowing(ctx context.Context, db DBExecutor) error {
+	query := "SELECT * FROM audit_logs"
+	{
+		query := "UPDATE audit_logs SET action = 'SHADOWED' WHERE id = 1"
+		_, err := db.Exec(ctx, query)
+		if err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(ctx, query)
+	return err
+}
+
+// A11: Branch Reassignment — path-sensitive assignment where UPDATE is reachable along branch.
+func A11_BranchReassignment(ctx context.Context, db DBExecutor, cond bool) error {
+	query := "SELECT * FROM audit_logs"
+	if cond {
+		query = "UPDATE audit_logs SET action = 'BRANCH_MUTATED' WHERE id = 1"
+	}
+	_, err := db.Exec(ctx, query)
+	return err
+}
+

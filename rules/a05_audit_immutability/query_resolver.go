@@ -1,127 +1,213 @@
-// Package a05_audit_immutability provides query resolution utilities to extract
-// the target SQL query argument from database calls, ignoring parameter data values.
+// Package a05_audit_immutability provides path-sensitive query resolution utilities
+// to extract candidate SQL statements reaching database calls.
 package a05_audit_immutability
 
 import (
 	"go/ast"
 	"go/token"
-	"strconv"
-	"strings"
+
+	"golang.org/x/tools/go/analysis"
 )
 
-// extractTargetQueryString extracts the exact SQL statement argument from a database call.
-// It distinguishes context parameters from SQL query arguments and ignores bound data arguments.
-func extractTargetQueryString(call *ast.CallExpr, body *ast.BlockStmt) (string, bool) {
-	if call == nil || len(call.Args) == 0 {
-		return "", false
-	}
-
-	sqlArg := extractSQLArgExpr(call)
-	if sqlArg == nil {
-		return "", false
-	}
-
-	return resolveExprString(sqlArg, body, call.Pos())
+type flowTracker struct {
+	pass       *analysis.Pass
+	file       *ast.File
+	fn         *ast.FuncDecl
+	callStates map[*ast.CallExpr]*flowState
 }
 
-func extractSQLArgExpr(call *ast.CallExpr) ast.Expr {
-	if len(call.Args) >= 2 {
-		if isContextArg(call.Args[0]) {
-			return call.Args[1]
-		}
-		return call.Args[0]
+func analyzeFunctionFlow(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl) *flowTracker {
+	tracker := &flowTracker{
+		pass:       pass,
+		file:       file,
+		fn:         fn,
+		callStates: make(map[*ast.CallExpr]*flowState),
 	}
-	if len(call.Args) == 1 {
-		if isContextArg(call.Args[0]) {
-			return nil
-		}
-		return call.Args[0]
+	if fn == nil || fn.Body == nil {
+		return tracker
 	}
-	return nil
+	state := newFlowState()
+	tracker.analyzeStatements(fn.Body.List, state)
+	return tracker
 }
 
-func isContextArg(arg ast.Expr) bool {
-	if id, ok := arg.(*ast.Ident); ok {
-		lower := strings.ToLower(id.Name)
-		return lower == "ctx" || lower == "context" || strings.HasPrefix(lower, "ctx")
+func (t *flowTracker) recordCalls(node ast.Node, state *flowState) {
+	if node == nil || state == nil {
+		return
 	}
-	if call, ok := arg.(*ast.CallExpr); ok {
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-			lower := strings.ToLower(sel.Sel.Name)
-			if lower == "context" || lower == "background" || lower == "todo" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func resolveExprString(expr ast.Expr, body *ast.BlockStmt, beforePos token.Pos) (string, bool) {
-	switch e := expr.(type) {
-	case *ast.BasicLit:
-		if e.Kind == token.STRING {
-			return unquoteLiteral(e.Value), true
-		}
-	case *ast.BinaryExpr:
-		if e.Op == token.ADD {
-			s1, ok1 := resolveExprString(e.X, body, beforePos)
-			s2, ok2 := resolveExprString(e.Y, body, beforePos)
-			if ok1 && ok2 {
-				return s1 + s2, true
-			}
-			if ok1 {
-				return s1, true
-			}
-			if ok2 {
-				return s2, true
-			}
-		}
-	case *ast.Ident:
-		if body != nil {
-			return resolveIdentAssignment(e.Name, body, beforePos)
-		}
-	case *ast.CallExpr:
-		// Support fmt.Sprintf("... %s ...", ...)
-		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Sprintf" {
-			if len(e.Args) > 0 {
-				if lit, ok := e.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-					return unquoteLiteral(lit.Value), true
-				}
-			}
-		}
-	}
-	return "", false
-}
-
-func resolveIdentAssignment(varName string, body *ast.BlockStmt, beforePos token.Pos) (string, bool) {
-	var found string
-	var ok bool
-	ast.Inspect(body, func(n ast.Node) bool {
-		assign, isAssign := n.(*ast.AssignStmt)
-		if !isAssign || assign.Pos() >= beforePos {
-			return true
-		}
-		for i, lhs := range assign.Lhs {
-			if id, isId := lhs.(*ast.Ident); isId && id.Name == varName && i < len(assign.Rhs) {
-				if s, resolved := resolveExprString(assign.Rhs[i], body, assign.Pos()); resolved {
-					found = s
-					ok = true
-				}
-			}
+	ast.Inspect(node, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			t.callStates[call] = state.clone()
 		}
 		return true
 	})
-	return found, ok
 }
 
-func unquoteLiteral(val string) string {
-	s, err := strconv.Unquote(val)
-	if err == nil {
-		return s
+func (t *flowTracker) analyzeStatements(stmts []ast.Stmt, state *flowState) {
+	for _, stmt := range stmts {
+		t.recordCalls(stmt, state)
+		switch s := stmt.(type) {
+		case *ast.AssignStmt:
+			t.handleAssign(s, state)
+		case *ast.DeclStmt:
+			t.handleDecl(s, state)
+		case *ast.IfStmt:
+			t.handleIf(s, state)
+		case *ast.SwitchStmt:
+			t.handleSwitch(s, state)
+		case *ast.ForStmt:
+			t.handleFor(s, state)
+		case *ast.RangeStmt:
+			t.handleRange(s, state)
+		case *ast.BlockStmt:
+			t.analyzeStatements(s.List, state)
+		}
+
+		// Inspect inner function closures
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			if fnLit, ok := n.(*ast.FuncLit); ok && fnLit.Body != nil {
+				closureState := state.clone()
+				t.analyzeStatements(fnLit.Body.List, closureState)
+				return false
+			}
+			return true
+		})
 	}
-	if len(val) >= 2 && ((val[0] == '`' && val[len(val)-1] == '`') ||
-		(val[0] == '"' && val[len(val)-1] == '"')) {
-		return val[1 : len(val)-1]
-	}
-	return val
 }
+
+func (t *flowTracker) handleAssign(s *ast.AssignStmt, state *flowState) {
+	if s.Tok == token.DEFINE {
+		for i, lhs := range s.Lhs {
+			lhsId, ok := lhs.(*ast.Ident)
+			if !ok || i >= len(s.Rhs) {
+				continue
+			}
+			vals := t.resolveExpr(s.Rhs[i], state, 0)
+			k := makeDefVarKey(t.pass, lhsId)
+			state.set(k, vals)
+		}
+	} else if s.Tok == token.ASSIGN {
+		for i, lhs := range s.Lhs {
+			lhsId, ok := lhs.(*ast.Ident)
+			if !ok || i >= len(s.Rhs) {
+				continue
+			}
+			vals := t.resolveExpr(s.Rhs[i], state, 0)
+			k := makeVarKey(t.pass, t.file, t.fn, lhsId)
+			state.set(k, vals)
+		}
+	} else if s.Tok == token.ADD_ASSIGN {
+		for i, lhs := range s.Lhs {
+			lhsId, ok := lhs.(*ast.Ident)
+			if !ok || i >= len(s.Rhs) {
+				continue
+			}
+			k := makeVarKey(t.pass, t.file, t.fn, lhsId)
+			prevVals, _ := state.get(k)
+			rhsVals := t.resolveExpr(s.Rhs[i], state, 0)
+			state.set(k, crossConcat(prevVals, rhsVals))
+		}
+	}
+}
+
+func (t *flowTracker) handleDecl(s *ast.DeclStmt, state *flowState) {
+	gen, ok := s.Decl.(*ast.GenDecl)
+	if !ok || gen.Tok != token.VAR {
+		return
+	}
+	for _, spec := range gen.Specs {
+		valSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		for i, name := range valSpec.Names {
+			if i < len(valSpec.Values) {
+				vals := t.resolveExpr(valSpec.Values[i], state, 0)
+				k := makeDefVarKey(t.pass, name)
+				state.set(k, vals)
+			}
+		}
+	}
+}
+
+func (t *flowTracker) handleIf(s *ast.IfStmt, state *flowState) {
+	if s.Init != nil {
+		t.analyzeStatements([]ast.Stmt{s.Init}, state)
+	}
+	t.recordCalls(s.Cond, state)
+
+	thenState := state.clone()
+	if s.Body != nil {
+		t.analyzeStatements(s.Body.List, thenState)
+	}
+
+	var elseState *flowState
+	if s.Else != nil {
+		elseState = state.clone()
+		switch el := s.Else.(type) {
+		case *ast.BlockStmt:
+			t.analyzeStatements(el.List, elseState)
+		case *ast.IfStmt:
+			t.handleIf(el, elseState)
+		default:
+			t.analyzeStatements([]ast.Stmt{el}, elseState)
+		}
+	} else {
+		elseState = state.clone()
+	}
+
+	*state = *thenState.join(elseState)
+}
+
+func (t *flowTracker) handleSwitch(s *ast.SwitchStmt, state *flowState) {
+	if s.Init != nil {
+		t.analyzeStatements([]ast.Stmt{s.Init}, state)
+	}
+	var caseStates []*flowState
+	hasDefault := false
+	if s.Body != nil {
+		for _, clause := range s.Body.List {
+			cc, ok := clause.(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+			if len(cc.List) == 0 {
+				hasDefault = true
+			}
+			cs := state.clone()
+			t.analyzeStatements(cc.Body, cs)
+			caseStates = append(caseStates, cs)
+		}
+	}
+	merged := newFlowState()
+	if !hasDefault {
+		caseStates = append(caseStates, state.clone())
+	}
+	for _, cs := range caseStates {
+		merged = merged.join(cs)
+	}
+	*state = *merged
+}
+
+func (t *flowTracker) handleFor(s *ast.ForStmt, state *flowState) {
+	if s.Init != nil {
+		t.analyzeStatements([]ast.Stmt{s.Init}, state)
+	}
+	loopState := state.clone()
+	if s.Body != nil {
+		t.analyzeStatements(s.Body.List, loopState)
+	}
+	if s.Post != nil {
+		t.analyzeStatements([]ast.Stmt{s.Post}, loopState)
+	}
+	*state = *state.join(loopState)
+}
+
+func (t *flowTracker) handleRange(s *ast.RangeStmt, state *flowState) {
+	loopState := state.clone()
+	if s.Body != nil {
+		t.analyzeStatements(s.Body.List, loopState)
+	}
+	*state = *state.join(loopState)
+}
+

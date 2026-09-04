@@ -103,6 +103,9 @@ func TestA05_AdversarialCorpus(t *testing.T) {
 		{"A7_Interface", 77, true},
 		{"A8_PublicSchemaQualified", 85, true},
 		{"A9_CustomSchemaAuditTable", 91, true},
+		{"A10_VariableShadowing_Inner", 100, true},
+		{"A10_VariableShadowing_Outer", 105, false},
+		{"A11_BranchReassignment", 115, true},
 	}
 
 	for _, a := range assertions {
