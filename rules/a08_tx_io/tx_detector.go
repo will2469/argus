@@ -58,16 +58,16 @@ func isDBReceiver(pass *analysis.Pass, fun ast.Expr, fn *ast.FuncDecl, file *ast
 		}
 
 		if recvType != nil && recvType != types.Typ[types.Invalid] {
-			if callsite.IsPgxOrSQLType(recvType) || isProvenDBPoolInterface(recvType) {
+			if isProvenDBPoolInterface(recvType) {
 				return true
 			}
-			return false
+			if !hasInvalidType(recvType) {
+				return false
+			}
 		}
 	}
 
-	// 2. AST-level fallback (pass == nil or unresolved type): heuristic package selector matching
-	// Accept known database package selectors (sql.DB, pgxpool.Pool, etc.)
-	// This is a heuristic and may produce false negatives for wrapped abstractions
+	// 2. AST-level fallback (pass == nil or unresolved type)
 	astType := findASTType(sel.X, fn, file)
 	if astType != nil && isProvenDBPoolASTType(astType, file) {
 		return true
@@ -84,7 +84,7 @@ func isDBReceiver(pass *analysis.Pass, fun ast.Expr, fn *ast.FuncDecl, file *ast
 					} else if len(as.Rhs) == 1 {
 						rhs = as.Rhs[0]
 					}
-					if rhsCall, ok := rhs.(*ast.CallExpr); ok && isDBPoolConstructorCall(rhsCall) {
+					if rhsCall, ok := rhs.(*ast.CallExpr); ok && isDBPoolConstructorCall(rhsCall, file) {
 						return true
 					}
 				}
@@ -95,67 +95,6 @@ func isDBReceiver(pass *analysis.Pass, fun ast.Expr, fn *ast.FuncDecl, file *ast
 	return false
 }
 
-func isProvenDBPoolInterface(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	t = unwrapPointer(t)
-
-	// Provenance-based: only accept exact package path matches
-	if named, ok := t.(*types.Named); ok && named.Obj() != nil {
-		pkg := named.Obj().Pkg()
-		if pkg == nil {
-			return false
-		}
-		path := pkg.Path()
-		name := named.Obj().Name()
-
-		// Exact package/type matches only
-		switch path {
-		case "github.com/jackc/pgx/v5/pgxpool":
-			return name == "Pool"
-		case "github.com/jackc/pgx/v4/pgxpool":
-			return name == "Pool"
-		case "database/sql":
-			return name == "DB"
-		}
-	}
-
-	// Heuristic fallback: for unknown packages, check if interface has transaction-like methods
-	// This is less strict but necessary for detecting wrapped abstractions
-	return hasTransactionMethods(t)
-}
-
-func hasTransactionMethods(t types.Type) bool {
-	iface, ok := t.Underlying().(*types.Interface)
-	if !ok {
-		return false
-	}
-
-	// Check if interface has Begin/BeginFunc/BeginTx methods (transaction pool indicators)
-	hasBegin := false
-	for i := 0; i < iface.NumMethods(); i++ {
-		method := iface.Method(i)
-		switch method.Name() {
-		case "Begin", "BeginFunc", "BeginTx", "ExecuteTx", "WithTx":
-			hasBegin = true
-		}
-	}
-
-	return hasBegin
-}
-
-func isProvenDBTxType(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	t = unwrapPointer(t)
-
-	// Fail-closed: only accept exact type verification via callsite.IsPgxOrSQLType
-	// Reject structural method set analysis (Begin, Exec, Query) as insufficient proof
-	return callsite.IsPgxOrSQLType(t)
-}
-
 func isDBTxIdent(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl, file *ast.File) bool {
 	if id == nil || id.Name == "_" {
 		return false
@@ -163,17 +102,21 @@ func isDBTxIdent(pass *analysis.Pass, id *ast.Ident, fn *ast.FuncDecl, file *ast
 	if pass != nil && pass.TypesInfo != nil {
 		t := pass.TypesInfo.TypeOf(id)
 		if t != nil && t != types.Typ[types.Invalid] {
-			return isProvenDBTxType(t)
+			if isProvenDBTxType(t) {
+				return true
+			}
+			if !hasInvalidType(t) {
+				return false
+			}
 		}
 	}
-	// AST-level fallback: check if type is sql.Tx, pgx.Tx, etc.
+	// AST-level fallback: check if type is sql.Tx, pgx.Tx, or proven AST Tx interface
 	astType := findASTType(id, fn, file)
 	if astType != nil {
 		return isProvenDBTxASTType(astType, file)
 	}
-	// Conservative: accept as transaction if unresolved (may cause false positives,
-	// but prevents false negatives in critical blocking I/O detection)
-	return true
+	// Fail-closed against false positives: unresolved identifiers cannot be assumed as DB transactions
+	return false
 }
 
 func isBeginTxCall(pass *analysis.Pass, call *ast.CallExpr, fn *ast.FuncDecl, file *ast.File) bool {

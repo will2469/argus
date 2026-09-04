@@ -37,13 +37,38 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 		}
 		if fn != nil && fn.Body != nil {
 			for _, stmt := range fn.Body.List {
-				if decl, ok := stmt.(*ast.DeclStmt); ok {
-					if gen, ok := decl.Decl.(*ast.GenDecl); ok {
+				switch s := stmt.(type) {
+				case *ast.DeclStmt:
+					if gen, ok := s.Decl.(*ast.GenDecl); ok {
 						for _, spec := range gen.Specs {
 							if vs, ok := spec.(*ast.ValueSpec); ok {
 								for _, name := range vs.Names {
 									if name.Name == id.Name {
 										return vs.Type
+									}
+								}
+							}
+						}
+					}
+				case *ast.AssignStmt:
+					for i, lhs := range s.Lhs {
+						if lid, ok := lhs.(*ast.Ident); ok && lid.Name == id.Name {
+							if i < len(s.Rhs) {
+								if comp, ok := s.Rhs[i].(*ast.CompositeLit); ok {
+									return comp.Type
+								}
+								if ta, ok := s.Rhs[i].(*ast.TypeAssertExpr); ok {
+									return ta.Type
+								}
+								if call, ok := s.Rhs[i].(*ast.CallExpr); ok {
+									if ret := resolveCallReturnTypeAST(call, 0, fn, file); ret != nil {
+										return ret
+									}
+								}
+							} else if len(s.Rhs) == 1 {
+								if call, ok := s.Rhs[0].(*ast.CallExpr); ok {
+									if ret := resolveCallReturnTypeAST(call, i, fn, file); ret != nil {
+										return ret
 									}
 								}
 							}
@@ -59,16 +84,82 @@ func findASTType(expr ast.Expr, fn *ast.FuncDecl, file *ast.File) ast.Expr {
 			xType := findASTType(xID, fn, file)
 			structName := getASTTypeName(xType)
 			if structName != "" && file != nil {
-				for _, decl := range file.Decls {
-					if gen, ok := decl.(*ast.GenDecl); ok {
-						for _, spec := range gen.Specs {
-							if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == structName {
-								if st, ok := ts.Type.(*ast.StructType); ok && st.Fields != nil {
-									for _, f := range st.Fields.List {
-										for _, fnm := range f.Names {
-											if fnm.Name == sel.Sel.Name {
-												return f.Type
+				ts := findTypeSpec(structName, file)
+				if ts != nil {
+					if st, ok := ts.Type.(*ast.StructType); ok && st.Fields != nil {
+						for _, f := range st.Fields.List {
+							for _, fnm := range f.Names {
+								if fnm.Name == sel.Sel.Name {
+									return f.Type
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func resolveCallReturnTypeAST(call *ast.CallExpr, targetIdx int, fn *ast.FuncDecl, file *ast.File) ast.Expr {
+	if call == nil {
+		return nil
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	recvType := findASTType(sel.X, fn, file)
+	if recvType == nil {
+		return nil
+	}
+
+	if star, ok := recvType.(*ast.StarExpr); ok {
+		recvType = star.X
+	}
+	if rSel, ok := recvType.(*ast.SelectorExpr); ok {
+		if pkgID, ok := rSel.X.(*ast.Ident); ok {
+			if isImportedDBPackageIdent(file, pkgID.Name) {
+				switch rSel.Sel.Name {
+				case "DB":
+					if (sel.Sel.Name == "Begin" || sel.Sel.Name == "BeginTx") && targetIdx == 0 {
+						return &ast.StarExpr{
+							X: &ast.SelectorExpr{X: ast.NewIdent(pkgID.Name), Sel: ast.NewIdent("Tx")},
+						}
+					}
+				case "Pool", "Conn":
+					if (sel.Sel.Name == "Begin" || sel.Sel.Name == "BeginTx") && targetIdx == 0 {
+						return &ast.SelectorExpr{X: ast.NewIdent("pgx"), Sel: ast.NewIdent("Tx")}
+					}
+				}
+			}
+		}
+	}
+
+	typeName := getASTTypeName(recvType)
+	if typeName != "" && file != nil {
+		ts := findTypeSpec(typeName, file)
+		if ts != nil {
+			if iface, ok := ts.Type.(*ast.InterfaceType); ok && iface.Methods != nil {
+				for _, m := range iface.Methods.List {
+					for _, name := range m.Names {
+						if name.Name == sel.Sel.Name {
+							if ft, ok := m.Type.(*ast.FuncType); ok && ft.Results != nil {
+								currIdx := 0
+								for _, resField := range ft.Results.List {
+									if len(resField.Names) == 0 {
+										if currIdx == targetIdx {
+											return resField.Type
+										}
+										currIdx++
+									} else {
+										for range resField.Names {
+											if currIdx == targetIdx {
+												return resField.Type
 											}
+											currIdx++
 										}
 									}
 								}
@@ -102,21 +193,34 @@ func getASTTypeName(expr ast.Expr) string {
 	return ""
 }
 
+func findTypeSpec(name string, file *ast.File) *ast.TypeSpec {
+	if file == nil || name == "" {
+		return nil
+	}
+	for _, decl := range file.Decls {
+		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.TYPE {
+			for _, spec := range gen.Specs {
+				if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == name {
+					return ts
+				}
+			}
+		}
+	}
+	return nil
+}
 
-func isImportedPackage(file *ast.File, pkgName, expectedPath string) bool {
-	if file == nil {
+func isImportedDBPackageIdent(file *ast.File, name string) bool {
+	if file == nil || name == "" {
 		return false
 	}
 	for _, imp := range file.Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
-		if imp.Name != nil {
-			if imp.Name.Name == pkgName && strings.HasSuffix(path, expectedPath) {
-				return true
+		if isKnownDBPackagePath(path) {
+			localName := defaultPackageName(path)
+			if imp.Name != nil {
+				localName = imp.Name.Name
 			}
-		} else {
-			parts := strings.Split(path, "/")
-			lastPart := parts[len(parts)-1]
-			if lastPart == pkgName && (path == expectedPath || strings.HasSuffix(path, "/"+expectedPath)) {
+			if localName == name {
 				return true
 			}
 		}
@@ -124,6 +228,10 @@ func isImportedPackage(file *ast.File, pkgName, expectedPath string) bool {
 	return false
 }
 
+func defaultPackageName(path string) string {
+	parts := strings.Split(path, "/")
+	return parts[len(parts)-1]
+}
 
 func findEnclosingFuncDecl(file *ast.File, pos token.Pos) *ast.FuncDecl {
 	if file == nil {

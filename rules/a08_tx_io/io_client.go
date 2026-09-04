@@ -74,3 +74,24 @@ func unwrapPointer(t types.Type) types.Type {
 	}
 	return t
 }
+
+func isImportedPackage(file *ast.File, pkgName, expectedPath string) bool {
+	if file == nil {
+		return false
+	}
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if imp.Name != nil {
+			if imp.Name.Name == pkgName && strings.HasSuffix(path, expectedPath) {
+				return true
+			}
+		} else {
+			parts := strings.Split(path, "/")
+			lastPart := parts[len(parts)-1]
+			if lastPart == pkgName && (path == expectedPath || strings.HasSuffix(path, "/"+expectedPath)) {
+				return true
+			}
+		}
+	}
+	return false
+}

@@ -111,3 +111,31 @@ func N9_NonDBTransaction(parser *Parser) error {
 	time.Sleep(10 * time.Millisecond) // Safe: parser is NOT a database transaction
 	return p.Commit()
 }
+
+// WorkflowRunner is a non-database interface with a Begin method.
+type WorkflowRunner interface {
+	Begin(ctx context.Context) (WorkflowRun, error)
+}
+
+type WorkflowRun interface {
+	Status() string
+}
+
+// N10: Custom Non-DB Interface with Begin() — must not be classified as a DB pool.
+func N10_NonDBInterfaceWithBegin(ctx context.Context, runner WorkflowRunner) error {
+	run, _ := runner.Begin(ctx)
+	time.Sleep(10 * time.Millisecond) // Safe: runner is NOT a database transaction
+	_ = run
+	return nil
+}
+
+// VideoPlayer is a non-database interface with a parameterless Begin method.
+type VideoPlayer interface {
+	Begin()
+}
+
+// N11: VideoPlayer interface with Begin() — must not be classified as a DB pool.
+func N11_VideoPlayerInterface(player VideoPlayer) {
+	player.Begin()
+	_, _ = http.Get("https://example.com/stream") // Safe: player is NOT a DB pool
+}

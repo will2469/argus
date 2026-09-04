@@ -7,7 +7,7 @@ import (
 	"github.com/will2469/argus/shared/callsite"
 )
 
-func isKnownDBPoolASTType(expr ast.Expr) bool {
+func isKnownDBPoolASTType(expr ast.Expr, file *ast.File) bool {
 	if expr == nil {
 		return false
 	}
@@ -16,8 +16,7 @@ func isKnownDBPoolASTType(expr ast.Expr) bool {
 	}
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		if pkgID, ok := sel.X.(*ast.Ident); ok {
-			switch pkgID.Name {
-			case "sql", "pgx", "pgxpool", "sqlx", "pq":
+			if isImportedDBPackageIdent(file, pkgID.Name) {
 				switch sel.Sel.Name {
 				case "DB", "Pool", "Conn":
 					return true
@@ -28,7 +27,7 @@ func isKnownDBPoolASTType(expr ast.Expr) bool {
 	return false
 }
 
-func isKnownDBTxASTType(expr ast.Expr) bool {
+func isKnownDBTxASTType(expr ast.Expr, file *ast.File) bool {
 	if expr == nil {
 		return false
 	}
@@ -37,8 +36,7 @@ func isKnownDBTxASTType(expr ast.Expr) bool {
 	}
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		if pkgID, ok := sel.X.(*ast.Ident); ok {
-			switch pkgID.Name {
-			case "sql", "pgx", "pgxpool", "sqlx", "pq":
+			if isImportedDBPackageIdent(file, pkgID.Name) {
 				if sel.Sel.Name == "Tx" {
 					return true
 				}
@@ -48,7 +46,7 @@ func isKnownDBTxASTType(expr ast.Expr) bool {
 	return false
 }
 
-func isDBPoolConstructorCall(call *ast.CallExpr) bool {
+func isDBPoolConstructorCall(call *ast.CallExpr, file *ast.File) bool {
 	if call == nil {
 		return false
 	}
@@ -57,6 +55,9 @@ func isDBPoolConstructorCall(call *ast.CallExpr) bool {
 		return false
 	}
 	if pkgID, ok := sel.X.(*ast.Ident); ok {
+		if !isImportedDBPackageIdent(file, pkgID.Name) {
+			return false
+		}
 		switch pkgID.Name {
 		case "sql":
 			return sel.Sel.Name == "Open" || sel.Sel.Name == "OpenDB"
@@ -72,27 +73,16 @@ func isDBPoolConstructorCall(call *ast.CallExpr) bool {
 }
 
 func isProvenDBPoolASTType(expr ast.Expr, file *ast.File) bool {
-	// Provenance-based: accept known DB pool types with exact package selectors
-	if isKnownDBPoolASTType(expr) {
+	if isKnownDBPoolASTType(expr, file) {
 		return true
 	}
 
-	// Heuristic fallback: check if this is a locally-defined type with transaction-like interface
-	// This is necessary for detecting custom abstractions and test fixtures
 	typeName := getASTTypeName(expr)
 	if typeName != "" && file != nil {
-		// Check if type is locally defined interface with Begin/BeginFunc methods
-		for _, decl := range file.Decls {
-			if gen, ok := decl.(*ast.GenDecl); ok {
-				for _, spec := range gen.Specs {
-					if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == typeName {
-						if iface, ok := ts.Type.(*ast.InterfaceType); ok {
-							if hasASTTransactionMethods(iface) {
-								return true
-							}
-						}
-					}
-				}
+		ts := findTypeSpec(typeName, file)
+		if ts != nil {
+			if iface, ok := ts.Type.(*ast.InterfaceType); ok {
+				return hasASTProvenDBPoolMethods(iface, file)
 			}
 		}
 	}
@@ -100,17 +90,38 @@ func isProvenDBPoolASTType(expr ast.Expr, file *ast.File) bool {
 	return false
 }
 
-func hasASTTransactionMethods(iface *ast.InterfaceType) bool {
+func hasASTProvenDBPoolMethods(iface *ast.InterfaceType, file *ast.File) bool {
 	if iface == nil || iface.Methods == nil {
 		return false
 	}
 
-	// Check if interface has transaction pool methods (Begin, BeginFunc, etc.)
 	for _, method := range iface.Methods.List {
+		ft, ok := method.Type.(*ast.FuncType)
+		if !ok {
+			continue
+		}
 		for _, name := range method.Names {
 			switch name.Name {
-			case "Begin", "BeginFunc", "BeginTx", "ExecuteTx", "WithTx":
-				return true
+			case "Begin", "BeginTx":
+				if ft.Results != nil && len(ft.Results.List) > 0 {
+					for _, res := range ft.Results.List {
+						if isProvenDBTxASTType(res.Type, file) {
+							return true
+						}
+					}
+				}
+			case "BeginFunc", "WithTx", "ExecuteTx":
+				if ft.Params != nil {
+					for _, param := range ft.Params.List {
+						if cb, ok := param.Type.(*ast.FuncType); ok && cb.Params != nil && len(cb.Params.List) > 0 {
+							for _, cbParam := range cb.Params.List {
+								if isProvenDBTxASTType(cbParam.Type, file) {
+									return true
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}
@@ -118,25 +129,16 @@ func hasASTTransactionMethods(iface *ast.InterfaceType) bool {
 }
 
 func isProvenDBTxASTType(expr ast.Expr, file *ast.File) bool {
-	// Provenance-based: accept known DB transaction types with exact package selectors
-	if isKnownDBTxASTType(expr) {
+	if isKnownDBTxASTType(expr, file) {
 		return true
 	}
 
-	// Heuristic fallback: check if this is a locally-defined transaction-like interface
 	typeName := getASTTypeName(expr)
 	if typeName != "" && file != nil {
-		for _, decl := range file.Decls {
-			if gen, ok := decl.(*ast.GenDecl); ok {
-				for _, spec := range gen.Specs {
-					if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == typeName {
-						if iface, ok := ts.Type.(*ast.InterfaceType); ok {
-							if hasASTTxMethods(iface) {
-								return true
-							}
-						}
-					}
-				}
+		ts := findTypeSpec(typeName, file)
+		if ts != nil {
+			if iface, ok := ts.Type.(*ast.InterfaceType); ok {
+				return hasASTTxMethods(iface)
 			}
 		}
 	}
@@ -149,19 +151,21 @@ func hasASTTxMethods(iface *ast.InterfaceType) bool {
 		return false
 	}
 
-	// Check if interface has transaction methods (Exec, Commit, Rollback)
-	hasExec := false
 	hasCommit := false
+	hasRollback := false
+	hasExecOrQuery := false
 	for _, method := range iface.Methods.List {
 		for _, name := range method.Names {
 			switch name.Name {
-			case "Exec", "Query", "QueryRow":
-				hasExec = true
-			case "Commit", "Rollback":
+			case "Commit":
 				hasCommit = true
+			case "Rollback":
+				hasRollback = true
+			case "Exec", "ExecContext", "Query", "QueryRow", "QueryContext", "QueryRowContext", "SendBatch":
+				hasExecOrQuery = true
 			}
 		}
 	}
 
-	return hasExec && hasCommit
+	return hasCommit && hasRollback && hasExecOrQuery
 }
