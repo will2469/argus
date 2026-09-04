@@ -16,9 +16,10 @@ var (
 	//   // argus:ignore-a07 <reason>
 	//   // argus:ignore-a07.detail <reason>
 	//   // argus:ignore ARGUS-A07 <reason>
+	//   // argus:ignore A12,A16,A23 <reason>
 	//   /* argus:ignore-a07 <reason> */
 	//   -- argus:ignore-a07 <reason>
-	directiveRegex = regexp.MustCompile(`(?i)(?://|/\*|--)\s*argus:ignore(?:[-:\s]+)([a-z0-9_.-]+)\s+([^*\r\n]+)`)
+	directiveRegex = regexp.MustCompile(`(?i)(?://|/\*|--)\s*argus:ignore(?:[-:\s]+)([a-z0-9_.,-]+)\s+([^*\r\n]+)`)
 )
 
 // IgnoreDirective represents a single parsed suppression directive.
@@ -48,17 +49,23 @@ func (dm *DirectiveMap) AddDirective(filename string, line int, rule, reason str
 		return // Reason must have at least 2 words
 	}
 
-	canonical, base := normalizeRule(rule)
+	for _, singleRule := range strings.Split(rule, ",") {
+		singleRule = strings.TrimSpace(singleRule)
+		if singleRule == "" {
+			continue
+		}
+		canonical, base := normalizeRule(singleRule)
 
-	if _, ok := dm.directives[filename]; !ok {
-		dm.directives[filename] = make(map[int]map[string]string)
-	}
-	if _, ok := dm.directives[filename][line]; !ok {
-		dm.directives[filename][line] = make(map[string]string)
-	}
-	dm.directives[filename][line][canonical] = reason
-	if base != canonical {
-		dm.directives[filename][line][base] = reason
+		if _, ok := dm.directives[filename]; !ok {
+			dm.directives[filename] = make(map[int]map[string]string)
+		}
+		if _, ok := dm.directives[filename][line]; !ok {
+			dm.directives[filename][line] = make(map[string]string)
+		}
+		dm.directives[filename][line][canonical] = reason
+		if base != canonical {
+			dm.directives[filename][line][base] = reason
+		}
 	}
 }
 
@@ -72,7 +79,7 @@ func (dm *DirectiveMap) IsIgnored(fset *token.FileSet, pos token.Pos, ruleCode s
 }
 
 // IsLineIgnored checks whether a specific file and line is suppressed.
-// Checks the exact line, 1 line above, or 2 lines above to cover multi-line expressions.
+// Checks the exact line or up to 5 lines above to cover multi-line expressions and stacked ignore comments.
 func (dm *DirectiveMap) IsLineIgnored(filename string, line int, ruleCode string) bool {
 	if dm == nil {
 		return false
@@ -84,7 +91,7 @@ func (dm *DirectiveMap) IsLineIgnored(filename string, line int, ruleCode string
 
 	canonical, base := normalizeRule(ruleCode)
 
-	for _, l := range []int{line, line - 1, line - 2} {
+	for _, l := range []int{line, line - 1, line - 2, line - 3, line - 4, line - 5} {
 		if rules, exists := fileMap[l]; exists {
 			if _, matched := rules[canonical]; matched {
 				return true
