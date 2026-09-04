@@ -6,7 +6,7 @@ import (
 	"go/token"
 )
 
-func evalDSNSwitchFlow(file *ast.File, s *ast.SwitchStmt, targetPos token.Pos, varName string, targetObj *ast.Object, inSet []string, depth int) ([]string, bool) {
+func evalDSNSwitchFlow(file *ast.File, s *ast.SwitchStmt, targetPos token.Pos, varName string, targetObj any, inSet []string, depth int) ([]string, bool) {
 	if s.Init != nil {
 		var reached bool
 		inSet, reached = evalDSNStmtFlow(file, s.Init, targetPos, varName, targetObj, inSet, depth)

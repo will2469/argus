@@ -12,7 +12,7 @@ go test -race ./...
 
 # 2. Verify binary compilation
 echo "🔨 [Argus] Verifying binary compilation..."
-go build -v -o bin/argus-checker .
+go build -v -o bin/argus .
 
 # 3. Check module integrity
 echo "📦 [Argus] Verifying go.mod & go.sum cleanliness..."

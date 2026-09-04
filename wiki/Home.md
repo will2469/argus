@@ -88,21 +88,39 @@ Argus Checker operates in dual-mode architecture:
 
 ### 1. Dual-Mode Execution
 
-| Mode                  | Command                                        | Use Case                                                       |
-| :-------------------- | :--------------------------------------------- | :------------------------------------------------------------- |
-| **Go Vet Tool**       | `go vet -vettool=$(which argus-checker) ./...` | Standard compiler vettool integration & CI type-checked passes |
-| **Standalone Runner** | `argus-checker [options] [directories...]`     | Comprehensive static analysis & SQL migration scanner          |
+| Mode                  | Command                                 | Use Case                                                       |
+| :-------------------- | :-------------------------------------- | :------------------------------------------------------------- |
+| **Go Vet Tool**       | `go vet -vettool=$(which argus) ./...`  | Standard compiler vettool integration & CI type-checked passes |
+| **Standalone Runner** | `argus [options] [directories...]`      | Comprehensive static analysis & SQL migration scanner          |
 
-### 2. Standalone CLI Flags
+### 2. Standalone Commands & CLI Flags
 
-| Flag                   | Description                                                                            | Default / Example                                               |
-| :--------------------- | :------------------------------------------------------------------------------------- | :-------------------------------------------------------------- |
-| `--no-report`          | Suppresses markdown report file creation; runs in-memory and outputs exit code `0`/`1` | Ideal for Git pre-commit hooks & fast CI checks                 |
-| `--output=<path.md>`   | Path where the generated markdown audit report will be saved                           | Overrides `report_file` from `.argus.yaml`                      |
-| `<path.md>`            | Positional path argument to output markdown report                                     | `argus-checker argus-report.md`                                 |
-| `--dirs=<d1,d2>`       | Comma-separated list of Go directories or files to inspect                             | `--dirs=.,cmd,pkg`                                              |
-| `--migrations=<d1,d2>` | Comma-separated list of SQL migration directories                                      | `--migrations=migrations`                                       |
-| `-h`, `--help`         | Display usage help and available options                                               | `argus-checker --help`                                          |
+#### Subcommands
+
+| Command     | Description                                                          | Example             |
+| :---------- | :------------------------------------------------------------------- | :------------------ |
+| `check`     | Run static analysis and database hygiene checks (default subcommand) | `argus check`       |
+| `scan`      | Alias for `check`                                                    | `argus scan`        |
+| `audit`     | Alias for `check`                                                    | `argus audit`       |
+| `report`    | Alias for `check`                                                    | `argus report`      |
+| `update`    | Check GitHub for newer releases and self-update the binary           | `argus update`      |
+| `uninstall` | Remove the installed Argus binary from the system                    | `argus uninstall`   |
+| `mcp`       | Start Model Context Protocol (MCP) server over standard I/O (stdio)  | `argus mcp`         |
+
+#### Options & Flags
+
+| Flag                   | Description                                                                             | Default / Example                                               |
+| :--------------------- | :-------------------------------------------------------------------------------------- | :-------------------------------------------------------------- |
+| `--output=<path.md>`   | Path where the generated markdown audit report will be saved                            | Overrides `report_file` from `.argus.yaml`                      |
+| `<path.md>`            | Positional path argument to output markdown report                                      | `argus argus-report.md`                                         |
+| `--dirs=<d1,d2>`       | Comma-separated list of Go directories or files to inspect                              | `--dirs=.,cmd,pkg`                                              |
+| `--migrations=<d1,d2>` | Comma-separated list of SQL migration directories                                       | `--migrations=migrations`                                       |
+| `--no-report`          | Suppresses markdown report file creation; runs in-memory and outputs exit code `0`/`1`  | Ideal for Git pre-commit hooks & fast CI checks                 |
+| `--strict`             | Fail scan if any migration SQL cannot be parsed (default behavior)                      | `argus --strict`                                                |
+| `--permissive`         | Emit warning instead of fatal failure on unparseable migrations                         | `argus --permissive`                                            |
+| `-u`, `--update`       | Alias for `argus update`                                                                | `argus -u`                                                      |
+| `-v`, `--version`      | Display detailed version, commit hash, and build timestamp                              | `argus -v`                                                      |
+| `-h`, `--help`         | Display usage help and available options                                                | `argus --help`                                                  |
 
 ### 3. Configuration via `.argus.yaml`
 

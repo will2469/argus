@@ -42,12 +42,21 @@ func TestIsStandaloneRun(t *testing.T) {
 		{name: "flag migrations single dash", args: []string{"-migrations=db"}, want: true},
 		{name: "flag no-report double dash", args: []string{"--no-report"}, want: true},
 		{name: "flag no-report single dash", args: []string{"-no-report"}, want: true},
+		{name: "flag strict double dash", args: []string{"--strict"}, want: true},
+		{name: "flag strict single dash", args: []string{"-strict"}, want: true},
+		{name: "flag permissive double dash", args: []string{"--permissive"}, want: true},
+		{name: "flag permissive single dash", args: []string{"-permissive"}, want: true},
+		{name: "unknown flag double dash", args: []string{"--no-reports"}, want: true},
+		{name: "unknown flag single dash", args: []string{"-unknown"}, want: true},
+		{name: "unknown command", args: []string{"not-found-tags"}, want: true},
 		{name: "file target", args: []string{"./..."}, want: true},
 		{name: "vettool flags flag", args: []string{"-flags"}, want: false},
 		{name: "vettool V flag", args: []string{"-V"}, want: false},
 		{name: "vettool test flag", args: []string{"-test=true"}, want: false},
 		{name: "vettool json flag", args: []string{"-json"}, want: false},
 		{name: "vettool c flag", args: []string{"-c=2"}, want: false},
+		{name: "vettool analyzer flag", args: []string{"-a01"}, want: false},
+		{name: "vettool analyzer flag with value", args: []string{"-a16=false"}, want: false},
 	}
 
 	for _, tt := range tests {
@@ -123,5 +132,28 @@ func TestVersionFlagInvariant(t *testing.T) {
 				t.Errorf("output mismatch for flag %q:\nGot:\n%s\nWant:\n%s", flag, outputStr, baselineOutput)
 			}
 		}
+	}
+}
+
+func TestUnknownFlagInvariant(t *testing.T) {
+	tempDir := t.TempDir()
+	binPath := filepath.Join(tempDir, "argus")
+
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build argus binary: %v, output: %s", err, string(out))
+	}
+
+	cmd := exec.Command(binPath, "--no-reports")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error for unknown flag, got success")
+	}
+	outputStr := string(out)
+	if !strings.Contains(outputStr, `argus: unknown flag "--no-reports"`) {
+		t.Errorf("expected clean unknown flag error, got:\n%s", outputStr)
+	}
+	if strings.Contains(outputStr, "flag provided but not defined") {
+		t.Errorf("multichecker flag error leaked in standalone CLI invocation:\n%s", outputStr)
 	}
 }

@@ -21,7 +21,7 @@ func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
 		return nil
 	}
 
-	var targetObj *ast.Object
+	var targetObj any
 	if id, ok := dsnArg.(*ast.Ident); ok {
 		targetObj = id.Obj
 	}
@@ -38,7 +38,7 @@ func extractAllDSNStrings(call *ast.CallExpr, file *ast.File) []string {
 
 const maxFlowDepth = 64
 
-func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, targetObj *ast.Object, depth int) []string {
+func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, targetObj any, depth int) []string {
 	if expr == nil || depth > maxFlowDepth {
 		return nil
 	}
@@ -61,8 +61,10 @@ func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, 
 			return combined
 		}
 	case *ast.Ident:
-		identObj := e.Obj
-		if identObj == nil {
+		var identObj any
+		if e.Obj != nil {
+			identObj = e.Obj
+		} else {
 			identObj = targetObj
 		}
 		enclosing := findEnclosingFunc(file, pos)
@@ -80,14 +82,14 @@ func resolveExprToStringsWithFlow(file *ast.File, expr ast.Expr, pos token.Pos, 
 	return nil
 }
 
-func evalDSNBlockFlow(file *ast.File, block *ast.BlockStmt, targetPos token.Pos, varName string, targetObj *ast.Object, inSet []string, depth int) ([]string, bool) {
+func evalDSNBlockFlow(file *ast.File, block *ast.BlockStmt, targetPos token.Pos, varName string, targetObj any, inSet []string, depth int) ([]string, bool) {
 	if block == nil || depth > maxFlowDepth {
 		return inSet, false
 	}
 	return evalDSNStmtList(file, block.List, targetPos, varName, targetObj, inSet, depth)
 }
 
-func evalDSNStmtList(file *ast.File, list []ast.Stmt, targetPos token.Pos, varName string, targetObj *ast.Object, inSet []string, depth int) ([]string, bool) {
+func evalDSNStmtList(file *ast.File, list []ast.Stmt, targetPos token.Pos, varName string, targetObj any, inSet []string, depth int) ([]string, bool) {
 	curr := inSet
 	for _, stmt := range list {
 		var reached bool
@@ -99,7 +101,7 @@ func evalDSNStmtList(file *ast.File, list []ast.Stmt, targetPos token.Pos, varNa
 	return curr, false
 }
 
-func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName string, targetObj *ast.Object, inSet []string, depth int) ([]string, bool) {
+func evalDSNStmtFlow(file *ast.File, stmt ast.Stmt, targetPos token.Pos, varName string, targetObj any, inSet []string, depth int) ([]string, bool) {
 	if stmt == nil {
 		return inSet, false
 	}

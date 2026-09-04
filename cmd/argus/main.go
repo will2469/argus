@@ -48,27 +48,40 @@ func isStandaloneRun(args []string) bool {
 		return true
 	}
 	for _, arg := range args {
-		if strings.HasSuffix(arg, ".md") ||
-			strings.HasPrefix(arg, "--output") || strings.HasPrefix(arg, "-output") ||
-			strings.HasPrefix(arg, "--dirs") || strings.HasPrefix(arg, "-dirs") ||
-			strings.HasPrefix(arg, "--migrations") || strings.HasPrefix(arg, "-migrations") ||
-			arg == "--no-report" || arg == "-no-report" ||
-			arg == "--strict" || arg == "-strict" ||
-			arg == "--permissive" || arg == "-permissive" ||
-			arg == "-h" || arg == "--help" || arg == "-help" || arg == "help" ||
-			arg == "-v" || arg == "--version" || arg == "-version" || arg == "version" ||
-			arg == "-u" || arg == "--update" || arg == "-update" || arg == "update" || arg == "upgrade" ||
-			arg == "mcp" || arg == "serve-mcp" ||
-			arg == "uninstall" || arg == "--uninstall" || arg == "-uninstall" ||
-			arg == "audit" || arg == "report" || arg == "check" || arg == "scan" {
-			return true
-		}
-		if strings.HasPrefix(arg, "-flags") || strings.HasPrefix(arg, "-V") || strings.HasPrefix(arg, "-test=") ||
-			strings.HasPrefix(arg, "-json") || strings.HasPrefix(arg, "-c") {
+		if isVettoolFlag(arg) {
 			return false
 		}
 	}
-	return !strings.HasPrefix(args[0], "-")
+	return true
+}
+
+func isVettoolFlag(arg string) bool {
+	if strings.HasPrefix(arg, "--") {
+		return false
+	}
+	if arg == "-flags" || arg == "-V" || strings.HasPrefix(arg, "-V=") ||
+		arg == "-test" || strings.HasPrefix(arg, "-test=") ||
+		arg == "-json" ||
+		arg == "-c" || strings.HasPrefix(arg, "-c=") ||
+		arg == "-cpuprofile" || strings.HasPrefix(arg, "-cpuprofile=") ||
+		arg == "-memprofile" || strings.HasPrefix(arg, "-memprofile=") ||
+		arg == "-trace" || strings.HasPrefix(arg, "-trace=") ||
+		arg == "-debug" || strings.HasPrefix(arg, "-debug=") ||
+		arg == "-diff" || arg == "-fix" || arg == "-source" || arg == "-all" ||
+		arg == "-tags" || strings.HasPrefix(arg, "-tags=") ||
+		strings.HasSuffix(arg, ".cfg") {
+		return true
+	}
+	clean := strings.TrimPrefix(arg, "-")
+	if idx := strings.IndexByte(clean, '='); idx != -1 {
+		clean = clean[:idx]
+	}
+	for _, a := range rules.AllAnalyzers {
+		if a != nil && a.Name == clean {
+			return true
+		}
+	}
+	return false
 }
 
 func runStandalone() {

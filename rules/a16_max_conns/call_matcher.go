@@ -180,7 +180,7 @@ func caseEndsWithFallthrough(body []ast.Stmt) bool {
 	return ok && bs.Tok == token.FALLTHROUGH
 }
 
-func matchesVar(id *ast.Ident, varName string, targetObj *ast.Object) bool {
+func matchesVar(id *ast.Ident, varName string, targetObj any) bool {
 	if id == nil {
 		return false
 	}

@@ -87,9 +87,12 @@ func N7_ProvenHelper(ctx context.Context) {
 	_, _ = pgxpool.NewWithConfig(ctx, cfgProven)
 }
 
+func dummyUse(_ string) {}
+
 // N8: Reassigned Safe DSN — initial unsafe DSN killed by subsequent safe assignment.
 func N8_ReassignedSafeDSN(ctx context.Context) {
 	dsn := "postgres://bad:5432/db"
+	dummyUse(dsn)
 	dsn = "postgres://good:5432/db?pool_max_conns=20"
 	_, _ = pgxpool.New(ctx, dsn)
 }
@@ -99,6 +102,7 @@ func N9_BranchOverrideSafeDSN(ctx context.Context, prod bool) {
 	var dsn string
 	if prod {
 		dsn = "postgres://bad:5432/db"
+		dummyUse(dsn)
 	}
 	dsn = "postgres://good:5432/db?pool_max_conns=20"
 	_, _ = pgxpool.New(ctx, dsn)

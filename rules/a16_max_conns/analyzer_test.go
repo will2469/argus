@@ -125,6 +125,7 @@ func Run() {
 	}
 }
 
+//nolint:staticcheck // ast.Object is tested for AST object identity matching
 func TestMatchesVar_StrictTargetObj(t *testing.T) {
 	objA := &ast.Object{Name: "dsn"}
 	idWithObj := &ast.Ident{Name: "dsn", Obj: objA}
