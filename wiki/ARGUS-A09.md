@@ -10,8 +10,11 @@
 
 ## 1. Overview & Core Invariant
 
-1. **Mandatory Transaction-Scoped Locks:** Application concurrency control utilizing PostgreSQL Advisory Locks **must use transaction-level lock functions** (`pg_advisory_xact_lock`, `pg_advisory_xact_lock_shared`, `pg_try_advisory_xact_lock`, `pg_try_advisory_xact_lock_shared`). Session-level advisory locks (`pg_advisory_lock`, `pg_try_advisory_lock`) are strictly prohibited on connections managed by connection pools (`*pgxpool.Pool`).
-2. **Structured Namespace Identifiers:** Lock identifiers must use a single 64-bit `bigint` or a 32-bit integer pair (`(class_id, object_id)`) sourced from a registered constant registry or deterministic hash function (`argus.LockKey(domain, resource)`). Arbitrary hardcoded integer literals (e.g. `1`, `42`, `100`) are prohibited to prevent cross-feature lock collisions.
+1. **Mandatory Transaction-Scoped Locks:** Application concurrency control utilizing PostgreSQL Advisory Locks **must use transaction-level lock functions** (`pg_advisory_xact_lock`, `pg_advisory_xact_lock_shared`, `pg_try_advisory_xact_lock`, `pg_try_advisory_xact_lock_shared`). Session-level advisory locks (`pg_advisory_lock`, `pg_try_advisory_lock`, `pg_advisory_unlock`) are strictly prohibited on connections managed by connection pools (`*pgxpool.Pool`).
+2. **Structured Namespace Identifiers:**
+   - **PostgreSQL 1-Key Form (`pg_advisory_xact_lock(key)`):** The single 64-bit key must be dynamic, bound via parameters (`$1`), or generated via deterministic domain hashing (e.g. `hashtext('domain:' || resource)`). Arbitrary raw integer literals (e.g. `42`, `100`) are prohibited because they lack namespace segregation in the global database namespace.
+   - **PostgreSQL 2-Key Form (`pg_advisory_xact_lock(classid, objid)`):** PostgreSQL splits the 64-bit space into `(classid int, objid int)`. A constant integer class ID (e.g. `1001` or `namespace_id`) is explicitly permitted when paired with a dynamic or bound resource parameter (`$1`, `$2`, or column reference). However, hardcoding the resource object ID (e.g. `($1, 42)` or `(1, 2)`) is prohibited.
+   - **Go Advisory Lock Helpers:** Identifiers passed to Go transaction helpers (`WithAdvisoryLock`, `ExecuteLockedTx`, `TryAdvisoryLock`) must use a structured namespace format containing a delimiter (`":"`, `"/"`, or `"."`, or generated via `fmt.Sprintf("domain:%s", id)`). Empty strings `""` and bare unqualified literals like `"foo"` or `"lock"` are prohibited.
 
 ---
 
@@ -47,35 +50,67 @@ flowchart TD
     end
 ```
 
-### 2.2. Dedicated Connection Exception for Leader Election
-
-Session-level advisory locks are permitted only for distributed leader election when executed on an explicitly dedicated connection (`pool.Acquire(ctx)`), never shared with standard application request pools, and explicitly closed on process termination.
-
 ---
 
 ## 3. How Argus Detects Violations (Static Analysis Architecture)
 
-Argus combines PostgreSQL AST query inspection with Go helper argument validation:
+Argus enforces deterministic AST inspection combined with structured namespace hygiene:
 
 ```mermaid
-flowchart LR
-    Scan["Scan Go Files<br/>(Exclude _test.go)"] --> Selectors{"DB Query Call or<br/>Advisory Helper?"}
-    Selectors -->|DB Query| ParseSQL["lock_ast_check.go:<br/>pg_query_go AST Inspection"]
-    Selectors -->|Helper Call| CheckArgs["namespace_check.go:<br/>Validate Lock Names"]
-    ParseSQL --> SessionCheck{"Uses Session Lock?<br/>(pg_advisory_lock, etc.)"}
-    ParseSQL --> MagicCheck{"Uses Hardcoded Magic Int?<br/>(e.g. pg_advisory_xact_lock(1))"}
-    SessionCheck -->|Yes| ReportSession["Report CRITICAL Violation:<br/>Forbidden Session Lock"]
-    MagicCheck -->|Yes| ReportMagic["Report HIGH Violation:<br/>Hardcoded Lock Identifier"]
-    CheckArgs --> EmptyCheck{"Lock Name Empty String?"}
-    EmptyCheck -->|Yes| ReportEmpty["Report HIGH Violation:<br/>Empty Advisory Lock Name"]
-    SessionCheck -->|No| Pass["Pass (Safe Transaction Lock)"]
-    MagicCheck -->|No| Pass
-    EmptyCheck -->|No| Pass
+flowchart TD
+    subgraph S1 ["1. Query Extraction"]
+        direction TB
+        Call["Inspect DB Call"] --> ExtractSQL["callsite.ExtractSQLArg(call, pass)"]
+        ExtractSQL -->|Target Found| ParseSQL["Parse via pg_query_go"]
+        ExtractSQL -->|Non-SQL Param| IgnoreArg["Ignore Bind Parameter Values"]
+    end
+
+    subgraph S2 ["2. PostgreSQL AST Lock Inspection"]
+        direction TB
+        ParseSQL --> CheckFunc{"Is Advisory Lock Function?"}
+        CheckFunc -->|Session Lock: pg_advisory_lock...| ReportSession["🔴 Report CRITICAL Violation:<br/>Forbidden Session-Level Lock"]
+        CheckFunc -->|Transaction Lock: pg_advisory_xact_lock...| CheckArgs{"Arg Count"}
+        
+        CheckArgs -->|1 Arg: (key)| Check1Arg{"Is key a raw integer literal?"}
+        Check1Arg -->|Yes: (42)| ReportMagic1["🔴 Report HIGH Violation:<br/>Hardcoded Magic Number (Unnamespaced)"]
+        Check1Arg -->|No: ($1, hashtext)| Pass1["🟢 Pass: Parameterized / Hashed"]
+
+        CheckArgs -->|2 Args: (classid, objid)| Check2Arg{"Inspect (classid, objid)"}
+        Check2Arg -->|objid is Magic Int ($1, 42) or Both are Ints (1, 2)| ReportMagic2["🔴 Report HIGH Violation:<br/>Hardcoded Magic Resource Key"]
+        Check2Arg -->|classid is const int & objid is dynamic ($1)| Pass2["🟢 Pass: Namespaced (classid + resource param)"]
+        Check2Arg -->|Both are dynamic ($1, $2)| Pass3["🟢 Pass: Dynamic Namespaced Pair"]
+    end
+
+    subgraph S3 ["3. Go Helper Namespace Hygiene"]
+        direction TB
+        HelperCall["WithAdvisoryLock / ExecuteLockedTx"] --> GetLockArg["Extract lockName Argument"]
+        GetLockArg --> CheckEmpty{"Is lockName empty?"}
+        CheckEmpty -->|Yes| ReportEmpty["🔴 Report HIGH Violation:<br/>Empty Advisory Lock Name"]
+        CheckEmpty -->|No| CheckDelim{"Contains Delimiter (':', '/', '.')<br/>or fmt.Sprintf?"}
+        CheckDelim -->|No: 'foo', 'lock'| ReportBare["🔴 Report HIGH Violation:<br/>Unnamespaced Lock Identifier"]
+        CheckDelim -->|Yes: 'orders:123', 'payout:lock'| PassHelper["🟢 Pass: Structured Namespace"]
+    end
+
+    S1 --> S2
 ```
 
-1. **AST Function Inspection (`lock_ast_check.go`):** Identifies `FuncCall` nodes in PostgreSQL AST matching forbidden session lock functions (`pg_advisory_lock`, `pg_try_advisory_lock`, `pg_advisory_unlock`).
-2. **Hardcoded Integer Constant Detection (`lock_ast_check.go`):** Detects raw integer constants (`c.GetIval()`) passed directly to lock functions without bind parameters.
-3. **Helper Namespace Validation (`namespace_check.go`):** Validates calls to `argus.WithAdvisoryLock` and `argus.ExecuteLockedTx`, preventing empty lock names.
+### 3.1. Advisory Lock & Namespace Hygiene Decision Matrix
+
+| Skenario Pola | Kategori | Contoh Sintaks | Status Evaluasi Argus | Rationale / Dampak Sistem |
+| :--- | :--- | :--- | :--- | :--- |
+| **Session-Level Lock** | Session Lock | `SELECT pg_advisory_lock($1)` | 🔴 **CRITICAL** | Leak permanen ke connection pool saat panic/unhandled error |
+| **1-Arg Magic Integer** | Unnamespaced Key | `SELECT pg_advisory_xact_lock(42)` | 🔴 **VIOLATION** | Magic number tanpa domain namespace memicu tabrakan global |
+| **2-Arg Magic Resource** | Hardcoded Resource | `SELECT pg_advisory_xact_lock(1001, 42)` | 🔴 **VIOLATION** | Resource ID statis; tidak membedakan entitas dinamis |
+| **Both Args Magic Int** | Hardcoded Key Pair | `SELECT pg_advisory_xact_lock(1, 2)` | 🔴 **VIOLATION** | Pasangan integer statis tanpa parameterisasi entitas |
+| **Empty Helper String** | Missing Name | `WithAdvisoryLock(ctx, tx, "", ...)` | 🔴 **VIOLATION** | String kosong menggagalkan isolasi konkurensi |
+| **Bare Helper String** | Unnamespaced Name | `WithAdvisoryLock(ctx, tx, "foo", ...)` | 🔴 **VIOLATION** | Tanpa domain prefix (`:`/`/`/`.`); memicu tabrakan antar-modul |
+| **1-Arg Parameterized** | Transaction Lock | `SELECT pg_advisory_xact_lock($1)` | 🟢 **COMPLIANT** | Kunci terikat parameter dinamis dan auto-release di tx |
+| **2-Arg Namespace + Param**| Namespaced Lock | `SELECT pg_advisory_xact_lock(1001, $1)`| 🟢 **COMPLIANT** | Class ID (1001) sebagai namespace, $1 sebagai resource |
+| **2-Arg Dynamic Columns** | Namespaced Lock | `SELECT pg_advisory_xact_lock(c1, c2)` | 🟢 **COMPLIANT** | Keduanya kolom query dinamis |
+| **Hashed 1-Arg Key** | Hashed Key | `SELECT pg_advisory_xact_lock(hashtext(...))`| 🟢 **COMPLIANT** | Hashing string namespace menjadi 64-bit integer |
+| **Delimited Helper Key** | Namespaced Helper | `WithAdvisoryLock(ctx, tx, "orders:123", ...)`| 🟢 **COMPLIANT** | Memiliki kualifikasi domain terstruktur (`domain:resource`) |
+| **Sprintf Helper Key** | Formatted Helper | `WithAdvisoryLock(ctx, tx, fmt.Sprintf("orders:%s", id))`| 🟢 **COMPLIANT** | Format string mengandung delimiter namespace yang valid |
+| **Bind Param Query Text**| Non-SQL Parameter | `db.Query(ctx, "SELECT ... WHERE msg = $1", "SELECT ...")`| 🟢 **COMPLIANT** | String adalah nilai argumen bind param, bukan query SQL |
 
 ---
 
@@ -85,6 +120,7 @@ flowchart LR
 | :-------------------------- | :----------------------------------------------------------------------------- | :------------ |
 | **Session Lock in Pool**    | Panic or uncaught error permanently holds lock in pool, blocking all workers.  | **CRITICAL**  |
 | **Hardcoded Magic Numbers** | Collisions across unrelated domain modules lead to accidental lock starvation. | **HIGH**      |
+| **Unnamespaced Helper Key** | Bare strings (`"foo"`) collide across different services or application modules.| **HIGH**      |
 | **Empty Helper String**     | Lock fails to isolate specific resource, leading to race conditions.           | **HIGH**      |
 
 ---
@@ -106,7 +142,7 @@ func ProcessPayout(ctx context.Context, pool *pgxpool.Pool, payoutID int64) erro
 }
 ```
 
-### Example 2: Hardcoded Magic Number Lock Key
+### Example 2: Hardcoded Magic Number Lock Key (1-Arg)
 
 ```go
 // VIOLATION: Hardcoded literal key risks cross-feature namespace collision
@@ -117,14 +153,14 @@ func SyncDailyExchangeRates(ctx context.Context, pool *pgxpool.Pool) error {
 }
 ```
 
-### Example 3: Empty Lock Identifier in Helper
+### Example 3: Bare Unnamespaced Lock Identifier in Helper
 
 ```go
-// VIOLATION: Empty lock name bypasses concurrency isolation
-func ReconcileAccounts(ctx context.Context, tx pgx.Tx) error {
-    // Flagged: empty advisory lock name
-    return argus.WithAdvisoryLock(ctx, tx, "", true, func() error {
-        return executeReconciliation(ctx, tx)
+// VIOLATION: Bare string "foo" lacks domain qualification
+func ProcessOrder(ctx context.Context, tx pgx.Tx) error {
+    // Flagged: unnamespaced advisory lock identifier "foo"
+    return argus.WithAdvisoryLock(ctx, tx, "foo", true, func() error {
+        return executeOrder(ctx, tx)
     })
 }
 ```
@@ -133,7 +169,30 @@ func ReconcileAccounts(ctx context.Context, tx pgx.Tx) error {
 
 ## 6. Compliant Implementation Patterns (Good Examples)
 
-### Solution 1: Parameterized Transaction Lock (Standard)
+### Solution 1: 2-Argument 32-Bit Namespace Lock
+
+```go
+// COMPLIANT: Class ID (1001) as namespace constant, objID ($1) as resource parameter
+func LockTenantResource(ctx context.Context, tx pgx.Tx, objectID int32) error {
+    const query = "SELECT pg_advisory_xact_lock(1001, $1)"
+    _, err := tx.Exec(ctx, query, objectID)
+    return err
+}
+```
+
+### Solution 2: Structured Helper with Namespaced Lock Key
+
+```go
+// COMPLIANT: Explicit domain-namespaced lock identifier
+func ProcessOrder(ctx context.Context, tx pgx.Tx, orderID string) error {
+    lockKey := fmt.Sprintf("orders:processing:%s", orderID)
+    return argus.WithAdvisoryLock(ctx, tx, lockKey, true, func() error {
+        return executeOrderProcessing(ctx, tx, orderID)
+    })
+}
+```
+
+### Solution 3: Parameterized 1-Arg Transaction Lock
 
 ```go
 // COMPLIANT: Automatically released when transaction ends
@@ -144,29 +203,6 @@ func ProcessPayout(ctx context.Context, pool *pgxpool.Pool, payoutKey int64) err
             return err
         }
         return executePayout(ctx, tx)
-    })
-}
-```
-
-### Solution 2: Two-Argument 32-Bit Namespace Lock
-
-```go
-// COMPLIANT: Class ID and Object ID namespace isolation
-func LockTenantResource(ctx context.Context, tx pgx.Tx, classID, objectID int32) error {
-    const query = "SELECT pg_advisory_xact_lock($1, $2)"
-    _, err := tx.Exec(ctx, query, classID, objectID)
-    return err
-}
-```
-
-### Solution 3: Structured Helper with Namespaced Lock Key
-
-```go
-// COMPLIANT: Explicit domain-namespaced lock identifier
-func ProcessOrder(ctx context.Context, tx pgx.Tx, orderID string) error {
-    lockKey := fmt.Sprintf("orders:processing:%s", orderID)
-    return argus.WithAdvisoryLock(ctx, tx, lockKey, true, func() error {
-        return executeOrderProcessing(ctx, tx, orderID)
     })
 }
 ```

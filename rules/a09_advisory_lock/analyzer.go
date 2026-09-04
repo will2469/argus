@@ -61,8 +61,8 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			if !ok {
 				return true
 			}
-			checkDBCallAdvisoryLock(fset, call, fn.Body, dm, &issues)
-			CheckAdvisoryHelperArgs(pass, fset, call, dm, &issues)
+			checkDBCallAdvisoryLock(pass, fset, call, fn.Body, dm, &issues)
+			CheckAdvisoryHelperArgs(pass, fset, call, fn.Body, dm, &issues)
 			return true
 		})
 	}
@@ -70,9 +70,9 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 	return issues
 }
 
-func checkDBCallAdvisoryLock(fset *token.FileSet, call *ast.CallExpr, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || !callsite.IsDBQueryMethod(sel.Sel.Name) {
+func checkDBCallAdvisoryLock(pass *analysis.Pass, fset *token.FileSet, call *ast.CallExpr, body *ast.BlockStmt, dm *directives.DirectiveMap, issues *[]Issue) {
+	sel := callsite.GetCallSelector(call.Fun)
+	if sel == nil || !callsite.IsDBQueryMethod(sel.Sel.Name) {
 		return
 	}
 
@@ -84,54 +84,55 @@ func checkDBCallAdvisoryLock(fset *token.FileSet, call *ast.CallExpr, body *ast.
 		}
 	}
 
-	queries := extractAllQueryStrings(call, body)
-	for _, query := range queries {
-		if strings.TrimSpace(query) == "" {
-			continue
-		}
-		reportAdvisoryViolations(fset, query, call.Pos(), dm, issues)
+	query := extractSQLQueryString(call, body, pass)
+	if strings.TrimSpace(query) == "" {
+		return
 	}
+	reportAdvisoryViolations(fset, query, call.Pos(), dm, issues)
 }
 
-func extractAllQueryStrings(call *ast.CallExpr, body *ast.BlockStmt) []string {
-	if call == nil || len(call.Args) == 0 {
-		return nil
+func extractSQLQueryString(call *ast.CallExpr, body *ast.BlockStmt, pass *analysis.Pass) string {
+	sqlArg := callsite.ExtractSQLArg(call, pass)
+	if sqlArg == nil {
+		if s, ok := callsite.ExtractQueryString(call); ok {
+			return s
+		}
+		return ""
 	}
 
-	var results []string
-	for _, arg := range call.Args {
-		switch e := arg.(type) {
-		case *ast.BasicLit:
-			if e.Kind == token.STRING {
-				results = append(results, strings.Trim(e.Value, "`\""))
-			}
-		case *ast.Ident:
-			if body != nil {
-				ast.Inspect(body, func(n ast.Node) bool {
-					assign, ok := n.(*ast.AssignStmt)
-					if !ok || assign.Pos() >= call.Pos() {
-						return true
-					}
-					for i, lhs := range assign.Lhs {
-						if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
-							if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-								results = append(results, strings.Trim(lit.Value, "`\""))
-							}
+	switch e := sqlArg.(type) {
+	case *ast.BasicLit:
+		if e.Kind == token.STRING {
+			return strings.Trim(e.Value, "`\"")
+		}
+	case *ast.Ident:
+		if body != nil {
+			var query string
+			ast.Inspect(body, func(n ast.Node) bool {
+				assign, ok := n.(*ast.AssignStmt)
+				if !ok || assign.Pos() >= call.Pos() {
+					return true
+				}
+				for i, lhs := range assign.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && id.Name == e.Name && i < len(assign.Rhs) {
+						if lit, ok := assign.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							query = strings.Trim(lit.Value, "`\"")
+							return false
 						}
 					}
-					return true
-				})
+				}
+				return true
+			})
+			if query != "" {
+				return query
 			}
 		}
 	}
 
-	if len(results) == 0 {
-		if s, ok := callsite.ExtractQueryString(call); ok {
-			results = append(results, s)
-		}
+	if s, ok := callsite.ExtractQueryString(call); ok {
+		return s
 	}
-
-	return results
+	return ""
 }
 
 func reportAdvisoryViolations(fset *token.FileSet, query string, pos token.Pos, dm *directives.DirectiveMap, issues *[]Issue) {

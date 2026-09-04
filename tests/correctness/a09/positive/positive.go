@@ -30,7 +30,7 @@ func P2_Indirect(ctx context.Context, db DBExecutor, key int64) error {
 	return err
 }
 
-// P3: Helper Violation — hardcoded integer magic number lock key in xact lock.
+// P3: Helper Violation — hardcoded integer magic number lock key in 1-arg xact lock.
 func P3_Helper(ctx context.Context, db DBExecutor) error {
 	_, err := db.Exec(ctx, "SELECT pg_advisory_xact_lock(1)") // want `\[ARGUS-A09\] hardcoded integer advisory lock key in SQL`
 	return err
@@ -46,6 +46,19 @@ func P4_Nested(ctx context.Context, tx any) error {
 // P5: Alias Violation — session lock function inside multi-statement query.
 func P5_Alias(ctx context.Context, db DBExecutor) error {
 	_, err := db.Exec(ctx, "SELECT 1; SELECT pg_try_advisory_lock(999)") // want `\[ARGUS-A09\] forbidden session-level advisory lock "pg_try_advisory_lock"`
+	return err
+}
+
+// P6: Bare String Violation — unnamespaced bare string in WithAdvisoryLock helper.
+func P6_BareHelperString(ctx context.Context, tx any) error {
+	return argus.WithAdvisoryLock(ctx, tx, "foo", true, func() error { // want `\[ARGUS-A09\] unnamespaced advisory lock identifier "foo"`
+		return nil
+	})
+}
+
+// P7: Hardcoded Resource Key Violation — 2-arg advisory lock where resource ID is a hardcoded magic number.
+func P7_HardcodedResourceKey(ctx context.Context, db DBExecutor) error {
+	_, err := db.Exec(ctx, "SELECT pg_advisory_xact_lock(1001, 42)") // want `\[ARGUS-A09\] hardcoded integer advisory lock key in SQL`
 	return err
 }
 

@@ -26,10 +26,13 @@ func TestInspectAdvisorySQL_Unit(t *testing.T) {
 	}{
 		{"SELECT pg_advisory_xact_lock($1)", false, false},
 		{"SELECT pg_advisory_xact_lock($1, $2)", false, false},
+		{"SELECT pg_advisory_xact_lock(1001, $1)", false, false},
+		{"SELECT pg_advisory_xact_lock(namespace_id, resource_id)", false, false},
 		{"SELECT pg_advisory_lock($1)", true, false},
 		{"SELECT pg_try_advisory_lock($1)", true, false},
 		{"SELECT pg_advisory_xact_lock(1)", false, true},
 		{"SELECT pg_advisory_xact_lock(1001, 2)", false, true},
+		{"SELECT pg_advisory_xact_lock($1, 42)", false, true},
 	}
 
 	for _, tc := range tests {
