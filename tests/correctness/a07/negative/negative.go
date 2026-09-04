@@ -1,10 +1,12 @@
 package negative
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 )
@@ -163,5 +165,35 @@ func N15_MemoryStoreError(w http.ResponseWriter, store *MemoryStore) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 	}
+}
+
+// N16: Scanner Err/Scan — bufio.Scanner methods must NOT be treated as database operations.
+func N16_ScannerMethods(w http.ResponseWriter, r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+	}
+	if err := scanner.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
+}
+
+// N17: Closer Error — io.Closer.Close() must NOT be treated as database operation.
+func N17_CloserError(w http.ResponseWriter, closer io.Closer) {
+	if err := closer.Close(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+type FakeErrors struct{}
+
+func (FakeErrors) New(msg string) error {
+	return errors.New(msg)
+}
+
+// N18: Shadowed Package Name — local variable named errors does not hijack stdlib error provenance.
+func N18_ShadowedPackageName(w http.ResponseWriter) {
+	errors := FakeErrors{}
+	err := errors.New("safe client error")
+	http.Error(w, err.Error(), http.StatusBadRequest)
 }
 

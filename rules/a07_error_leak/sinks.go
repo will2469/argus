@@ -17,7 +17,7 @@ type ResponseSinkInfo struct {
 }
 
 // InspectResponseSink checks whether an AST call expression represents an HTTP or API response sink.
-func InspectResponseSink(pass *analysis.Pass, call *ast.CallExpr, fn *ast.FuncDecl) ResponseSinkInfo {
+func InspectResponseSink(pass *analysis.Pass, file *ast.File, call *ast.CallExpr, fn *ast.FuncDecl) ResponseSinkInfo {
 	if call == nil {
 		return ResponseSinkInfo{}
 	}
@@ -28,7 +28,7 @@ func InspectResponseSink(pass *analysis.Pass, call *ast.CallExpr, fn *ast.FuncDe
 	}
 
 	// 1. http.Error(w, errText, statusCode)
-	if id, ok := sel.X.(*ast.Ident); ok && id.Name == "http" && sel.Sel.Name == "Error" {
+	if isPackageCall(pass, file, fn, sel, "net/http", "Error") {
 		if len(call.Args) >= 2 && IsResponseWriter(pass, call.Args[0], fn) {
 			return ResponseSinkInfo{IsSink: true, Args: []ast.Expr{call.Args[1]}}
 		}
@@ -56,22 +56,24 @@ func InspectResponseSink(pass *analysis.Pass, call *ast.CallExpr, fn *ast.FuncDe
 	// 4. json.NewEncoder(w).Encode(data)
 	if sel.Sel.Name == "Encode" && len(call.Args) >= 1 {
 		if innerCall, ok := sel.X.(*ast.CallExpr); ok {
-			if innerSel, ok := innerCall.Fun.(*ast.SelectorExpr); ok && innerSel.Sel.Name == "NewEncoder" && len(innerCall.Args) >= 1 {
-				if IsResponseWriter(pass, innerCall.Args[0], fn) {
-					return ResponseSinkInfo{IsSink: true, Args: []ast.Expr{call.Args[0]}}
+			if innerSel, ok := innerCall.Fun.(*ast.SelectorExpr); ok {
+				if isPackageCall(pass, file, fn, innerSel, "encoding/json", "NewEncoder") && len(innerCall.Args) >= 1 {
+					if IsResponseWriter(pass, innerCall.Args[0], fn) {
+						return ResponseSinkInfo{IsSink: true, Args: []ast.Expr{call.Args[0]}}
+					}
 				}
 			}
 		}
 	}
 
 	// 5. fmt.Fprintf(w, "%s", errText) or fmt.Fprint(w, errText)
-	if id, ok := sel.X.(*ast.Ident); ok && id.Name == "fmt" && len(call.Args) >= 1 {
+	if isPackageCall(pass, file, fn, sel, "fmt", "Fprintf") && len(call.Args) >= 3 {
 		if IsResponseWriter(pass, call.Args[0], fn) {
-			if sel.Sel.Name == "Fprintf" && len(call.Args) >= 3 {
-				return ResponseSinkInfo{IsSink: true, Args: call.Args[2:]}
-			} else if (sel.Sel.Name == "Fprint" || sel.Sel.Name == "Fprintln") && len(call.Args) >= 2 {
-				return ResponseSinkInfo{IsSink: true, Args: call.Args[1:]}
-			}
+			return ResponseSinkInfo{IsSink: true, Args: call.Args[2:]}
+		}
+	} else if (isPackageCall(pass, file, fn, sel, "fmt", "Fprint") || isPackageCall(pass, file, fn, sel, "fmt", "Fprintln")) && len(call.Args) >= 2 {
+		if IsResponseWriter(pass, call.Args[0], fn) {
+			return ResponseSinkInfo{IsSink: true, Args: call.Args[1:]}
 		}
 	}
 

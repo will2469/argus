@@ -60,13 +60,13 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.SelectorExpr:
-				CheckPgErrorSensitiveFields(pass, fset, node, dm, &issues)
+				CheckPgErrorSensitiveFields(pass, fset, file, fn, node, dm, &issues)
 			case *ast.CallExpr:
 				CheckErrorFactoryCall(pass, fset, file, fn, node, tracker, dm, &issues)
-				sink := InspectResponseSink(pass, node, fn)
+				sink := InspectResponseSink(pass, file, node, fn)
 				if sink.IsSink {
 					for _, arg := range sink.Args {
-						CheckLeakedErrorArg(pass, fset, arg, node.Pos(), fn, tracker, dm, &issues)
+						CheckLeakedErrorArg(pass, fset, file, arg, node.Pos(), fn, tracker, dm, &issues)
 					}
 				}
 			}

@@ -91,7 +91,7 @@ func ContainsTaintedError(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl,
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		switch sel.Sel.Name {
 		case "Detail", "Hint", "Where":
-			if IsPgErrorSelector(pass, sel) {
+			if IsPgErrorSelector(pass, file, fn, sel) {
 				return true
 			}
 		}
@@ -103,7 +103,7 @@ func ContainsTaintedError(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl,
 	}
 
 	// 4. fmt.Sprintf formatting
-	if call, ok := expr.(*ast.CallExpr); ok && isFormatCall(call) {
+	if call, ok := expr.(*ast.CallExpr); ok && isFormatCall(pass, file, fn, call) {
 		for _, a := range call.Args[1:] {
 			if ContainsTaintedError(pass, file, fn, a, tracker) {
 				return true
@@ -120,18 +120,15 @@ func ContainsTaintedError(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl,
 	return false
 }
 
-func isFormatCall(call *ast.CallExpr) bool {
-	if call == nil {
+func isFormatCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call *ast.CallExpr) bool {
+	if call == nil || len(call.Args) < 2 {
 		return false
 	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
-	if id, ok := sel.X.(*ast.Ident); ok && id.Name == "fmt" {
-		return sel.Sel.Name == "Sprintf" && len(call.Args) >= 2
-	}
-	return false
+	return isPackageCall(pass, file, fn, sel, "fmt", "Sprintf")
 }
 
 func getCalledFunctionName(call *ast.CallExpr) string {

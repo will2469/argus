@@ -28,12 +28,12 @@ func evalExprOrigin(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, expr 
 					return errorValue{kind: errorKindDB, source: "typeassert PgError"}
 				}
 			}
-			if isPgErrorASTType(e.Type) {
+			if isPgErrorASTType(file, fn, e.Type) {
 				return errorValue{kind: errorKindDB, source: "typeassert PgError"}
 			}
 		}
 	case *ast.SelectorExpr:
-		if IsPgErrorSelector(pass, e) {
+		if IsPgErrorSelector(pass, file, fn, e) {
 			return errorValue{kind: errorKindDB, source: "pgError field"}
 		}
 		if state != nil {
@@ -66,13 +66,13 @@ func evalCallOrigin(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call 
 		return evalExprOrigin(pass, file, fn, sel.X, state)
 	}
 
-	// 3. Is it errors.New?
+	// 3. Is it stdlib errors.New?
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-		if id, ok := sel.X.(*ast.Ident); ok && id.Name == "errors" && sel.Sel.Name == "New" {
+		if isPackageCall(pass, file, fn, sel, "errors", "New") {
 			return errorValue{kind: errorKindClean, source: "errors.New"}
 		}
-		// fmt.Errorf: check if any wrapped arg is DB tainted
-		if id, ok := sel.X.(*ast.Ident); ok && id.Name == "fmt" && sel.Sel.Name == "Errorf" {
+		// 4. fmt.Errorf: check if any wrapped arg is DB tainted
+		if isPackageCall(pass, file, fn, sel, "fmt", "Errorf") {
 			for _, arg := range call.Args[1:] {
 				if v := evalExprOrigin(pass, file, fn, arg, state); v.kind == errorKindDB {
 					return errorValue{kind: errorKindDB, source: "fmt.Errorf wrapping DB error"}
@@ -103,7 +103,7 @@ func evalIdentOrigin(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, id *
 
 	// 3. Function parameter check
 	if isFuncParam(id.Name, fn) {
-		if isPgErrorParam(id.Name, fn) {
+		if isPgErrorParam(file, id.Name, fn) {
 			return errorValue{kind: errorKindDB, source: "PgError param"}
 		}
 		return errorValue{kind: errorKindGenericParam, source: "error param"}
@@ -113,7 +113,7 @@ func evalIdentOrigin(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, id *
 }
 
 // IsPgErrorSelector determines whether a selector refers to a pgconn.PgError struct.
-func IsPgErrorSelector(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
+func IsPgErrorSelector(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, sel *ast.SelectorExpr) bool {
 	if sel == nil {
 		return false
 	}
@@ -124,10 +124,10 @@ func IsPgErrorSelector(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	}
 	// AST fallback
 	if id, ok := sel.X.(*ast.Ident); ok && id.Obj != nil {
-		if field, ok := id.Obj.Decl.(*ast.Field); ok && isPgErrorASTType(field.Type) {
+		if field, ok := id.Obj.Decl.(*ast.Field); ok && isPgErrorASTType(file, fn, field.Type) {
 			return true
 		}
-		if vs, ok := id.Obj.Decl.(*ast.ValueSpec); ok && isPgErrorASTType(vs.Type) {
+		if vs, ok := id.Obj.Decl.(*ast.ValueSpec); ok && isPgErrorASTType(file, fn, vs.Type) {
 			return true
 		}
 	}
@@ -159,6 +159,7 @@ func IsPgErrorType(t types.Type) bool {
 
 		// Exact package/type matches only
 		if (path == "github.com/jackc/pgx/v5/pgconn" && name == "PgError") ||
+			(path == "github.com/jackc/pgx/v4/pgconn" && name == "PgError") ||
 			(path == "github.com/lib/pq" && name == "Error") {
 			return true
 		}
@@ -181,21 +182,21 @@ func isFuncParam(name string, fn *ast.FuncDecl) bool {
 	return false
 }
 
-func isPgErrorParam(name string, fn *ast.FuncDecl) bool {
+func isPgErrorParam(file *ast.File, name string, fn *ast.FuncDecl) bool {
 	if fn == nil || fn.Type == nil || fn.Type.Params == nil {
 		return false
 	}
 	for _, field := range fn.Type.Params.List {
 		for _, id := range field.Names {
 			if id.Name == name {
-				return isPgErrorASTType(field.Type)
+				return isPgErrorASTType(file, fn, field.Type)
 			}
 		}
 	}
 	return false
 }
 
-func isPgErrorASTType(expr ast.Expr) bool {
+func isPgErrorASTType(file *ast.File, fn *ast.FuncDecl, expr ast.Expr) bool {
 	if expr == nil {
 		return false
 	}
@@ -204,10 +205,12 @@ func isPgErrorASTType(expr ast.Expr) bool {
 	}
 	// Fail-closed: only accept exact AST selectors with proven package context
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		if sel.Sel.Name == "PgError" || sel.Sel.Name == "Error" {
-			if pkgID, ok := sel.X.(*ast.Ident); ok {
-				// Only accept known PostgreSQL driver packages
-				return pkgID.Name == "pgconn" || pkgID.Name == "pq"
+		if pkgID, ok := sel.X.(*ast.Ident); ok {
+			if sel.Sel.Name == "PgError" && (isPackageIdent(nil, file, fn, pkgID, "github.com/jackc/pgx/v5/pgconn") || isPackageIdent(nil, file, fn, pkgID, "github.com/jackc/pgx/v4/pgconn")) {
+				return true
+			}
+			if sel.Sel.Name == "Error" && isPackageIdent(nil, file, fn, pkgID, "github.com/lib/pq") {
+				return true
 			}
 		}
 	}

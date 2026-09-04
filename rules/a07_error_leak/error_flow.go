@@ -11,10 +11,10 @@ import (
 )
 
 // CheckPgErrorSensitiveFields checks for forbidden direct access to Detail, Hint, or Where on PgError.
-func CheckPgErrorSensitiveFields(pass *analysis.Pass, fset *token.FileSet, sel *ast.SelectorExpr, dm *directives.DirectiveMap, issues *[]Issue) {
+func CheckPgErrorSensitiveFields(pass *analysis.Pass, fset *token.FileSet, file *ast.File, fn *ast.FuncDecl, sel *ast.SelectorExpr, dm *directives.DirectiveMap, issues *[]Issue) {
 	switch sel.Sel.Name {
 	case "Detail", "Hint", "Where":
-		if IsPgErrorSelector(pass, sel) {
+		if IsPgErrorSelector(pass, file, fn, sel) {
 			if fset != nil && dm != nil && dm.IsIgnored(fset, sel.Pos(), RuleCode) {
 				return
 			}
@@ -27,7 +27,7 @@ func CheckPgErrorSensitiveFields(pass *analysis.Pass, fset *token.FileSet, sel *
 }
 
 // CheckLeakedErrorArg validates an expression passed into an API response sink.
-func CheckLeakedErrorArg(pass *analysis.Pass, fset *token.FileSet, arg ast.Expr, callPos token.Pos, fn *ast.FuncDecl, tracker *ErrorTracker, dm *directives.DirectiveMap, issues *[]Issue) {
+func CheckLeakedErrorArg(pass *analysis.Pass, fset *token.FileSet, file *ast.File, arg ast.Expr, callPos token.Pos, fn *ast.FuncDecl, tracker *ErrorTracker, dm *directives.DirectiveMap, issues *[]Issue) {
 	if arg == nil {
 		return
 	}
@@ -61,7 +61,7 @@ func CheckLeakedErrorArg(pass *analysis.Pass, fset *token.FileSet, arg ast.Expr,
 	if sel, ok := arg.(*ast.SelectorExpr); ok {
 		switch sel.Sel.Name {
 		case "Detail", "Hint", "Where":
-			if IsPgErrorSelector(pass, sel) {
+			if IsPgErrorSelector(pass, file, fn, sel) {
 				return
 			}
 		}
@@ -69,15 +69,15 @@ func CheckLeakedErrorArg(pass *analysis.Pass, fset *token.FileSet, arg ast.Expr,
 
 	// 3. Binary concatenation: "error: " + err.Error()
 	if bin, ok := arg.(*ast.BinaryExpr); ok {
-		CheckLeakedErrorArg(pass, fset, bin.X, callPos, fn, tracker, dm, issues)
-		CheckLeakedErrorArg(pass, fset, bin.Y, callPos, fn, tracker, dm, issues)
+		CheckLeakedErrorArg(pass, fset, file, bin.X, callPos, fn, tracker, dm, issues)
+		CheckLeakedErrorArg(pass, fset, file, bin.Y, callPos, fn, tracker, dm, issues)
 		return
 	}
 
 	// 4. Formatted call: fmt.Sprintf("failed: %s", err.Error())
-	if call, ok := arg.(*ast.CallExpr); ok && isFormatCall(call) {
+	if call, ok := arg.(*ast.CallExpr); ok && isFormatCall(pass, file, fn, call) {
 		for _, a := range call.Args[1:] {
-			CheckLeakedErrorArg(pass, fset, a, callPos, fn, tracker, dm, issues)
+			CheckLeakedErrorArg(pass, fset, file, a, callPos, fn, tracker, dm, issues)
 		}
 		return
 	}

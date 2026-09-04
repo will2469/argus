@@ -22,64 +22,116 @@ func isDatabaseCall(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, call 
 	if sel == nil {
 		return false
 	}
-
 	methodName := sel.Sel.Name
-	if !isCandidateDBMethod(methodName) {
+
+	// Package-level calls (e.g. sql.Open, pgx.Connect)
+	if id, ok := sel.X.(*ast.Ident); ok {
+		if isKnownDBPackageIdent(pass, file, fn, id) {
+			return isDBConstructorMethod(methodName)
+		}
+	}
+
+	isQuery := callsite.IsDBQueryMethod(methodName)
+	isAux := isAuxiliaryDBMethod(methodName)
+	if !isQuery && !isAux {
 		return false
 	}
 
 	// 1. Semantic Type Verification via pass.TypesInfo
 	if pass != nil && pass.TypesInfo != nil {
-		var recvType types.Type
-		if selType, ok := pass.TypesInfo.Selections[sel]; ok && selType.Recv() != nil {
-			recvType = selType.Recv()
+		if selType, ok := pass.TypesInfo.Selections[sel]; ok {
+			if f, ok := selType.Obj().(*types.Func); ok {
+				if f.Pkg() != nil && isKnownDBPackagePath(f.Pkg().Path()) {
+					return true
+				}
+				if sig, ok := f.Type().(*types.Signature); ok && sig.Recv() != nil {
+					if isKnownDBDriverType(sig.Recv().Type()) {
+						return true
+					}
+				}
+			}
+			recvType := selType.Recv()
+			if recvType != nil && recvType != types.Typ[types.Invalid] {
+				recvType = unwrapPointer(recvType)
+				if isKnownDBDriverType(recvType) {
+					return true
+				}
+				if isQuery && isProvenDBQuerierType(recvType) {
+					return true
+				}
+				if isAux {
+					if f, ok := selType.Obj().(*types.Func); ok && isDBMethodWithDriverSignature(f) {
+						return true
+					}
+				}
+				if !hasInvalidType(recvType) {
+					return false
+				}
+			}
 		} else if tv, ok := pass.TypesInfo.Types[sel.X]; ok && tv.Type != nil {
-			recvType = tv.Type
+			recvType := unwrapPointer(tv.Type)
+			if isKnownDBDriverType(recvType) {
+				return true
+			}
+			if isQuery && isProvenDBQuerierType(recvType) {
+				return true
+			}
+			if !hasInvalidType(recvType) {
+				return false
+			}
 		} else if id, ok := sel.X.(*ast.Ident); ok {
+			var recvType types.Type
 			if obj := pass.TypesInfo.Uses[id]; obj != nil {
 				recvType = obj.Type()
+			} else if obj := pass.TypesInfo.Defs[id]; obj != nil {
+				recvType = obj.Type()
+			}
+			if recvType != nil && recvType != types.Typ[types.Invalid] {
+				recvType = unwrapPointer(recvType)
+				if isKnownDBDriverType(recvType) {
+					return true
+				}
+				if isQuery && isProvenDBQuerierType(recvType) {
+					return true
+				}
+				if !hasInvalidType(recvType) {
+					return false
+				}
 			}
 		}
-
-		if recvType != nil && recvType != types.Typ[types.Invalid] {
-			return callsite.IsPgxOrSQLType(recvType)
-		}
-
-		// Package-level calls from database packages: sql.Open, pgx.Connect, etc.
-		if id, ok := sel.X.(*ast.Ident); ok {
-			if pkgName, ok := pass.TypesInfo.Uses[id].(*types.PkgName); ok {
-				return isKnownDBPackagePath(pkgName.Imported().Path())
-			}
-		}
+		return false
 	}
 
-	// 2. Standalone Mode (pass == nil or TypesInfo unavailable)
-	// Fail-closed: only check known database package identifiers
-	if id, ok := sel.X.(*ast.Ident); ok {
-		switch id.Name {
-		case "sql", "pgx", "pgxpool", "sqlx", "pq":
+	// 2. Standalone / AST Mode (pass == nil or TypesInfo unavailable)
+	astType := findASTType(sel.X, fn, file)
+	if astType != nil {
+		if isKnownDBDriverASTType(astType, file, fn) {
 			return true
 		}
-
-		// Check AST declaration for proven DB type
-		decl := findASTDeclForIdent(file, fn, id)
-		if decl != nil {
-			return isKnownDBASTDecl(decl)
+		if isQuery && isProvenDBQuerierASTType(astType, file, fn) {
+			return true
 		}
 	}
 
-	// Fail-closed: if we cannot prove it's a DB call, don't check
+	if isAssignedFromDBConstructor(pass, file, fn, sel.X) {
+		return true
+	}
+
 	return false
 }
 
-func isCandidateDBMethod(methodName string) bool {
-	if callsite.IsDBQueryMethod(methodName) {
-		return true
-	}
+func isAuxiliaryDBMethod(methodName string) bool {
 	switch methodName {
 	case "Commit", "Rollback", "Scan", "Err", "Ping", "PingContext",
-		"Close", "SendBatch", "Prepare", "PrepareContext", "CopyFrom",
-		"Begin", "BeginTx", "BeginTxFunc":
+		"Close", "Prepare", "PrepareContext", "CopyFrom":
+		return true
+	}
+	return false
+}
+
+func isDBConstructorMethod(methodName string) bool {
+	switch methodName {
+	case "Open", "OpenDB", "Connect", "ConnectConfig", "New", "NewWithConfig":
 		return true
 	}
 	return false
@@ -95,35 +147,16 @@ func isKnownDBPackagePath(path string) bool {
 	return false
 }
 
-func isKnownDBASTDecl(node ast.Node) bool {
-	switch n := node.(type) {
-	case *ast.Field:
-		return isKnownDBASTType(n.Type)
-	case *ast.ValueSpec:
-		return isKnownDBASTType(n.Type)
-	case *ast.AssignStmt:
-		for _, rhs := range n.Rhs {
-			if rhsCall, ok := rhs.(*ast.CallExpr); ok && isDBConstructorCall(rhsCall) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isKnownDBASTType(expr ast.Expr) bool {
-	if expr == nil {
+func isKnownDBDriverType(t types.Type) bool {
+	if t == nil {
 		return false
 	}
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		if pkgID, ok := sel.X.(*ast.Ident); ok {
-			switch pkgID.Name {
-			case "sql", "pgx", "pgxpool", "sqlx", "pq":
-				switch sel.Sel.Name {
-				case "DB", "Tx", "Conn", "Pool", "Row", "Rows", "Stmt", "Batch":
+	t = unwrapPointer(t)
+	if named, ok := t.(*types.Named); ok {
+		if obj := named.Obj(); obj != nil && obj.Pkg() != nil {
+			if isKnownDBPackagePath(obj.Pkg().Path()) {
+				switch obj.Name() {
+				case "DB", "Tx", "Conn", "Pool", "Batch", "BatchResults", "Stmt", "Rows", "Row", "Result", "CommandTag":
 					return true
 				}
 			}
@@ -132,96 +165,76 @@ func isKnownDBASTType(expr ast.Expr) bool {
 	return false
 }
 
-func isDBConstructorCall(call *ast.CallExpr) bool {
-	if call == nil {
+func isProvenDBQuerierType(t types.Type) bool {
+	if t == nil {
 		return false
 	}
-	sel := callsite.GetCallSelector(call.Fun)
-	if sel == nil {
-		return false
+	t = unwrapPointer(t)
+	if isKnownDBDriverType(t) {
+		return true
 	}
-	if pkgID, ok := sel.X.(*ast.Ident); ok {
-		switch pkgID.Name {
-		case "sql":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "OpenDB"
-		case "pgx":
-			return sel.Sel.Name == "Connect" || sel.Sel.Name == "ConnectConfig"
-		case "pgxpool":
-			return sel.Sel.Name == "New" || sel.Sel.Name == "NewWithConfig"
-		case "sqlx":
-			return sel.Sel.Name == "Open" || sel.Sel.Name == "Connect"
+	if iface, ok := t.Underlying().(*types.Interface); ok {
+		for i := 0; i < iface.NumMethods(); i++ {
+			if isDBMethodWithDriverSignature(iface.Method(i)) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-func findASTDeclForIdent(file *ast.File, fn *ast.FuncDecl, id *ast.Ident) ast.Node {
-	if id == nil {
-		return nil
+func isDBMethodWithDriverSignature(fn *types.Func) bool {
+	if fn == nil {
+		return false
 	}
-	if id.Obj != nil && id.Obj.Decl != nil {
-		return id.Obj.Decl.(ast.Node)
+	switch fn.Name() {
+	case "Query", "QueryRow", "Exec", "ExecContext", "Begin", "BeginTx", "SendBatch":
+	default:
+		return false
 	}
-
-	if fn != nil {
-		if fn.Type != nil && fn.Type.Params != nil {
-			for _, field := range fn.Type.Params.List {
-				for _, name := range field.Names {
-					if name.Name == id.Name {
-						return field
-					}
-				}
-			}
-		}
-
-		if fn.Body != nil {
-			blocks := getEnclosingBlocks(fn.Body, id.Pos())
-			for i := len(blocks) - 1; i >= 0; i-- {
-				b := blocks[i]
-				for _, stmt := range b.List {
-					if stmt.Pos() >= id.Pos() {
-						continue
-					}
-					switch s := stmt.(type) {
-					case *ast.AssignStmt:
-						for _, lhs := range s.Lhs {
-							if lid, ok := lhs.(*ast.Ident); ok && lid.Name == id.Name {
-								return s
-							}
-						}
-					case *ast.DeclStmt:
-						if gen, ok := s.Decl.(*ast.GenDecl); ok {
-							for _, spec := range gen.Specs {
-								if valSpec, ok := spec.(*ast.ValueSpec); ok {
-									for _, name := range valSpec.Names {
-										if name.Name == id.Name {
-											return valSpec
-										}
-									}
-								}
-							}
-						}
-					}
-				}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return false
+	}
+	if results := sig.Results(); results != nil {
+		for i := 0; i < results.Len(); i++ {
+			if isKnownDBDriverType(results.At(i).Type()) {
+				return true
 			}
 		}
 	}
-
-	if file != nil {
-		for _, decl := range file.Decls {
-			if gen, ok := decl.(*ast.GenDecl); ok {
-				for _, spec := range gen.Specs {
-					if valSpec, ok := spec.(*ast.ValueSpec); ok {
-						for _, name := range valSpec.Names {
-							if name.Name == id.Name {
-								return valSpec
-							}
-						}
-					}
-				}
+	if params := sig.Params(); params != nil {
+		for i := 0; i < params.Len(); i++ {
+			if isKnownDBDriverType(params.At(i).Type()) {
+				return true
 			}
 		}
 	}
+	return false
+}
 
-	return nil
+func unwrapPointer(t types.Type) types.Type {
+	for {
+		if ptr, ok := t.(*types.Pointer); ok {
+			t = ptr.Elem()
+		} else {
+			break
+		}
+	}
+	return t
+}
+
+func hasInvalidType(t types.Type) bool {
+	if t == nil {
+		return true
+	}
+	switch x := t.(type) {
+	case *types.Basic:
+		return x.Kind() == types.Invalid
+	case *types.Pointer:
+		return hasInvalidType(x.Elem())
+	case *types.Named:
+		return hasInvalidType(x.Underlying())
+	}
+	return false
 }

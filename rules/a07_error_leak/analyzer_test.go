@@ -59,7 +59,7 @@ func handler(w http.ResponseWriter) {
 	var sinksCount int
 	ast.Inspect(file, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
-			sink := InspectResponseSink(nil, call, fn)
+			sink := InspectResponseSink(nil, file, call, fn)
 			if sink.IsSink {
 				sinksCount++
 			}
@@ -143,6 +143,54 @@ func dbPing(w http.ResponseWriter, db *sql.DB) {
 	for _, iss := range issues {
 		pos := fset.Position(iss.Pos)
 		t.Logf("Detected expected DB issue at line %d: %s", pos.Line, iss.Message)
+	}
+}
+
+func TestPackageShadowingAndAuxiliaryProof(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package main
+import (
+	"bufio"
+	"io"
+	"net/http"
+	stdErr "errors"
+)
+
+type FakeErrors struct{}
+func (FakeErrors) New(s string) error { return stdErr.New(s) }
+
+// 1. bufio.Scanner.Err() must NOT be flagged as DB error
+func scannerErr(w http.ResponseWriter, r io.Reader) {
+	sc := bufio.NewScanner(r)
+	if err := sc.Err(); err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+}
+
+// 2. io.Closer.Close() must NOT be flagged as DB error
+func closerErr(w http.ResponseWriter, c io.Closer) {
+	if err := c.Close(); err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+}
+
+// 3. Aliased import stdErr.New produces clean error
+func aliasedImport(w http.ResponseWriter) {
+	err := stdErr.New("aliased clean error")
+	http.Error(w, err.Error(), 400)
+}
+`
+	file, err := parser.ParseFile(fset, "test2.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	if len(issues) != 0 {
+		for _, iss := range issues {
+			pos := fset.Position(iss.Pos)
+			t.Errorf("unexpected issue on non-DB / clean error at Line %d: %s", pos.Line, iss.Message)
+		}
 	}
 }
 
