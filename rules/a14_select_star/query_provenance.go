@@ -13,47 +13,6 @@ import (
 	"github.com/will2469/argus/shared/callsite"
 )
 
-// isDatabaseCall verifies that a call expression targets a genuine database querier.
-func isDatabaseCall(pass *analysis.Pass, call *ast.CallExpr) bool {
-	if call == nil {
-		return false
-	}
-	sel := callsite.GetCallSelector(call.Fun)
-	if sel == nil || !callsite.IsDBQueryMethod(sel.Sel.Name) {
-		return false
-	}
-
-	// 1. Semantic Type Resolution via types.Info
-	if pass != nil && pass.TypesInfo != nil {
-		if recvType := pass.TypesInfo.TypeOf(sel.X); recvType != nil {
-			if callsite.IsPgxOrSQLType(recvType) {
-				return true
-			}
-			tName := strings.ToLower(recvType.String())
-			return strings.Contains(tName, "db") || strings.Contains(tName, "pool") ||
-				strings.Contains(tName, "tx") || strings.Contains(tName, "querier") ||
-				strings.Contains(tName, "repo") || strings.Contains(tName, "store")
-		}
-	}
-
-	// 2. Syntactic heuristic in standalone mode (pass == nil)
-	isDBIdent := func(name string) bool {
-		lower := strings.ToLower(name)
-		return lower == "q" || strings.Contains(lower, "db") || strings.Contains(lower, "pool") ||
-			strings.Contains(lower, "tx") || strings.Contains(lower, "conn") ||
-			strings.Contains(lower, "repo") || strings.Contains(lower, "store") ||
-			strings.Contains(lower, "dao") || strings.Contains(lower, "queries")
-	}
-
-	if id, ok := sel.X.(*ast.Ident); ok {
-		return isDBIdent(id.Name)
-	}
-	if innerSel, ok := sel.X.(*ast.SelectorExpr); ok {
-		return isDBIdent(innerSel.Sel.Name)
-	}
-	return false
-}
-
 // ResolveQueryStrings extracts all compile-time SQL query strings passed to a DB call.
 func ResolveQueryStrings(pass *analysis.Pass, file *ast.File, call *ast.CallExpr) []string {
 	sqlArg := callsite.ExtractSQLArg(call, pass)
@@ -81,112 +40,153 @@ func resolveExprStrings(pass *analysis.Pass, file *ast.File, expr ast.Expr, pos 
 				resolveExprStrings(pass, file, e.Y, pos, depth+1),
 			)
 		}
+	case *ast.CallExpr:
+		if isFmtSprintf(e) && len(e.Args) > 0 {
+			return resolveExprStrings(pass, file, e.Args[0], pos, depth+1)
+		}
 	case *ast.Ident:
 		if pass != nil && pass.TypesInfo != nil {
-			return traceIdentObject(pass, file, e, pos, depth)
+			obj := pass.TypesInfo.Uses[e]
+			if obj == nil {
+				obj = pass.TypesInfo.Defs[e]
+			}
+			if c, ok := obj.(*types.Const); ok {
+				return []string{strings.Trim(c.Val().ExactString(), "`\"")}
+			}
 		}
-		if file != nil {
-			return traceIdentASTScope(file, e, pos, depth)
+		var results []string
+		for _, def := range getIdentDefExprs(pass, file, e, pos) {
+			sub := resolveExprStrings(pass, file, def, pos, depth+1)
+			results = append(results, sub...)
 		}
+		return results
 	}
 	return nil
 }
 
-func traceIdentObject(pass *analysis.Pass, file *ast.File, id *ast.Ident, callPos token.Pos, depth int) []string {
-	obj := pass.TypesInfo.Uses[id]
-	if obj == nil {
-		obj = pass.TypesInfo.Defs[id]
-	}
-	if obj == nil {
+func getIdentDefExprs(pass *analysis.Pass, file *ast.File, id *ast.Ident, callPos token.Pos) []ast.Expr {
+	if id == nil {
 		return nil
 	}
-	if c, ok := obj.(*types.Const); ok {
-		return []string{strings.Trim(c.Val().ExactString(), "`\"")}
-	}
+	// 1. Pass mode with types.Info
+	if pass != nil && pass.TypesInfo != nil {
+		obj := pass.TypesInfo.Uses[id]
+		if obj == nil {
+			obj = pass.TypesInfo.Defs[id]
+		}
+		if obj == nil {
+			return nil
+		}
 
-	var results []string
-	var root ast.Node = file
-	if enclosing := findEnclosingFunc(file, callPos); enclosing != nil {
-		root = enclosing
-	}
-
-	ast.Inspect(root, func(n ast.Node) bool {
-		switch stmt := n.(type) {
-		case *ast.AssignStmt:
-			if stmt.Pos() >= callPos {
-				return true
+		// Package-level variable: inspect pass.Files
+		if obj.Parent() == pass.Pkg.Scope() {
+			var exprs []ast.Expr
+			for _, f := range pass.Files {
+				for _, decl := range f.Decls {
+					genDecl, ok := decl.(*ast.GenDecl)
+					if !ok {
+						continue
+					}
+					for _, spec := range genDecl.Specs {
+						valSpec, ok := spec.(*ast.ValueSpec)
+						if !ok {
+							continue
+						}
+						for i, name := range valSpec.Names {
+							if pass.TypesInfo.Defs[name] == obj && i < len(valSpec.Values) {
+								exprs = append(exprs, valSpec.Values[i])
+							}
+						}
+					}
+				}
 			}
-			for i, lhs := range stmt.Lhs {
-				lhsIdent, ok := lhs.(*ast.Ident)
-				if !ok || i >= len(stmt.Rhs) {
+			return exprs
+		}
+
+		// Local variable: inspect enclosing function
+		var exprs []ast.Expr
+		var root ast.Node = file
+		if enclosing := findEnclosingFunc(file, callPos); enclosing != nil {
+			root = enclosing
+		}
+
+		ast.Inspect(root, func(n ast.Node) bool {
+			switch stmt := n.(type) {
+			case *ast.AssignStmt:
+				if stmt.Pos() >= callPos {
+					return true
+				}
+				for i, lhs := range stmt.Lhs {
+					lhsIdent, ok := lhs.(*ast.Ident)
+					if !ok || i >= len(stmt.Rhs) {
+						continue
+					}
+					lhsObj := pass.TypesInfo.Defs[lhsIdent]
+					if lhsObj == nil {
+						lhsObj = pass.TypesInfo.Uses[lhsIdent]
+					}
+					if lhsObj == obj {
+						exprs = append(exprs, stmt.Rhs[i])
+					}
+				}
+			case *ast.ValueSpec:
+				for i, name := range stmt.Names {
+					if i < len(stmt.Values) && pass.TypesInfo.Defs[name] == obj {
+						exprs = append(exprs, stmt.Values[i])
+					}
+				}
+			}
+			return true
+		})
+		return exprs
+	}
+
+	// 2. Standalone mode (pass == nil): lexical block scope traversal
+	if file != nil {
+		blocks := getEnclosingBlocks(file, callPos)
+		for i := len(blocks) - 1; i >= 0; i-- {
+			b := blocks[i]
+			var blockExprs []ast.Expr
+			shadowed := false
+
+			for _, stmt := range b.List {
+				if stmt.Pos() >= callPos {
 					continue
 				}
-				lhsObj := pass.TypesInfo.Defs[lhsIdent]
-				if lhsObj == nil {
-					lhsObj = pass.TypesInfo.Uses[lhsIdent]
+				assign, ok := stmt.(*ast.AssignStmt)
+				if !ok {
+					continue
 				}
-				if lhsObj == obj {
-					sub := resolveExprStrings(pass, file, stmt.Rhs[i], stmt.Pos(), depth+1)
-					results = append(results, sub...)
-				}
-			}
-		case *ast.ValueSpec:
-			for i, name := range stmt.Names {
-				if i < len(stmt.Values) && pass.TypesInfo.Defs[name] == obj {
-					sub := resolveExprStrings(pass, file, stmt.Values[i], stmt.Pos(), depth+1)
-					results = append(results, sub...)
-				}
-			}
-		}
-		return true
-	})
-	return results
-}
-
-func traceIdentASTScope(file *ast.File, id *ast.Ident, callPos token.Pos, depth int) []string {
-	blocks := getEnclosingBlocks(file, callPos)
-	for i := len(blocks) - 1; i >= 0; i-- {
-		b := blocks[i]
-		var blockResults []string
-		shadowedInBlock := false
-
-		for _, stmt := range b.List {
-			if stmt.Pos() >= callPos {
-				continue
-			}
-			assign, ok := stmt.(*ast.AssignStmt)
-			if !ok {
-				continue
-			}
-			for idx, lhs := range assign.Lhs {
-				lhsId, ok := lhs.(*ast.Ident)
-				if ok && lhsId.Name == id.Name && idx < len(assign.Rhs) {
-					if assign.Tok == token.DEFINE {
-						shadowedInBlock = true
+				for idx, lhs := range assign.Lhs {
+					lhsId, ok := lhs.(*ast.Ident)
+					if ok && lhsId.Name == id.Name && idx < len(assign.Rhs) {
+						if assign.Tok == token.DEFINE {
+							shadowed = true
+						}
+						blockExprs = append(blockExprs, assign.Rhs[idx])
 					}
-					sub := resolveExprStrings(nil, file, assign.Rhs[idx], assign.Pos(), depth+1)
-					blockResults = append(blockResults, sub...)
 				}
 			}
+			if len(blockExprs) > 0 || shadowed {
+				return blockExprs
+			}
 		}
-		if len(blockResults) > 0 || shadowedInBlock {
-			return blockResults
-		}
-	}
 
-	for _, decl := range file.Decls {
-		genDecl, ok := decl.(*ast.GenDecl)
-		if !ok {
-			continue
-		}
-		for _, spec := range genDecl.Specs {
-			valSpec, ok := spec.(*ast.ValueSpec)
+		// Package-level fallback in file.Decls
+		for _, decl := range file.Decls {
+			genDecl, ok := decl.(*ast.GenDecl)
 			if !ok {
 				continue
 			}
-			for i, name := range valSpec.Names {
-				if name.Name == id.Name && i < len(valSpec.Values) {
-					return resolveExprStrings(nil, file, valSpec.Values[i], valSpec.Pos(), depth+1)
+			for _, spec := range genDecl.Specs {
+				valSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range valSpec.Names {
+					if name.Name == id.Name && i < len(valSpec.Values) {
+						return []ast.Expr{valSpec.Values[i]}
+					}
 				}
 			}
 		}

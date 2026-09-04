@@ -1,6 +1,9 @@
 package a14_select_star
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"testing"
 
@@ -41,3 +44,78 @@ func TestHasForbiddenSelectStar(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckDynamicQueryRisk(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   string
+		isRisk bool
+	}{
+		{"DynamicConcatColumns", `"SELECT " + cols + " FROM users"`, true},
+		{"StaticStarDynamicTable", `"SELECT * FROM " + table`, true},
+		{"StaticExplicitColsDynamicTable", `"SELECT id, name FROM " + table`, false},
+		{"StaticWhereDynamicCond", `"SELECT id, name FROM users WHERE id = " + id`, false},
+		{"SprintfDynamicCols", `fmt.Sprintf("SELECT %s FROM users", cols)`, true},
+		{"SprintfStaticStar", `fmt.Sprintf("SELECT * FROM %s", table)`, true},
+		{"SprintfExplicitCols", `fmt.Sprintf("SELECT id, name FROM %s", table)`, false},
+	}
+
+	for _, tc := range cases {
+		src := "package test\nimport \"fmt\"\nvar _ = " + tc.code
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "test.go", src, 0)
+		if err != nil {
+			t.Fatalf("[%s] parse failed: %v", tc.name, err)
+		}
+		valSpec := file.Decls[1].(*ast.GenDecl).Specs[0].(*ast.ValueSpec)
+		expr := valSpec.Values[0]
+
+		risk, _ := CheckDynamicQueryRisk(nil, file, expr, token.NoPos)
+		if risk != tc.isRisk {
+			t.Errorf("[%s] expected isRisk=%v, got=%v", tc.name, tc.isRisk, risk)
+		}
+	}
+}
+
+func TestInspectFile_ScopeResolution(t *testing.T) {
+	src := `package test
+import "context"
+type DB struct{}
+func (DB) Query(ctx context.Context, sql string) (any, error) { return nil, nil }
+
+var packageStarQuery = "SELECT * FROM users"
+
+func TestPackageQuery(ctx context.Context, db DB) {
+	db.Query(ctx, packageStarQuery)
+}
+
+func TestShadowedSafe(ctx context.Context, db DB) {
+	query := "SELECT * FROM audit"
+	_ = query
+	if true {
+		query := "SELECT id, name FROM users"
+		db.Query(ctx, query)
+	}
+}
+
+func TestDynamicColumns(ctx context.Context, db DB, cols string) {
+	query := "SELECT " + cols + " FROM users"
+	db.Query(ctx, query)
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	issues := InspectFile(nil, fset, file, nil)
+	// Expected:
+	// 1. TestPackageQuery uses packageStarQuery (SELECT *) -> flagged
+	// 2. TestShadowedSafe uses local safe query -> NOT flagged
+	// 3. TestDynamicColumns uses dynamic columns -> flagged
+	if len(issues) != 2 {
+		t.Fatalf("expected exactly 2 issues, got %d: %v", len(issues), issues)
+	}
+}
+

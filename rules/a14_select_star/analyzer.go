@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
+	"github.com/will2469/argus/shared/callsite"
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/directives"
 )
@@ -59,6 +60,7 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 			return true
 		}
 
+		flagged := false
 		queries := ResolveQueryStrings(pass, file, call)
 		for _, query := range queries {
 			if strings.TrimSpace(query) == "" {
@@ -67,14 +69,31 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 
 			if HasForbiddenSelectStar(query) {
 				if fset != nil && dm != nil && (dm.IsIgnored(fset, call.Pos(), RuleCode) || dm.IsIgnored(fset, call.Pos(), RuleCode+".SELECT-STAR")) {
-					continue
+					flagged = true
+					break
 				}
 				issues = append(issues, Issue{
 					Pos:     call.Pos(),
 					Message: "Forbidden 'SELECT *' or wildcard column selection detected; explicitly list required columns to prevent TOAST table bloat and data exposure (CWE-200)",
 				})
+				flagged = true
 				break
 			}
+		}
+		if flagged {
+			return true
+		}
+
+		// Check dynamic query construction under the 'unknown != safe' invariant
+		sqlArg := callsite.ExtractSQLArg(call, pass)
+		if isRisk, reason := CheckDynamicQueryRisk(pass, file, sqlArg, call.Pos()); isRisk {
+			if fset != nil && dm != nil && (dm.IsIgnored(fset, call.Pos(), RuleCode) || dm.IsIgnored(fset, call.Pos(), RuleCode+".SELECT-STAR")) {
+				return true
+			}
+			issues = append(issues, Issue{
+				Pos:     call.Pos(),
+				Message: reason,
+			})
 		}
 
 		return true
