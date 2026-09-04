@@ -2,10 +2,13 @@
 package a13_missing_down_migration
 
 import (
+	"regexp"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
+
+var doCreateTypeRegex = regexp.MustCompile(`(?i)\bCREATE\s+TYPE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z0-9_.]+)`)
 
 func hasDDL(ops []SchemaOp) bool {
 	for _, op := range ops {
@@ -85,6 +88,45 @@ func extractSchemaOps(tree *pg_query.ParseResult) []SchemaOp {
 
 		if sch := stmt.GetCreateSchemaStmt(); sch != nil {
 			ops = append(ops, SchemaOp{Kind: OpCreateSchema, Target: NewSchemaIdent(sch.Schemaname)})
+			continue
+		}
+
+		if enum := stmt.GetCreateEnumStmt(); enum != nil {
+			var parts []string
+			for _, item := range enum.TypeName {
+				if s := item.GetString_(); s != nil {
+					parts = append(parts, s.Sval)
+				}
+			}
+			if len(parts) == 1 {
+				ops = append(ops, SchemaOp{Kind: OpCreateType, Target: NewQualifiedIdent("", parts[0])})
+			} else if len(parts) >= 2 {
+				ops = append(ops, SchemaOp{Kind: OpCreateType, Target: NewQualifiedIdent(parts[len(parts)-2], parts[len(parts)-1])})
+			}
+			continue
+		}
+
+		if comp := stmt.GetCompositeTypeStmt(); comp != nil && comp.Typevar != nil {
+			ops = append(ops, SchemaOp{Kind: OpCreateType, Target: extractRangeVarIdent(comp.Typevar)})
+			continue
+		}
+
+		if do := stmt.GetDoStmt(); do != nil {
+			for _, argNode := range do.Args {
+				if def := argNode.GetDefElem(); def != nil && strings.EqualFold(def.Defname, "as") {
+					if s := def.Arg.GetString_(); s != nil {
+						matches := doCreateTypeRegex.FindAllStringSubmatch(s.Sval, -1)
+						for _, m := range matches {
+							if len(m) >= 2 {
+								ops = append(ops, SchemaOp{
+									Kind:   OpCreateType,
+									Target: NewQualifiedIdent("", m[1]),
+								})
+							}
+						}
+					}
+				}
+			}
 			continue
 		}
 
@@ -181,6 +223,19 @@ func extractRangeVarIdent(rv *pg_query.RangeVar) QualifiedIdent {
 func extractQualifiedObjectIdent(obj *pg_query.Node) QualifiedIdent {
 	if obj == nil {
 		return QualifiedIdent{}
+	}
+	if tn := obj.GetTypeName(); tn != nil {
+		var parts []string
+		for _, n := range tn.Names {
+			if s := n.GetString_(); s != nil {
+				parts = append(parts, s.Sval)
+			}
+		}
+		if len(parts) == 1 {
+			return NewQualifiedIdent("", parts[0])
+		} else if len(parts) >= 2 {
+			return NewQualifiedIdent(parts[len(parts)-2], parts[len(parts)-1])
+		}
 	}
 	if list := obj.GetList(); list != nil {
 		var parts []string

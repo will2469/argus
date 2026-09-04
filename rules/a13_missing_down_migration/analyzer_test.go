@@ -259,3 +259,28 @@ DROP TABLE articles;
 	}
 }
 
+func TestScanDirectory_CreateType_InDoBlock_Symmetry(t *testing.T) {
+	tempDir := t.TempDir()
+
+	upSQL := `
+DO $$
+BEGIN
+    CREATE TYPE user_role AS ENUM ('admin', 'member');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+CREATE TABLE users (id int, role user_role);
+`
+	downSQL := `
+DROP TABLE IF EXISTS users CASCADE;
+DROP TYPE IF EXISTS user_role;
+`
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.up.sql"), []byte(upSQL), 0644)
+	_ = os.WriteFile(filepath.Join(tempDir, "001_users.down.sql"), []byte(downSQL), 0644)
+
+	issues := ScanDirectory(tempDir, nil)
+	if len(issues) != 0 {
+		t.Fatalf("expected 0 issues for symmetric DO block CREATE TYPE and DROP TYPE, got %d: %v", len(issues), issues)
+	}
+}
+
