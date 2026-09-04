@@ -99,6 +99,9 @@ func TestA06_AdversarialCorpus(t *testing.T) {
 		{"A5_NestedFunction", 52, true},
 		{"A6_Generic", 64, true},
 		{"A7_Interface", 71, true},
+		{"A8_ShadowedInner", 82, true},
+		{"A8_ShadowedOuter", 86, false},
+		{"A9_BranchReassignment", 96, true},
 	}
 
 	for _, a := range assertions {

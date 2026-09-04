@@ -4,18 +4,17 @@ package a06_runtime_ddl
 import (
 	"go/ast"
 	"go/token"
-	"strconv"
-	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
 
 // DDLTracker tracks flow-sensitive DDL provenance across functions.
 type DDLTracker struct {
-	pass       *analysis.Pass
-	files      []*ast.File
-	currentFn  *ast.FuncDecl
-	nodeStates map[ast.Node]*ddlState
+	pass        *analysis.Pass
+	files       []*ast.File
+	currentFile *ast.File
+	currentFn   *ast.FuncDecl
+	nodeStates  map[ast.Node]*ddlState
 }
 
 // NewDDLTracker creates a flow-sensitive DDLTracker.
@@ -27,7 +26,7 @@ func NewDDLTracker(pass *analysis.Pass, files ...*ast.File) *DDLTracker {
 	return &DDLTracker{pass: pass, files: fList, nodeStates: make(map[ast.Node]*ddlState)}
 }
 
-// SetCurrentFunc sets the active function declaration.
+// SetCurrentFunc sets the active function declaration and enclosing file.
 func (t *DDLTracker) SetCurrentFunc(fn *ast.FuncDecl) {
 	t.currentFn = fn
 }
@@ -38,6 +37,7 @@ func (t *DDLTracker) Analyze() {
 		if file == nil {
 			continue
 		}
+		t.currentFile = file
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
@@ -70,8 +70,12 @@ func (t *DDLTracker) analyzeStatements(stmts []ast.Stmt, state *ddlState) {
 		switch s := stmt.(type) {
 		case *ast.AssignStmt:
 			t.handleAssign(s, state)
+		case *ast.DeclStmt:
+			t.handleDecl(s, state)
 		case *ast.IfStmt:
 			t.handleIf(s, state)
+		case *ast.SwitchStmt:
+			t.handleSwitch(s, state)
 		case *ast.BlockStmt:
 			t.analyzeStatements(s.List, state)
 		case *ast.ForStmt:
@@ -88,153 +92,92 @@ func (t *DDLTracker) analyzeStatements(stmts []ast.Stmt, state *ddlState) {
 				t.recordNodeState(res, state)
 			}
 		}
+
+		// Inspect inner function closures
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			if fnLit, ok := n.(*ast.FuncLit); ok && fnLit.Body != nil {
+				closureState := state.clone()
+				t.analyzeStatements(fnLit.Body.List, closureState)
+				return false
+			}
+			return true
+		})
 	}
 }
 
 func (t *DDLTracker) handleAssign(stmt *ast.AssignStmt, state *ddlState) {
-	for i, lhs := range stmt.Lhs {
-		ident, ok := lhs.(*ast.Ident)
-		if !ok || i >= len(stmt.Rhs) {
+	if stmt.Tok == token.DEFINE {
+		for i, lhs := range stmt.Lhs {
+			ident, ok := lhs.(*ast.Ident)
+			if !ok || i >= len(stmt.Rhs) {
+				continue
+			}
+			rhs := stmt.Rhs[i]
+			t.recordNodeState(rhs, state)
+			k := makeDefVarKey(t.pass, ident)
+			op := t.evalExpr(rhs, state)
+			if op != "" {
+				state.set(k, ddlValue{kind: ddlKindDefinite, op: op})
+			} else {
+				state.set(k, ddlValue{kind: ddlKindClean})
+			}
+		}
+	} else if stmt.Tok == token.ASSIGN {
+		for i, lhs := range stmt.Lhs {
+			ident, ok := lhs.(*ast.Ident)
+			if !ok || i >= len(stmt.Rhs) {
+				continue
+			}
+			rhs := stmt.Rhs[i]
+			t.recordNodeState(rhs, state)
+			k := makeVarKey(t.pass, t.currentFile, t.currentFn, ident)
+			op := t.evalExpr(rhs, state)
+			if op != "" {
+				state.set(k, ddlValue{kind: ddlKindDefinite, op: op})
+			} else {
+				state.set(k, ddlValue{kind: ddlKindClean})
+			}
+		}
+	} else if stmt.Tok == token.ADD_ASSIGN {
+		for i, lhs := range stmt.Lhs {
+			ident, ok := lhs.(*ast.Ident)
+			if !ok || i >= len(stmt.Rhs) {
+				continue
+			}
+			rhs := stmt.Rhs[i]
+			t.recordNodeState(rhs, state)
+			k := makeVarKey(t.pass, t.currentFile, t.currentFn, ident)
+			if op := t.evalExpr(rhs, state); op != "" {
+				state.set(k, ddlValue{kind: ddlKindDefinite, op: op})
+			}
+		}
+	}
+}
+
+func (t *DDLTracker) handleDecl(stmt *ast.DeclStmt, state *ddlState) {
+	gen, ok := stmt.Decl.(*ast.GenDecl)
+	if !ok || gen.Tok != token.VAR {
+		return
+	}
+	for _, spec := range gen.Specs {
+		valSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
 			continue
 		}
-		rhs := stmt.Rhs[i]
-		t.recordNodeState(rhs, state)
-
-		op := t.evalExpr(rhs, state)
-		if op != "" {
-			state.markDDL(ident, op, t.pass)
-		} else if stmt.Tok == token.ASSIGN || stmt.Tok == token.DEFINE {
-			state.markClean(ident, t.pass)
-		}
-	}
-}
-
-func (t *DDLTracker) handleIf(stmt *ast.IfStmt, state *ddlState) {
-	if assign, ok := stmt.Init.(*ast.AssignStmt); ok {
-		t.handleAssign(assign, state)
-	}
-	t.recordNodeState(stmt.Cond, state)
-
-	thenState := state.clone()
-	if stmt.Body != nil {
-		t.analyzeStatements(stmt.Body.List, thenState)
-	}
-
-	elseState := state.clone()
-	if stmt.Else != nil {
-		switch el := stmt.Else.(type) {
-		case *ast.BlockStmt:
-			t.analyzeStatements(el.List, elseState)
-		case *ast.IfStmt:
-			t.handleIf(el, elseState)
-		default:
-			t.analyzeStatements([]ast.Stmt{el}, elseState)
-		}
-	}
-
-	*state = *thenState.join(elseState)
-}
-
-func (t *DDLTracker) handleFor(stmt *ast.ForStmt, state *ddlState) {
-	if assign, ok := stmt.Init.(*ast.AssignStmt); ok {
-		t.handleAssign(assign, state)
-	}
-	loopState := state.clone()
-	if stmt.Body != nil {
-		t.analyzeStatements(stmt.Body.List, loopState)
-	}
-	if assign, ok := stmt.Post.(*ast.AssignStmt); ok {
-		t.handleAssign(assign, loopState)
-	}
-	*state = *state.join(loopState)
-}
-
-func (t *DDLTracker) handleRange(stmt *ast.RangeStmt, state *ddlState) {
-	loopState := state.clone()
-	if stmt.Body != nil {
-		t.analyzeStatements(stmt.Body.List, loopState)
-	}
-	*state = *state.join(loopState)
-}
-
-func (t *DDLTracker) handleCall(call *ast.CallExpr, state *ddlState) {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return
-	}
-	id, ok := sel.X.(*ast.Ident)
-	if !ok || !isStringBuilderExpr(t.pass, sel.X) {
-		return
-	}
-
-	switch sel.Sel.Name {
-	case "WriteString", "Write":
-		if len(call.Args) > 0 {
-			if op := t.evalExpr(call.Args[0], state); op != "" {
-				state.markDDL(id, op, t.pass)
+		for i, name := range valSpec.Names {
+			k := makeDefVarKey(t.pass, name)
+			if i < len(valSpec.Values) {
+				op := t.evalExpr(valSpec.Values[i], state)
+				if op != "" {
+					state.set(k, ddlValue{kind: ddlKindDefinite, op: op})
+				} else {
+					state.set(k, ddlValue{kind: ddlKindClean})
+				}
+			} else {
+				state.set(k, ddlValue{kind: ddlKindClean})
 			}
 		}
-	case "Reset":
-		state.markClean(id, t.pass)
 	}
 }
 
-func (t *DDLTracker) evalExpr(expr ast.Expr, state *ddlState) string {
-	if expr == nil {
-		return ""
-	}
 
-	switch e := expr.(type) {
-	case *ast.BasicLit:
-		if e.Kind == token.STRING {
-			val, err := strconv.Unquote(e.Value)
-			if err != nil {
-				val = strings.Trim(e.Value, "`\"")
-			}
-			if op := DetectDDLFromAST(val); op != "" {
-				return op
-			}
-			return MatchDDLCommand(val)
-		}
-	case *ast.Ident:
-		if state != nil {
-			return state.getOp(e, t.pass)
-		}
-	case *ast.BinaryExpr:
-		if e.Op == token.ADD {
-			if op := t.evalExpr(e.X, state); op != "" {
-				return op
-			}
-			if op := t.evalExpr(e.Y, state); op != "" {
-				return op
-			}
-			return evalConcatDDL(e)
-		}
-	case *ast.CallExpr:
-		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "String" {
-			if id, ok := sel.X.(*ast.Ident); ok && state != nil && isStringBuilderExpr(t.pass, sel.X) {
-				return state.getOp(id, t.pass)
-			}
-		}
-		return EvalDynamicDDL(e)
-	case *ast.ParenExpr:
-		return t.evalExpr(e.X, state)
-	}
-
-	return ""
-}
-
-// GetDDLOpAt returns any DDL operation associated with expr at the given node.
-func (t *DDLTracker) GetDDLOpAt(expr ast.Expr, at ast.Node) string {
-	if t == nil || expr == nil {
-		return ""
-	}
-	var state *ddlState
-	if at != nil {
-		state = t.nodeStates[at]
-	}
-	if state == nil {
-		state = newDDLState()
-	}
-	return t.evalExpr(expr, state)
-}

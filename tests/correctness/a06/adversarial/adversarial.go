@@ -73,3 +73,27 @@ func A7_Interface(ctx context.Context, client any) error {
 	}
 	return nil
 }
+
+// A8: Variable Shadowing — inner scope executes shadowed DDL, outer scope executes safe query.
+func A8_VariableShadowing(ctx context.Context, db DBExecutor) error {
+	query := "SELECT 1"
+	{
+		query := "CREATE TABLE shadowed (id int)"
+		if _, err := db.Exec(ctx, query); err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(ctx, query)
+	return err
+}
+
+// A9: Branch Reassignment — query initialized to SELECT, conditionally reassigned to DDL (MAYBE_DDL must be caught).
+func A9_BranchReassignment(ctx context.Context, db DBExecutor, cond bool) error {
+	query := "SELECT 1"
+	if cond {
+		query = "CREATE TABLE branch_table (id int)"
+	}
+	_, err := db.Exec(ctx, query)
+	return err
+}
+

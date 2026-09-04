@@ -3,11 +3,20 @@ package a06_runtime_ddl
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
+
+// varKey uniquely identifies a variable either via compiler types.Object
+// or via lexical declaration position and name in standalone mode.
+type varKey struct {
+	obj     types.Object
+	declPos token.Pos
+	name    string
+}
 
 type ddlKind int
 
@@ -38,19 +47,25 @@ func joinValues(a, b ddlValue) ddlValue {
 	if a == b {
 		return a
 	}
-	op := a.op
-	if op == "" {
-		op = b.op
+	if a.kind == ddlKindUnknown {
+		return b
+	}
+	if b.kind == ddlKindUnknown {
+		return a
 	}
 
 	if a.isDDL() || b.isDDL() {
+		op := a.op
+		if op == "" {
+			op = b.op
+		}
 		if a.kind == ddlKindDefinite && b.kind == ddlKindDefinite && a.op == b.op {
 			return a
 		}
 		return ddlValue{kind: ddlKindMaybe, op: op}
 	}
 
-	if a.kind == ddlKindClean || b.kind == ddlKindClean {
+	if a.kind == ddlKindClean && b.kind == ddlKindClean {
 		return ddlValue{kind: ddlKindClean}
 	}
 
@@ -58,14 +73,12 @@ func joinValues(a, b ddlValue) ddlValue {
 }
 
 type ddlState struct {
-	vars map[string]ddlValue
-	objs map[types.Object]ddlValue
+	vars map[varKey]ddlValue
 }
 
 func newDDLState() *ddlState {
 	return &ddlState{
-		vars: make(map[string]ddlValue),
-		objs: make(map[types.Object]ddlValue),
+		vars: make(map[varKey]ddlValue),
 	}
 }
 
@@ -73,9 +86,6 @@ func (s *ddlState) clone() *ddlState {
 	c := newDDLState()
 	for k, v := range s.vars {
 		c.vars[k] = v
-	}
-	for k, v := range s.objs {
-		c.objs[k] = v
 	}
 	return c
 }
@@ -86,14 +96,15 @@ func (s *ddlState) join(other *ddlState) *ddlState {
 	}
 	c := newDDLState()
 
-	varKeys := make(map[string]struct{})
+	allKeys := make(map[varKey]struct{})
 	for k := range s.vars {
-		varKeys[k] = struct{}{}
+		allKeys[k] = struct{}{}
 	}
 	for k := range other.vars {
-		varKeys[k] = struct{}{}
+		allKeys[k] = struct{}{}
 	}
-	for k := range varKeys {
+
+	for k := range allKeys {
 		vA := s.vars[k]
 		vB := other.vars[k]
 		joined := joinValues(vA, vB)
@@ -102,90 +113,49 @@ func (s *ddlState) join(other *ddlState) *ddlState {
 		}
 	}
 
-	objKeys := make(map[types.Object]struct{})
-	for k := range s.objs {
-		objKeys[k] = struct{}{}
-	}
-	for k := range other.objs {
-		objKeys[k] = struct{}{}
-	}
-	for k := range objKeys {
-		vA := s.objs[k]
-		vB := other.objs[k]
-		joined := joinValues(vA, vB)
-		if joined.kind != ddlKindUnknown {
-			c.objs[k] = joined
-		}
-	}
-
 	return c
 }
 
-func (s *ddlState) markDDL(id *ast.Ident, op string, pass *analysis.Pass) {
-	if id == nil || op == "" {
-		return
+func (s *ddlState) set(k varKey, val ddlValue) {
+	s.vars[k] = val
+}
+
+func (s *ddlState) get(k varKey) (ddlValue, bool) {
+	v, ok := s.vars[k]
+	return v, ok
+}
+
+func makeVarKey(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, id *ast.Ident) varKey {
+	if id == nil {
+		return varKey{}
 	}
-	val := ddlValue{kind: ddlKindDefinite, op: op}
-	s.vars[id.Name] = val
+	if pass != nil && pass.TypesInfo != nil {
+		obj := pass.TypesInfo.Uses[id]
+		if obj == nil {
+			obj = pass.TypesInfo.Defs[id]
+		}
+		if obj != nil {
+			return varKey{obj: obj, name: id.Name}
+		}
+	}
+	declPos := findDeclPos(id, fn, file)
+	return varKey{declPos: declPos, name: id.Name}
+}
+
+func makeDefVarKey(pass *analysis.Pass, id *ast.Ident) varKey {
+	if id == nil {
+		return varKey{}
+	}
 	if pass != nil && pass.TypesInfo != nil {
 		obj := pass.TypesInfo.Defs[id]
 		if obj == nil {
 			obj = pass.TypesInfo.Uses[id]
 		}
 		if obj != nil {
-			s.objs[obj] = val
+			return varKey{obj: obj, name: id.Name}
 		}
 	}
-}
-
-func (s *ddlState) markClean(id *ast.Ident, pass *analysis.Pass) {
-	if id == nil {
-		return
-	}
-	val := ddlValue{kind: ddlKindClean}
-	s.vars[id.Name] = val
-	if pass != nil && pass.TypesInfo != nil {
-		obj := pass.TypesInfo.Defs[id]
-		if obj == nil {
-			obj = pass.TypesInfo.Uses[id]
-		}
-		if obj != nil {
-			s.objs[obj] = val
-		}
-	}
-}
-
-func (s *ddlState) getOp(id *ast.Ident, pass *analysis.Pass) string {
-	if id == nil {
-		return ""
-	}
-	if pass != nil && pass.TypesInfo != nil {
-		if obj := pass.TypesInfo.Uses[id]; obj != nil {
-			if v, ok := s.objs[obj]; ok {
-				return v.getOp()
-			}
-		}
-	}
-	return s.vars[id.Name].getOp()
-}
-
-func isStringBuilderExpr(pass *analysis.Pass, expr ast.Expr) bool {
-	if expr == nil {
-		return false
-	}
-	if pass != nil && pass.TypesInfo != nil {
-		tv := pass.TypesInfo.TypeOf(expr)
-		if tv != nil && tv != types.Typ[types.Invalid] {
-			return isStringBuilderType(tv)
-		}
-	}
-	if id, ok := expr.(*ast.Ident); ok {
-		lower := strings.ToLower(id.Name)
-		return lower == "b" || lower == "sb" || lower == "buf" ||
-			strings.Contains(lower, "builder") || strings.Contains(lower, "buffer") ||
-			strings.Contains(lower, "query") || strings.Contains(lower, "sql")
-	}
-	return false
+	return varKey{declPos: id.Pos(), name: id.Name}
 }
 
 func isStringBuilderType(t types.Type) bool {

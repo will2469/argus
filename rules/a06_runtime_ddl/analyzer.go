@@ -85,9 +85,10 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 				return true
 			}
 
-			// 1. Static AST detection on literal query strings
-			if query, found := callsite.ExtractQueryString(call); found && strings.TrimSpace(query) != "" {
-				if ddlOp := DetectDDLFromAST(query); ddlOp != "" {
+			// 1. Static AST detection on direct literal query strings
+			if lit, ok := sqlArg.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				val := strings.Trim(lit.Value, "`\"")
+				if ddlOp := DetectDDLFromAST(val); ddlOp != "" {
 					issues = append(issues, Issue{
 						Pos:     call.Pos(),
 						Message: fmt.Sprintf("runtime database query contains forbidden DDL statement (%s); DDL is restricted to migrations", ddlOp),
@@ -96,7 +97,7 @@ func InspectFile(pass *analysis.Pass, fset *token.FileSet, file *ast.File, dm *d
 				}
 			}
 
-			// 2. Dynamic DDL detection evaluated strictly on the SQL argument expression
+			// 2. Flow-sensitive DDL detection evaluated strictly on the SQL argument expression
 			if ddlOp := tracker.GetDDLOpAt(sqlArg, call); ddlOp != "" {
 				issues = append(issues, Issue{
 					Pos:     call.Pos(),
