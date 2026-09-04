@@ -223,6 +223,8 @@ func runStandalone() {
 		fmt.Printf(" Argus SQL audit report saved to %s\n", outputFile)
 	}
 
+	updater.PrintUpdateHint(versionpkg.Get())
+
 	if len(result.Issues) > 0 {
 		fmt.Fprintf(os.Stderr, "\n Found %d Argus SQL hygiene violations:\n", len(result.Issues))
 		for _, issue := range result.Issues {

@@ -14,6 +14,7 @@ import (
 	"github.com/will2469/argus/shared/config"
 	"github.com/will2469/argus/shared/mcp"
 	"github.com/will2469/argus/shared/updater"
+	versionpkg "github.com/will2469/argus/shared/version"
 )
 
 var (
@@ -194,6 +195,8 @@ func runStandalone() {
 		}
 		fmt.Printf(" Argus SQL audit report saved to %s\n", outputFile)
 	}
+
+	updater.PrintUpdateHint(versionpkg.Get())
 
 	if len(result.Issues) > 0 {
 		fmt.Fprintf(os.Stderr, "\n Found %d Argus SQL hygiene violations:\n", len(result.Issues))
