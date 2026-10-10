@@ -3,8 +3,8 @@ module github.com/will2469/argus
 go 1.26.0
 
 require (
-	github.com/pganalyze/pg_query_go/v6 v6.2.2
-	golang.org/x/tools v0.50.0
+	github.com/pganalyze/pg_query_go/v6 v6.2.5
+	golang.org/x/tools v0.51.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
